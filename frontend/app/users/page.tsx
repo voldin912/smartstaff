@@ -341,11 +341,18 @@ export default function UsersPage() {
 
       {/* Add/Edit Modal */}
       {(showAddModal || showEditModal) && (
-        <div className="fixed z-10 inset-0 overflow-y-auto">
-          <div className="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
-            <div className="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"></div>
+        <div className="fixed z-50 inset-0 overflow-y-auto">
+          <div className="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+            {/* <div className="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"></div> */}
 
-            <div className="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
+            {/* Background overlay */}
+            <div className="fixed inset-0 transition-opacity" aria-hidden="true">
+              <div className="absolute inset-0 bg-gray-500 opacity-75"></div>
+            </div>
+
+            <span className="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
+
+            <div className="inline-block align-middle bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:max-w-lg sm:w-full relative">
               <form onSubmit={handleSubmit}>
                 <div className="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
                   <div className="space-y-4">
@@ -360,7 +367,7 @@ export default function UsersPage() {
                         required
                         value={formData.name}
                         onChange={(e) => setFormData((prev) => ({ ...prev, name: e.target.value }))}
-                        className="mt-1 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md"
+                        className="p-2 mt-1 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md"
                       />
                     </div>
 
@@ -375,7 +382,7 @@ export default function UsersPage() {
                         required
                         value={formData.email}
                         onChange={(e) => setFormData((prev) => ({ ...prev, email: e.target.value }))}
-                        className="mt-1 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md"
+                        className="p-2 mt-1 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md"
                       />
                     </div>
 
@@ -392,7 +399,7 @@ export default function UsersPage() {
                         onChange={(e) =>
                           setFormData((prev) => ({ ...prev, password: e.target.value }))
                         }
-                        className="mt-1 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md"
+                        className="p-2 mt-1 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md"
                       />
                     </div>
 
@@ -406,7 +413,7 @@ export default function UsersPage() {
                         required
                         value={formData.role}
                         onChange={(e) => setFormData((prev) => ({ ...prev, role: e.target.value }))}
-                        className="mt-1 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md"
+                        className="p-2 mt-1 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md"
                       >
                         <option value="member">Member</option>
                         <option value="company-manager">Company Manager</option>
@@ -426,7 +433,7 @@ export default function UsersPage() {
                           onChange={(e) =>
                             setFormData((prev) => ({ ...prev, company_id: e.target.value }))
                           }
-                          className="mt-1 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md"
+                          className="p-2 mt-1 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md"
                         >
                           <option value="">No Company</option>
                           {companies.map((company) => (
@@ -438,7 +445,7 @@ export default function UsersPage() {
                       </div>
                     )}
 
-                    <div>
+                    {/* <div>
                       <label htmlFor="avatar" className="block text-sm font-medium text-gray-700">
                         Avatar
                       </label>
@@ -450,7 +457,7 @@ export default function UsersPage() {
                         onChange={handleFileChange}
                         className="mt-1 block w-full shadow-sm sm:text-sm border-gray-300"
                       />
-                    </div>
+                    </div> */}
                   </div>
                 </div>
                 <div className="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
