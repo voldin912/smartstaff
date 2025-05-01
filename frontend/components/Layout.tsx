@@ -16,7 +16,7 @@ interface NavItem {
 const navItems: NavItem[] = [
   {
     href: '/dashboard',
-    label: 'Dashboard',
+    label: 'Records',
     icon: (
       <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
@@ -59,14 +59,14 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     <div className="min-h-screen bg-gray-100">
       {/* Sidebar */}
       <div
-        className={`fixed inset-y-0 left-0 z-50 w-64 bg-white shadow-lg transform ${
-          isSidebarOpen ? 'translate-x-0' : '-translate-x-full'
-        } lg:translate-x-0 transition-transform duration-300 ease-in-out`}
+        className={`fixed inset-y-0 left-0 z-50 w-64 bg-white shadow-lg transform ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'
+          } lg:translate-x-0 transition-transform duration-300 ease-in-out`}
       >
         <div className="flex flex-col h-full">
           {/* Logo */}
-          <div className="flex items-center justify-center h-16 px-4 bg-indigo-600">
-            <span className="text-xl font-semibold text-white">Resona Gate</span>
+          <div className="flex items-center justify-center h-16 px-4">
+            <img src={'./logo.png'} alt='Logo' className='w-10 h-10 mr-2' />
+            <span className="text-2xl text-black font-sans">Resona Gate</span>
           </div>
 
           {/* Navigation */}
@@ -75,11 +75,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               <Link
                 key={item.href}
                 href={item.href}
-                className={`flex items-center px-4 py-2 text-sm font-medium rounded-lg ${
-                  pathname === item.href
-                    ? 'text-indigo-600 bg-indigo-50'
-                    : 'text-gray-600 hover:text-indigo-600 hover:bg-indigo-50'
-                }`}
+                className={`flex items-center px-4 py-2 text-sm font-medium rounded-lg ${pathname === item.href
+                  ? 'text-white bg-indigo-600'
+                  : 'text-gray-600 hover:text-indigo-600 hover:bg-indigo-50'
+                  }`}
               >
                 {item.icon}
                 <span className="ml-3">{item.label}</span>

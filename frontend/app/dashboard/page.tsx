@@ -52,7 +52,7 @@ export default function DashboardPage() {
   return (
     <Layout>
       <div className="space-y-6">
-        <h1 className="text-2xl font-semibold text-gray-900">Dashboard</h1>
+        <h1 className="text-2xl font-semibold text-gray-900">Hello Evano &#x1F44B;&#x1F3FD;</h1>
 
         {/* Stats */}
         <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
@@ -118,7 +118,7 @@ export default function DashboardPage() {
         </div>
 
         {/* Recent Users */}
-        <div className="bg-white shadow rounded-lg">
+        <div className="bg-white shadow rounded-lg h-[700px]">
           <div className="px-4 py-5 sm:p-6">
             <h3 className="text-lg leading-6 font-medium text-gray-900">Recent Users</h3>
             <div className="mt-5">
