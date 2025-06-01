@@ -202,7 +202,7 @@ export default function UsersPage() {
               });
               setShowAddModal(true);
             }}
-            className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+            className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-[5px] shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
           >
             Add User
           </button>
@@ -221,57 +221,63 @@ export default function UsersPage() {
         <div className="flex flex-col">
           <div className="-my-2 overflow-x-auto sm:-mx-6 lg:-mx-8">
             <div className="py-2 align-middle inline-block min-w-full sm:px-6 lg:px-8">
-              <div className="shadow overflow-hidden border-b border-gray-200 sm:rounded-lg">
-                <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50">
-                    <tr>
+              <div className="shadow overflow-hidden border-b border-gray-200 sm:rounded-[5px]">
+                <table className="min-w-full divide-y divide-gray-200 rounded-[5px]">
+                  <thead className="bg-gray-50 rounded-[5px]">
+                    <tr className="rounded-[5px]">
                       <th
                         scope="col"
-                        className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                        className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider rounded-[5px]"
                       >
-                        User
+                        Name
                       </th>
                       <th
                         scope="col"
-                        className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                        className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider rounded-[5px]"
+                      >
+                        Email
+                      </th>
+                      <th
+                        scope="col"
+                        className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider rounded-[5px]"
                       >
                         Role
                       </th>
                       <th
                         scope="col"
-                        className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                        className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider rounded-[5px]"
                       >
                         Company
                       </th>
                       <th
                         scope="col"
-                        className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                        className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider rounded-[5px]"
                       >
-                        Joined
+                        Created At
                       </th>
-                      <th scope="col" className="relative px-6 py-3">
+                      <th scope="col" className="relative px-6 py-3 rounded-[5px]">
                         <span className="sr-only">Actions</span>
                       </th>
                     </tr>
                   </thead>
-                  <tbody className="bg-white divide-y divide-gray-200">
+                  <tbody className="bg-white divide-y divide-gray-200 rounded-[5px]">
                     {loading ? (
                       <tr>
-                        <td colSpan={5} className="px-6 py-4 whitespace-nowrap text-center">
+                        <td colSpan={6} className="px-6 py-4 whitespace-nowrap text-center rounded-[5px]">
                           Loading...
                         </td>
                       </tr>
                     ) : users.length === 0 ? (
                       <tr>
-                        <td colSpan={5} className="px-6 py-4 whitespace-nowrap text-center">
+                        <td colSpan={6} className="px-6 py-4 whitespace-nowrap text-center rounded-[5px]">
                           No users found
                         </td>
                       </tr>
                     ) : (
                       users.map((user) => (
-                        <tr key={user.id}>
-                          <td className="px-6 py-4 whitespace-nowrap">
-                            <div className="flex items-center">
+                        <tr key={user.id} className="rounded-[5px]">
+                          <td className="px-6 py-4 whitespace-nowrap rounded-[5px]">
+                            <div className="flex items-center rounded-[5px]">
                               <div className="flex-shrink-0 h-10 w-10">
                                 {user.avatar ? (
                                   <Image
@@ -291,9 +297,11 @@ export default function UsersPage() {
                               </div>
                               <div className="ml-4">
                                 <div className="text-sm font-medium text-gray-900">{user.name}</div>
-                                <div className="text-sm text-gray-500">{user.email}</div>
                               </div>
                             </div>
+                          </td>
+                          <td>
+                            <div className="text-sm text-gray-500">{user.email}</div>
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap">
                             <span
@@ -343,18 +351,20 @@ export default function UsersPage() {
       {(showAddModal || showEditModal) && (
         <div className="fixed z-50 inset-0 overflow-y-auto">
           <div className="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
-            {/* <div className="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"></div> */}
-
             {/* Background overlay */}
             <div className="fixed inset-0 transition-opacity" aria-hidden="true">
               <div className="absolute inset-0 bg-gray-500 opacity-75"></div>
             </div>
 
+            {/* Center modal */}
             <span className="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
 
-            <div className="inline-block align-middle bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:max-w-lg sm:w-full relative">
+            <div className="inline-block align-bottom bg-white rounded-[5px] text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full relative z-50">
               <form onSubmit={handleSubmit}>
                 <div className="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+                  <h3 className="text-lg leading-6 font-medium text-gray-900 mb-4">
+                    {selectedUser ? 'Edit User' : 'Add New User'}
+                  </h3>
                   <div className="space-y-4">
                     <div>
                       <label htmlFor="name" className="block text-sm font-medium text-gray-700">
@@ -444,26 +454,12 @@ export default function UsersPage() {
                         </select>
                       </div>
                     )}
-
-                    {/* <div>
-                      <label htmlFor="avatar" className="block text-sm font-medium text-gray-700">
-                        Avatar
-                      </label>
-                      <input
-                        type="file"
-                        name="avatar"
-                        id="avatar"
-                        accept="image/*"
-                        onChange={handleFileChange}
-                        className="mt-1 block w-full shadow-sm sm:text-sm border-gray-300"
-                      />
-                    </div> */}
                   </div>
                 </div>
-                <div className="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+                <div className="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse rounded-[5px]">
                   <button
                     type="submit"
-                    className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-indigo-600 text-base font-medium text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:ml-3 sm:w-auto sm:text-sm"
+                    className="w-full inline-flex justify-center rounded-[5px] border border-transparent shadow-sm px-4 py-2 bg-indigo-600 text-base font-medium text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:ml-3 sm:w-auto sm:text-sm"
                   >
                     {selectedUser ? 'Update' : 'Create'}
                   </button>
@@ -482,7 +478,7 @@ export default function UsersPage() {
                         avatar: null,
                       });
                     }}
-                    className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:w-auto sm:text-sm"
+                    className="mt-3 w-full inline-flex justify-center rounded-[5px] border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
                   >
                     Cancel
                   </button>

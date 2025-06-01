@@ -1,7 +1,8 @@
-const express = require('express');
-const { body, validationResult } = require('express-validator');
-const { pool } = require('../config/database');
-const { auth, authorize } = require('../middleware/auth');
+import express from 'express';
+import { body, validationResult } from 'express-validator';
+import { pool } from '../config/database.js';
+import { auth, authorize } from '../middleware/auth.js';
+
 const router = express.Router();
 
 // Get all companies (admin only)
@@ -108,4 +109,4 @@ router.delete('/:id', auth, authorize('admin'), async (req, res) => {
   }
 });
 
-module.exports = router; 
+export default router;

@@ -1,9 +1,10 @@
-const express = require('express');
-const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
-const { body, validationResult } = require('express-validator');
-const { pool } = require('../config/database');
-const { auth } = require('../middleware/auth');
+import express from 'express';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
+import { body, validationResult } from 'express-validator';
+import { pool } from '../config/database.js';
+import { auth } from '../middleware/auth.js';
+
 const router = express.Router();
 
 // Register
@@ -110,4 +111,4 @@ router.get('/me', auth, async (req, res) => {
   }
 });
 
-module.exports = router; 
+export default router;

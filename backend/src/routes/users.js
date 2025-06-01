@@ -1,11 +1,17 @@
-const express = require('express');
-const bcrypt = require('bcryptjs');
-const multer = require('multer');
-const path = require('path');
-const { body, validationResult } = require('express-validator');
-const { pool } = require('../config/database');
-const { auth, authorize } = require('../middleware/auth');
+import express from 'express';
+import bcrypt from 'bcryptjs';
+import multer from 'multer';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { body, validationResult } from 'express-validator';
+import { pool } from '../config/database.js';
+import { auth, authorize } from '../middleware/auth.js';
+
 const router = express.Router();
+
+// Get __dirname equivalent in ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Configure multer for file upload
 const storage = multer.diskStorage({
@@ -231,4 +237,4 @@ router.delete('/:id', auth, async (req, res) => {
   }
 });
 
-module.exports = router; 
+export default router;

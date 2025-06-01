@@ -1,22 +1,27 @@
-const mysql = require('mysql2/promise');
+import mysql from 'mysql2/promise';
+import bcrypt from 'bcryptjs';
 
-const pool = mysql.createPool({
+const dbConfig = {
   host: process.env.DB_HOST || 'localhost',
   user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || '',
-  database: process.env.DB_NAME || 'company_management',
+  password: process.env.DB_PASSWORD || '1234',
+  database: process.env.DB_NAME || 'mydb',
   waitForConnections: true,
   connectionLimit: 10,
-  queueLimit: 0
-});
+  queueLimit: 0,
+  authPlugins: {
+    mysql_clear_password: () => () => Buffer.from([0])
+  }
+};
 
-const initializeDatabase = async () => {
+export const pool = mysql.createPool(dbConfig);
+
+export const initializeDatabase = async () => {
   try {
     // Create database if it doesn't exist
     const connection = await mysql.createConnection({
-      host: process.env.DB_HOST || 'localhost',
-      user: process.env.DB_USER || 'root',
-      password: process.env.DB_PASSWORD || ''
+      ...dbConfig,
+      database: undefined // Don't specify database for initial connection
     });
 
     await connection.query(`CREATE DATABASE IF NOT EXISTS ${process.env.DB_NAME || 'company_management'}`);
@@ -53,7 +58,6 @@ const initializeDatabase = async () => {
     // Create admin user if it doesn't exist
     const [adminExists] = await pool.query('SELECT * FROM users WHERE role = "admin" LIMIT 1');
     if (adminExists.length === 0) {
-      const bcrypt = require('bcryptjs');
       const hashedPassword = await bcrypt.hash('admin123', 10);
       await pool.query(
         'INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)',
@@ -66,9 +70,4 @@ const initializeDatabase = async () => {
     console.error('Error initializing database:', error);
     throw error;
   }
-};
-
-module.exports = {
-  pool,
-  initializeDatabase
 }; 

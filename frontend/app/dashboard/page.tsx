@@ -1,209 +1,830 @@
-'use client';
+"use client";
 
-import { useEffect, useState } from 'react';
-import { useAuth } from '@/contexts/AuthContext';
-import Layout from '@/components/Layout';
+import { useState, useEffect, useRef } from "react";
+import Image from "next/image";
+import Layout from "@/components/Layout";
+import Pagination from "@/components/molecules/pagination";
+import { useAuth } from "@/contexts/AuthContext";
+import SkillSheetSidebar from "@/components/SkillSheetSidebar";
+import SalesforceSidebar from "@/components/SalesforceSidebar";
 
-interface Stats {
-  totalUsers: number;
-  totalCompanies: number;
-  recentUsers: Array<{
-    id: number;
-    name: string;
-    email: string;
-    role: string;
-    created_at: string;
-  }>;
+// Function to generate a random string of specified length
+const generateRandomString = (length: number) => {
+  const chars = 'abcdefghijklmnopqrstuvwxyz';
+  let result = '';
+  for (let i = 0; i < length; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return result;
+};
+
+// Function to generate a file ID in the format FILE_timestamp_randomstring
+const generateFileId = () => {
+  const timestamp = Date.now();
+  const randomString = generateRandomString(8);
+  return `FILE_${timestamp}_${randomString}`;
+};
+
+interface Record {
+  id: number;
+  date: string;
+  fileId: string;
+  staffId: string;
+  skillSheet: boolean;
+  salesforce: string[] | null;
+  lor: string | null;
+  stt: boolean;
+  bulk: boolean;
+  skills?: string[];
 }
+
+const convertToArray = (data: any): string[] => {
+  if (Array.isArray(data)) return data;
+  if (typeof data === 'string') {
+    try {
+      const parsed = JSON.parse(data);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [data];
+    }
+  }
+  return [];
+};
 
 export default function DashboardPage() {
   const { user } = useAuth();
-  const [stats, setStats] = useState<Stats>({
-    totalUsers: 0,
-    totalCompanies: 0,
-    recentUsers: [],
-  });
+  const [records, setRecords] = useState<Record[]>([]);
   const [loading, setLoading] = useState(true);
+  const [editingStaffId, setEditingStaffId] = useState<number | null>(null);
+  const [staffIdInput, setStaffIdInput] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [rowsPerPage, setRowsPerPage] = useState(10);
+  const [sortOrder, setSortOrder] = useState<'newest' | 'oldest'>('newest');
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [alertMessage, setAlertMessage] = useState<{ type: 'success' | 'error', message: string } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isSkillSheetOpen, setIsSkillSheetOpen] = useState(false);
+  const [selectedRecord, setSelectedRecord] = useState<Record | null>(null);
+  const [isSalesforceOpen, setIsSalesforceOpen] = useState(false);
+  const [selectedSalesforceRecord, setSelectedSalesforceRecord] = useState<Record | null>(null);
+  const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
-    const fetchStats = async () => {
-      try {
-        const token = localStorage.getItem('token');
-        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/stats`, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        });
-
-        if (response.ok) {
-          const data = await response.json();
-          setStats(data);
-        }
-      } catch (error) {
-        console.error('Failed to fetch stats:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchStats();
+    fetchRecords();
   }, []);
+
+  const fetchRecords = async () => {
+    setLoading(true);
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/records`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setRecords(data);
+      }
+    } catch (e) {
+      // handle error
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleEditStaffId = (id: number, currentStaffId: string) => {
+    setEditingStaffId(id);
+    setStaffIdInput(currentStaffId);
+    setTimeout(() => inputRef.current?.focus(), 0);
+  };
+
+  const handleStaffIdBlur = async (id: number) => {
+    setEditingStaffId(null);
+    if (!staffIdInput.trim()) return;
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/records/${id}/staff-id`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ staffId: staffIdInput }),
+      });
+      if (res.ok) {
+        fetchRecords();
+      }
+    } catch (e) {
+      // handle error
+    }
+  };
+
+  const handlePageChange = (page: number) => {
+    setCurrentPage(page);
+  };
+
+  const handleRowsPerPageChange = (rows: number) => {
+    setRowsPerPage(rows);
+    setCurrentPage(1); // Reset to first page when changing rows per page
+  };
+
+  const handleUploadClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (!user?.id) {
+      setAlertMessage({
+        type: 'error',
+        message: 'ユーザー情報の取得に失敗しました。再度ログインしてください。'
+      });
+      return;
+    }
+
+    // Check if file is an audio file
+    if (!file.type.startsWith('audio/')) {
+      setAlertMessage({
+        type: 'error',
+        message: '音声ファイルのみアップロード可能です。'
+      });
+      return;
+    }
+
+    // Check file size (e.g., max 100MB)
+    const maxSize = 100 * 1024 * 1024; // 100MB in bytes
+    if (file.size > maxSize) {
+      setAlertMessage({
+        type: 'error',
+        message: 'ファイルサイズは100MB以下にしてください。'
+      });
+      return;
+    }
+
+    setIsUploading(true);
+    const formData = new FormData();
+    formData.append('audio', file);
+    formData.append('fileId', generateFileId());
+    formData.append('staffId', user?.id.toString() || '');
+
+    try {
+      const token = localStorage.getItem("token");
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/records/upload`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        body: formData,
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setAlertMessage({
+          type: 'success',
+          message: 'ファイルのアップロードが完了しました。'
+        });
+        fetchRecords();
+      } else {
+        setAlertMessage({
+          type: 'error',
+          message: data.message || 'アップロードに失敗しました。'
+        });
+      }
+    } catch (error) {
+      setAlertMessage({
+        type: 'error',
+        message: 'アップロード中にエラーが発生しました。'
+      });
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  };
+
+  const handleSkillSheetEdit = (record: Record) => {
+    setSelectedRecord(record);
+    setIsSkillSheetOpen(true);
+  };
+
+  const handleSkillSheetSave = async (data: any) => {
+    if (!selectedRecord) return;
+    console.log("data", data);
+    try {
+      const token = localStorage.getItem("token");
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/records/${selectedRecord.id}/skill-sheet`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(data),
+      });
+
+      if (response.ok) {
+        setAlertMessage({
+          type: 'success',
+          message: 'スキルシートを更新しました。'
+        });
+        fetchRecords();
+        setIsSkillSheetOpen(false);
+      } else {
+        setAlertMessage({
+          type: 'error',
+          message: 'スキルシートの更新に失敗しました。'
+        });
+      }
+    } catch (error) {
+      setAlertMessage({
+        type: 'error',
+        message: 'スキルシートの更新中にエラーが発生しました。'
+      });
+    }
+  };
+
+  const handleSkillSheetDownload = async (record: Record) => {
+    try {
+      const token = localStorage.getItem("token");
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/records/${record.id}/skill-sheet`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (response.ok) {
+        // Get the blob from the response
+        const blob = await response.blob();
+        
+        // Create a URL for the blob
+        const url = window.URL.createObjectURL(blob);
+        
+        // Create a temporary link element
+        const link = document.createElement('a');
+        link.href = url;
+        
+        // Set the filename using the record's fileId
+        link.download = `skill-sheet-${record.fileId}.pdf`;
+        
+        // Append to body, click, and remove
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        // Clean up the URL
+        window.URL.revokeObjectURL(url);
+
+        setAlertMessage({
+          type: 'success',
+          message: 'スキルシートのダウンロードが完了しました。'
+        });
+      } else {
+        setAlertMessage({
+          type: 'error',
+          message: 'スキルシートのダウンロードに失敗しました。'
+        });
+      }
+    } catch (error) {
+      setAlertMessage({
+        type: 'error',
+        message: 'スキルシートのダウンロード中にエラーが発生しました。'
+      });
+    }
+  };
+
+  const handleSalesforceEdit = (record: Record) => {
+    // console.log("handleSalesforceEdit", record);
+    setSelectedSalesforceRecord(record);
+    setIsSalesforceOpen(true);
+  };
+
+  const handleSalesforceSave = async (data: string[]) => {
+    if (!selectedSalesforceRecord) return;
+
+    try {
+      const token = localStorage.getItem("token");
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/records/${selectedSalesforceRecord.id}/salesforce`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ salesforceData: data }),
+      });
+
+      if (response.ok) {
+        setAlertMessage({
+          type: 'success',
+          message: 'Salesforceデータを更新しました。'
+        });
+        fetchRecords();
+        setIsSalesforceOpen(false);
+      } else {
+        setAlertMessage({
+          type: 'error',
+          message: 'Salesforceデータの更新に失敗しました。'
+        });
+      }
+    } catch (error) {
+      setAlertMessage({
+        type: 'error',
+        message: 'Salesforceデータの更新中にエラーが発生しました。'
+      });
+    }
+  };
+
+  const handleSalesforceDownload = async (record: Record) => {
+    try {
+      const token = localStorage.getItem("token");
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/records/${record.id}/salesforce-pdf`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (response.ok) {
+        // Get the blob from the response
+        const blob = await response.blob();
+        
+        // Create a URL for the blob
+        const url = window.URL.createObjectURL(blob);
+        
+        // Create a temporary link element
+        const link = document.createElement('a');
+        link.href = url;
+        
+        // Set the filename using the record's fileId
+        link.download = `salesforce-${record.fileId}.pdf`;
+        
+        // Append to body, click, and remove
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        // Clean up the URL
+        window.URL.revokeObjectURL(url);
+
+        setAlertMessage({
+          type: 'success',
+          message: 'Salesforceデータのダウンロードが完了しました。'
+        });
+      } else {
+        setAlertMessage({
+          type: 'error',
+          message: 'Salesforceデータのダウンロードに失敗しました。'
+        });
+      }
+    } catch (error) {
+      setAlertMessage({
+        type: 'error',
+        message: 'Salesforceデータのダウンロード中にエラーが発生しました。'
+      });
+    }
+  };
+
+  const handleLoRCopy = async (record: Record) => {
+    try {
+      // Copy the content to clipboard directly from the record
+      await navigator.clipboard.writeText(record.lor || '');
+      
+      setAlertMessage({
+        type: 'success',
+        message: '推薦文をクリップボードにコピーしました。'
+      });
+    } catch (error) {
+      setAlertMessage({
+        type: 'error',
+        message: '推薦文のコピー中にエラーが発生しました。'
+      });
+    }
+  };
+
+  const handleSTTDownload = async (record: Record) => {
+    try {
+      const token = localStorage.getItem("token");
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/records/${record.id}/stt`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (response.ok) {
+        // Get the blob from the response
+        const blob = await response.blob();
+        
+        // Create a URL for the blob
+        const url = window.URL.createObjectURL(blob);
+        
+        // Create a temporary link element
+        const link = document.createElement('a');
+        link.href = url;
+        
+        // Set the filename using the record's fileId
+        link.download = `stt-${record.fileId}.pdf`;
+        
+        // Append to body, click, and remove
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        // Clean up the URL
+        window.URL.revokeObjectURL(url);
+
+        setAlertMessage({
+          type: 'success',
+          message: 'STTデータのダウンロードが完了しました。'
+        });
+      } else {
+        setAlertMessage({
+          type: 'error',
+          message: 'STTデータのダウンロードに失敗しました。'
+        });
+      }
+    } catch (error) {
+      setAlertMessage({
+        type: 'error',
+        message: 'STTデータのダウンロード中にエラーが発生しました。'
+      });
+    }
+  };
+
+  const handleBulkDownload = async (record: Record) => {
+    try {
+      const token = localStorage.getItem("token");
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/records/${record.id}/bulk`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (response.ok) {
+        // Get the blob from the response
+        const blob = await response.blob();
+        
+        // Create a URL for the blob
+        const url = window.URL.createObjectURL(blob);
+        
+        // Create a temporary link element
+        const link = document.createElement('a');
+        link.href = url;
+        
+        // Set the filename using the record's fileId
+        link.download = `bulk-${record.fileId}.zip`;
+        
+        // Append to body, click, and remove
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        // Clean up the URL
+        window.URL.revokeObjectURL(url);
+
+        setAlertMessage({
+          type: 'success',
+          message: '一括データのダウンロードが完了しました。'
+        });
+      } else {
+        setAlertMessage({
+          type: 'error',
+          message: '一括データのダウンロードに失敗しました。'
+        });
+      }
+    } catch (error) {
+      setAlertMessage({
+        type: 'error',
+        message: '一括データのダウンロード中にエラーが発生しました。'
+      });
+    }
+  };
+
+  const parseDate = (dateString: string) => {
+    try {
+      // Handle DD/MM/YY format
+      if (dateString.includes('/')) {
+        const [day, month, year] = dateString.split(' ')[0].split('/');
+        const time = dateString.split(' ')[1];
+        // Convert 2-digit year to 4-digit year
+        const fullYear = parseInt(year) < 50 ? 2000 + parseInt(year) : 1900 + parseInt(year);
+        dateString = `${fullYear}-${month.padStart(2, '0')}-${day.padStart(2, '0')} ${time}`;
+      }
+      return new Date(dateString).getTime();
+    } catch (error) {
+      console.error('Error parsing date for sorting:', error);
+      return 0; // Return 0 for invalid dates to sort them to the end
+    }
+  };
+
+  const formatDate = (dateString: string) => {
+    try {
+      // Handle DD/MM/YY format
+      if (dateString.includes('/')) {
+        const [day, month, year] = dateString.split(' ')[0].split('/');
+        const time = dateString.split(' ')[1];
+        // Convert 2-digit year to 4-digit year
+        const fullYear = parseInt(year) < 50 ? 2000 + parseInt(year) : 1900 + parseInt(year);
+        dateString = `${fullYear}-${month.padStart(2, '0')}-${day.padStart(2, '0')} ${time}`;
+      }
+
+      const date = new Date(dateString);
+      
+      // If the date is invalid, return the original string
+      if (isNaN(date.getTime())) {
+        console.warn('Invalid date string:', dateString);
+        return dateString;
+      }
+
+      // Format the date in YYYY-MM-DD HH:mm:ss format
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      const hours = String(date.getHours()).padStart(2, '0');
+      const minutes = String(date.getMinutes()).padStart(2, '0');
+      const seconds = String(date.getSeconds()).padStart(2, '0');
+
+      return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+    } catch (error) {
+      console.error('Error formatting date:', error);
+      return dateString;
+    }
+  };
+
+  const filteredRecords = records.filter(rec =>
+    rec.date.includes(searchTerm) ||
+    rec.fileId.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    rec.staffId.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  const sortedRecords = [...filteredRecords].sort((a, b) => {
+    const dateA = parseDate(a.date);
+    const dateB = parseDate(b.date);
+    return sortOrder === 'newest' ? dateB - dateA : dateA - dateB;
+  });
+
+  // Calculate pagination on the filtered and sorted records
+  const indexOfLastRecord = currentPage * rowsPerPage;
+  const indexOfFirstRecord = indexOfLastRecord - rowsPerPage;
+  const paginatedRecords = sortedRecords.slice(indexOfFirstRecord, indexOfLastRecord);
+
+  // Auto-hide alert after 5 seconds
+  useEffect(() => {
+    if (alertMessage) {
+      const timer = setTimeout(() => {
+        setAlertMessage(null);
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [alertMessage]);
 
   return (
     <Layout>
-      <div className="space-y-6">
-        <h1 className="text-2xl font-semibold text-gray-900">Hello Evano &#x1F44B;&#x1F3FD;</h1>
-
-        {/* Stats */}
-        <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
-          <div className="bg-white overflow-hidden shadow rounded-lg">
-            <div className="p-5">
-              <div className="flex items-center">
-                <div className="flex-shrink-0">
-                  <svg
-                    className="h-6 w-6 text-gray-400"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"
-                    />
-                  </svg>
-                </div>
-                <div className="ml-5 w-0 flex-1">
-                  <dl>
-                    <dt className="text-sm font-medium text-gray-500 truncate">Total Users</dt>
-                    <dd className="text-lg font-medium text-gray-900">
-                      {loading ? '...' : stats.totalUsers}
-                    </dd>
-                  </dl>
-                </div>
-              </div>
-            </div>
+      <div className="min-h-screen bg-[#f8fafd] px-4 sm:px-6 lg:px-8 py-6 rounded-[5px]">
+        {/* Alert Message */}
+        {alertMessage && (
+          <div className={`fixed top-4 right-4 z-50 p-4 rounded-[5px] shadow-lg ${
+            alertMessage.type === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+          }`}>
+            {alertMessage.message}
           </div>
+        )}
 
-          <div className="bg-white overflow-hidden shadow rounded-lg">
-            <div className="p-5">
-              <div className="flex items-center">
-                <div className="flex-shrink-0">
-                  <svg
-                    className="h-6 w-6 text-gray-400"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"
-                    />
-                  </svg>
+        {/* Skill Sheet Sidebar */}
+        <SkillSheetSidebar
+          open={isSkillSheetOpen}
+          onClose={() => setIsSkillSheetOpen(false)}
+          skillSheetData={selectedRecord?.skillSheet}
+          skills={selectedRecord?.skills}
+          onSave={handleSkillSheetSave}
+        />
+
+        {/* Salesforce Sidebar */}
+        <SalesforceSidebar
+          open={isSalesforceOpen}
+          onClose={() => setIsSalesforceOpen(false)}
+          salesforceData={selectedSalesforceRecord ? convertToArray(selectedSalesforceRecord.salesforce) : null}
+          onSave={handleSalesforceSave}
+          staffId={selectedSalesforceRecord?.staffId}
+        />
+
+        {/* Header */}
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8 rounded-[5px]">
+          <h1 className="text-xl sm:text-2xl font-semibold text-gray-900 rounded-[5px]">
+            Hello Evano <span role="img" aria-label="wave">👋</span>,
+          </h1>
+          <div className="flex items-center gap-4 rounded-[5px] w-full sm:w-auto">
+            <div className="relative rounded-[5px] flex flex-col items-end gap-2 w-full sm:w-auto">
+              <div className="relative w-full sm:w-56">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <Image
+                    src="/search.svg"
+                    alt="Search"
+                    width={16}
+                    height={16}
+                    className="text-gray-400"
+                  />
                 </div>
-                <div className="ml-5 w-0 flex-1">
-                  <dl>
-                    <dt className="text-sm font-medium text-gray-500 truncate">Total Companies</dt>
-                    <dd className="text-lg font-medium text-gray-900">
-                      {loading ? '...' : stats.totalCompanies}
-                    </dd>
-                  </dl>
-                </div>
+                <input
+                  type="text"
+                  placeholder="日付またはFile IDで検索"
+                  className="pl-10 pr-4 py-2 rounded-[5px] border border-gray-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-100 text-gray-700 w-full shadow-sm"
+                  value={searchTerm}
+                  onChange={e => setSearchTerm(e.target.value)}
+                />
               </div>
-            </div>
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileChange}
+                accept="audio/*"
+                className="hidden"
+              />
+              <button
+                onClick={handleUploadClick}
+                disabled={isUploading}
+                className={`bg-white rounded-full shadow border border-gray-200 mt-2 ${
+                  isUploading ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-50'
+                }`}
+              >
+                {isUploading ? (
+                  <div className="w-8 h-8 flex items-center justify-center">
+                    <div className="w-5 h-5 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+                  </div>
+                ) : (
+                  <Image src="/upload.svg" alt="Upload" width={32} height={32} className="rounded-[5px]" />
+                )}
+              </button>
+            </div>            
           </div>
         </div>
 
-        {/* Recent Users */}
-        <div className="bg-white shadow rounded-lg h-[700px]">
-          <div className="px-4 py-5 sm:p-6">
-            <h3 className="text-lg leading-6 font-medium text-gray-900">Recent Users</h3>
-            <div className="mt-5">
-              <div className="flex flex-col">
-                <div className="-my-2 overflow-x-auto sm:-mx-6 lg:-mx-8">
-                  <div className="py-2 align-middle inline-block min-w-full sm:px-6 lg:px-8">
-                    <div className="shadow overflow-hidden border-b border-gray-200 sm:rounded-lg">
-                      <table className="min-w-full divide-y divide-gray-200">
-                        <thead className="bg-gray-50">
-                          <tr>
-                            <th
-                              scope="col"
-                              className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
-                            >
-                              Name
-                            </th>
-                            <th
-                              scope="col"
-                              className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
-                            >
-                              Email
-                            </th>
-                            <th
-                              scope="col"
-                              className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
-                            >
-                              Role
-                            </th>
-                            <th
-                              scope="col"
-                              className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
-                            >
-                              Joined
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody className="bg-white divide-y divide-gray-200">
-                          {loading ? (
-                            <tr>
-                              <td colSpan={4} className="px-6 py-4 whitespace-nowrap text-center">
-                                Loading...
-                              </td>
-                            </tr>
-                          ) : stats.recentUsers.length === 0 ? (
-                            <tr>
-                              <td colSpan={4} className="px-6 py-4 whitespace-nowrap text-center">
-                                No recent users
-                              </td>
-                            </tr>
-                          ) : (
-                            stats.recentUsers.map((user) => (
-                              <tr key={user.id}>
-                                <td className="px-6 py-4 whitespace-nowrap">
-                                  <div className="text-sm font-medium text-gray-900">{user.name}</div>
-                                </td>
-                                <td className="px-6 py-4 whitespace-nowrap">
-                                  <div className="text-sm text-gray-500">{user.email}</div>
-                                </td>
-                                <td className="px-6 py-4 whitespace-nowrap">
-                                  <span
-                                    className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                                      user.role === 'admin'
-                                        ? 'bg-red-100 text-red-800'
-                                        : user.role === 'company-manager'
-                                        ? 'bg-green-100 text-green-800'
-                                        : 'bg-blue-100 text-blue-800'
-                                    }`}
-                                  >
-                                    {user.role}
-                                  </span>
-                                </td>
-                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                  {new Date(user.created_at).toLocaleDateString()}
-                                </td>
-                              </tr>
-                            ))
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                </div>
+        {/* Records Section */}
+        <div className="bg-white rounded-[5px] shadow">
+          <div className="p-4 sm:p-6 lg:p-8">
+            <h2 className="text-lg sm:text-xl font-semibold mb-1 rounded-[5px]">Records</h2>
+            <div className="flex justify-between items-center mb-6">
+              <div className="text-green-500 text-sm rounded-[5px]">過去30日間のデータ</div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-gray-700 whitespace-nowrap">並び替え:</span>
+                <select
+                  id="sortOrder"
+                  value={sortOrder}
+                  onChange={(e) => setSortOrder(e.target.value as 'newest' | 'oldest')}
+                  className="block w-32 py-1.5 pl-3 text-sm border border-gray-300 rounded-[5px] focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+                >
+                  <option value="newest">新しい順</option>
+                  <option value="oldest">古い順</option>
+                </select>
+              </div>
+            </div>
+            <div className="overflow-x-auto rounded-[5px] -mx-4 sm:-mx-6 lg:-mx-8">
+              <div className="inline-block min-w-full align-middle">
+                <table className="min-w-full text-left text-gray-700 rounded-[5px]">
+                  <thead>
+                    <tr className="border-b border-gray-200 text-xs text-gray-400 rounded-[5px]">
+                      <th className="py-3 px-4 font-medium text-center min-w-[100px] rounded-[5px]">Date</th>
+                      <th className="py-3 px-4 font-medium text-center min-w-[100px] rounded-[5px]">File ID</th>
+                      <th className="py-3 px-4 font-medium text-center min-w-[100px] rounded-[5px]">Staff ID</th>
+                      <th className="py-3 px-4 font-medium text-center min-w-[120px] rounded-[5px]">Skill Sheet</th>
+                      <th className="py-3 px-4 font-medium text-center min-w-[120px] rounded-[5px]">Salesforce</th>
+                      <th className="py-3 px-4 font-medium text-center min-w-[100px] rounded-[5px]">LoR</th>
+                      <th className="py-3 px-4 font-medium text-center min-w-[100px] rounded-[5px]">STT</th>
+                      <th className="py-3 px-4 font-medium text-center min-w-[100px] rounded-[5px]">Bulk</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {loading ? (
+                      <tr><td colSpan={8} className="text-center py-8">Loading...</td></tr>
+                    ) : paginatedRecords.length === 0 ? (
+                      <tr><td colSpan={8} className="text-center py-8">No records found</td></tr>
+                    ) : (
+                      paginatedRecords.map((rec) => (
+                        <tr key={rec.id} className="border-b border-gray-100 hover:bg-gray-50 transition text-left align-middle rounded-[5px]">
+                          <td className="py-3 px-4 whitespace-nowrap align-middle min-w-[100px] rounded-[5px]">{formatDate(rec.date)}</td>
+                          <td className="py-3 px-4 whitespace-nowrap align-middle min-w-[100px] rounded-[5px]">{rec.fileId}</td>
+                          <td className="py-3 px-4 whitespace-nowrap align-middle min-w-[100px] rounded-[5px]">
+                            <div className="flex items-center gap-x-2 rounded-[5px]">
+                              {editingStaffId === rec.id ? (
+                                <input
+                                  ref={inputRef}
+                                  value={staffIdInput}
+                                  onChange={e => setStaffIdInput(e.target.value)}
+                                  onBlur={() => handleStaffIdBlur(rec.id)}
+                                  className="border border-gray-300 rounded-[5px] px-2 py-1 w-20 text-center"
+                                />
+                              ) : (
+                                <>
+                                  <button className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center" title="Edit Staff ID" onClick={() => handleEditStaffId(rec.id, rec.staffId)}>
+                                    <Image src="/edit1.svg" alt="Edit Staff ID" width={20} height={20} className="rounded-[5px]" />
+                                  </button>
+                                  {rec.staffId}
+                                </>
+                              )}
+                            </div>
+                          </td>
+                          {/* Skill Sheet icons */}
+                          <td className="py-3 px-4 align-middle min-w-[120px] rounded-[5px]">
+                            <div className="flex items-center justify-center gap-x-3 rounded-[5px]">
+                              <button 
+                                className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center" 
+                                title="Edit"
+                                onClick={() => handleSkillSheetEdit(rec)}
+                              >
+                                <Image src="/edit1.svg" alt="Edit" width={20} height={20} className="rounded-[5px]" />
+                              </button>
+                              <button 
+                                className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center" 
+                                title="Download"
+                                onClick={() => handleSkillSheetDownload(rec)}
+                              >
+                                <Image src="/download1.svg" alt="Download" width={20} height={20} className="rounded-[5px]" />
+                              </button>
+                              <button className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center" title="Salesforce">
+                                <Image src="/salesforce1.svg" alt="Salesforce" width={20} height={20} className="rounded-[5px]" />
+                              </button>
+                            </div>
+                          </td>
+                          {/* Salesforce icons */}
+                          <td className="py-3 px-4 align-middle min-w-[120px] rounded-[5px]">
+                            <div className="flex items-center justify-center gap-x-3 rounded-[5px]">
+                              <button 
+                                className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center" 
+                                title="Edit"
+                                onClick={() => handleSalesforceEdit(rec)}
+                              >
+                                <Image src="/edit1.svg" alt="Edit" width={20} height={20} className="rounded-[5px]" />
+                              </button>
+                              <button 
+                                className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center" 
+                                title="Download"
+                                onClick={() => handleSalesforceDownload(rec)}
+                              >
+                                <Image src="/download1.svg" alt="Download" width={20} height={20} className="rounded-[5px]" />
+                              </button>
+                              <button className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center" title="Salesforce">
+                                <Image src="/salesforce1.svg" alt="Salesforce" width={20} height={20} className="rounded-[5px]" />
+                              </button>
+                            </div>
+                          </td>
+                          {/* LoR icons */}
+                          <td className="py-3 px-4 align-middle min-w-[100px] rounded-[5px]">
+                            <div className="flex items-center justify-center rounded-[5px]">
+                              <button 
+                                className="hover:text-indigo-600 rounded-[5px] w-5 h-5 flex items-center justify-center" 
+                                title="Copy"
+                                onClick={() => handleLoRCopy(rec)}
+                              >
+                                <svg className="w-5 h-5 rounded-[5px]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                                  <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                                </svg>
+                              </button>
+                            </div>
+                          </td>
+                          {/* STT icons */}
+                          <td className="py-3 px-4 align-middle min-w-[100px] rounded-[5px]">
+                            <div className="flex items-center justify-center rounded-[5px]">
+                              <button 
+                                className="hover:text-indigo-600 rounded-[5px] w-5 h-5 flex items-center justify-center" 
+                                title="Download"
+                                onClick={() => handleSTTDownload(rec)}
+                              >
+                                <svg className="w-5 h-5 rounded-[5px]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3" />
+                                </svg>
+                              </button>
+                            </div>
+                          </td>
+                          {/* Bulk icons */}
+                          <td className="py-3 px-4 align-middle min-w-[100px] rounded-[5px]">
+                            <div className="flex items-center justify-center rounded-[5px]">
+                              <button 
+                                className="hover:text-indigo-600 rounded-[5px] w-5 h-5 flex items-center justify-center" 
+                                title="Download"
+                                onClick={() => handleBulkDownload(rec)}
+                              >
+                                <svg className="w-5 h-5 rounded-[5px]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3" />
+                                </svg>
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
               </div>
             </div>
           </div>
+          <Pagination
+            totalItems={records.length}
+            currentPage={currentPage}
+            rowsPerPage={rowsPerPage}
+            onPageChange={handlePageChange}
+            onRowsPerPageChange={handleRowsPerPageChange}
+          />
         </div>
       </div>
     </Layout>
