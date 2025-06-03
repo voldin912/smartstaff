@@ -96,7 +96,11 @@ export default function UsersPage() {
       const formDataToSend = new FormData();
       Object.entries(formData).forEach(([key, value]) => {
         if (value !== null && value !== '') {
-          formDataToSend.append(key, value);
+          if (key === 'company_id' && value === '') {
+            formDataToSend.append(key, 'null');
+          } else {
+            formDataToSend.append(key, value);
+          }
         }
       });
 

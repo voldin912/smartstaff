@@ -38,8 +38,12 @@ const SkillSheetSidebar = ({ open, onClose, skillSheetData, skills, onSave }: Sk
       try {
         const cleanedData = cleanJsonString(skillSheetData);
         const parsedData = typeof cleanedData === 'string' ? JSON.parse(cleanedData) : cleanedData;
-        setLocalData(parsedData);
-        setInitialData(JSON.stringify(parsedData));
+        const sanitizedData = Object.entries(parsedData).reduce((acc, [key, value]) => ({
+          ...acc,
+          [key]: typeof value === 'string' ? value : String(value || '')
+        }), {});
+        setLocalData(sanitizedData);
+        setInitialData(JSON.stringify(sanitizedData));
         setHasChanges(false);
       } catch (error) {
         console.error('Error parsing skill sheet data:', error);
@@ -87,7 +91,7 @@ const SkillSheetSidebar = ({ open, onClose, skillSheetData, skills, onSave }: Sk
         ...prev,
         [careerKey]: {
           ...prev[careerKey],
-          [field]: value,
+          [field]: value || '',
         },
       };
       setHasChanges(JSON.stringify(newData) !== initialData);

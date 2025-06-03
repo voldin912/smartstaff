@@ -107,13 +107,14 @@ export default function DashboardPage() {
 
   const handleEditStaffId = (id: number, currentStaffId: string) => {
     setEditingStaffId(id);
-    setStaffIdInput(currentStaffId);
+    setStaffIdInput(currentStaffId || '');
     setTimeout(() => inputRef.current?.focus(), 0);
   };
 
   const handleStaffIdBlur = async (id: number) => {
     setEditingStaffId(null);
-    if (!staffIdInput.trim()) return;
+    const trimmedInput = staffIdInput?.trim() || '';
+    if (!trimmedInput) return;
     try {
       const token = localStorage.getItem("token");
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/records/${id}/staff-id`, {
@@ -122,7 +123,7 @@ export default function DashboardPage() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ staffId: staffIdInput }),
+        body: JSON.stringify({ staffId: trimmedInput }),
       });
       if (res.ok) {
         fetchRecords();

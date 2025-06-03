@@ -5,7 +5,6 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import Image from 'next/image';
-import { HomeIcon, CogIcon } from '@heroicons/react/24/outline';
 
 interface NavItem {
   href: string;
