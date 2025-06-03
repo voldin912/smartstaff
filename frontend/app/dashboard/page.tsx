@@ -38,6 +38,14 @@ interface Record {
   skills?: string[];
 }
 
+// Add new interface for upload status
+interface UploadStatus {
+  isUploading: boolean;
+  progress: 'uploading' | 'transcribing' | 'processing' | 'complete' | 'error';
+  message: string;
+  estimatedTime?: string;
+}
+
 const convertToArray = (data: any): string[] => {
   if (Array.isArray(data)) return data;
   if (typeof data === 'string') {
@@ -69,6 +77,11 @@ export default function DashboardPage() {
   const [isSalesforceOpen, setIsSalesforceOpen] = useState(false);
   const [selectedSalesforceRecord, setSelectedSalesforceRecord] = useState<Record | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [uploadStatus, setUploadStatus] = useState<UploadStatus>({
+    isUploading: false,
+    progress: 'uploading',
+    message: '',
+  });
 
   useEffect(() => {
     fetchRecords();
@@ -163,7 +176,18 @@ export default function DashboardPage() {
       return;
     }
 
-    setIsUploading(true);
+    // Calculate estimated processing time based on file size
+    const fileSizeInMB = file.size / (1024 * 1024);
+    const estimatedMinutes = Math.ceil(fileSizeInMB * 0.5); // Rough estimate: 0.5 minutes per MB
+    const estimatedTime = estimatedMinutes > 1 ? `${estimatedMinutes}分程度` : '1分程度';
+
+    setUploadStatus({
+      isUploading: true,
+      progress: 'uploading',
+      message: 'ファイルをアップロード中です...',
+      estimatedTime
+    });
+
     const formData = new FormData();
     formData.append('audio', file);
     formData.append('fileId', generateFileId());
@@ -171,6 +195,14 @@ export default function DashboardPage() {
 
     try {
       const token = localStorage.getItem("token");
+      
+      // Update status to transcribing
+      setUploadStatus(prev => ({
+        ...prev,
+        progress: 'transcribing',
+        message: `音声ファイルの文字起こしを開始しました。\n処理には${estimatedTime}かかります。\n完了までお待ちください。`
+      }));
+
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/records/upload`, {
         method: 'POST',
         headers: {
@@ -182,24 +214,42 @@ export default function DashboardPage() {
       const data = await response.json();
 
       if (response.ok) {
+        setUploadStatus({
+          isUploading: false,
+          progress: 'complete',
+          message: 'ファイルの処理が完了しました。'
+        });
+        
         setAlertMessage({
           type: 'success',
-          message: 'ファイルのアップロードが完了しました。'
+          message: 'ファイルの処理が完了しました。'
         });
+        
         fetchRecords();
       } else {
+        setUploadStatus({
+          isUploading: false,
+          progress: 'error',
+          message: data.message || 'アップロードに失敗しました。'
+        });
+        
         setAlertMessage({
           type: 'error',
           message: data.message || 'アップロードに失敗しました。'
         });
       }
     } catch (error) {
+      setUploadStatus({
+        isUploading: false,
+        progress: 'error',
+        message: 'アップロード中にエラーが発生しました。'
+      });
+      
       setAlertMessage({
         type: 'error',
         message: 'アップロード中にエラーが発生しました。'
       });
     } finally {
-      setIsUploading(false);
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
@@ -590,6 +640,40 @@ export default function DashboardPage() {
           </div>
         )}
 
+        {/* Upload Status Modal */}
+        {uploadStatus.isUploading && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white p-6 rounded-lg shadow-xl max-w-md w-full mx-4">
+              <div className="flex flex-col items-center">
+                <div className="w-16 h-16 mb-4">
+                  {uploadStatus.progress === 'uploading' && (
+                    <div className="w-full h-full border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+                  )}
+                  {uploadStatus.progress === 'transcribing' && (
+                    <div className="w-full h-full border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+                  )}
+                  {uploadStatus.progress === 'processing' && (
+                    <div className="w-full h-full border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+                  )}
+                </div>
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                  {uploadStatus.progress === 'uploading' && 'アップロード中...'}
+                  {uploadStatus.progress === 'transcribing' && '文字起こし処理中...'}
+                  {uploadStatus.progress === 'processing' && '処理中...'}
+                </h3>
+                <p className="text-gray-600 text-center whitespace-pre-line">
+                  {uploadStatus.message}
+                </p>
+                {uploadStatus.estimatedTime && uploadStatus.progress === 'transcribing' && (
+                  <p className="text-sm text-gray-500 mt-2">
+                    予想処理時間: {uploadStatus.estimatedTime}
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Skill Sheet Sidebar */}
         <SkillSheetSidebar
           open={isSkillSheetOpen}
@@ -611,7 +695,7 @@ export default function DashboardPage() {
         {/* Header */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8 rounded-[5px]">
           <h1 className="text-xl sm:text-2xl font-semibold text-gray-900 rounded-[5px]">
-            Hello Evano <span role="img" aria-label="wave">👋</span>,
+            Hello {user?.name || 'User'} <span role="img" aria-label="wave">👋</span>,
           </h1>
           <div className="flex items-center gap-4 rounded-[5px] w-full sm:w-auto">
             <div className="relative rounded-[5px] flex flex-col items-end gap-2 w-full sm:w-auto">

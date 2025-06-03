@@ -7,25 +7,86 @@ import fs from 'fs';
 import PDFDocument from 'pdfkit';
 import archiver from 'archiver';
 
+// Transcription Queue Manager
+class TranscriptionQueue {
+  constructor() {
+    this.queue = [];
+    this.isProcessing = false;
+  }
+
+  async addToQueue(audioFilePath, options) {
+    return new Promise((resolve, reject) => {
+      this.queue.push({
+        audioFilePath,
+        options,
+        resolve,
+        reject
+      });
+      this.processQueue();
+    });
+  }
+
+  async processQueue() {
+    if (this.isProcessing || this.queue.length === 0) {
+      return;
+    }
+
+    this.isProcessing = true;
+    const { audioFilePath, options, resolve, reject } = this.queue.shift();
+
+    try {
+      const result = await nodewhisper(audioFilePath, options);
+      resolve(result);
+    } catch (error) {
+      reject(error);
+    } finally {
+      this.isProcessing = false;
+      this.processQueue(); // Process next item in queue
+    }
+  }
+}
+
+const transcriptionQueue = new TranscriptionQueue();
+
 // Get all records
 const getRecords = async (req, res) => {
   try {
-    const query = `
+    const { role, company_id, id: userId } = req.user;
+    
+    let query = `
       SELECT 
-        id, 
-        DATE_FORMAT(date, '%d/%m/%y %H:%i:%s') as date,
-        file_id as fileId, 
-        staff_id as staffId, 
-        stt,
-        skill_sheet as skillSheet,
-        lor,
-        salesforce as salesforce,
-        skills,
-        audio_file_path as audioFilePath 
-      FROM records 
-      ORDER BY date DESC
+        r.id, 
+        DATE_FORMAT(r.date, '%d/%m/%y %H:%i:%s') as date,
+        r.file_id as fileId, 
+        r.employee_id as staffId, 
+        r.stt,
+        r.skill_sheet as skillSheet,
+        r.lor,
+        r.salesforce as salesforce,
+        r.skills,
+        r.audio_file_path as audioFilePath,
+        u.company_id as userCompanyId
+      FROM records r
+      LEFT JOIN users u ON r.staff_id = u.id
     `;
-    const [records] = await pool.query(query);
+
+    const queryParams = [];
+
+    // Apply role-based filtering
+    if (role === 'member') {
+      // Members can only see their own records
+      query += ' WHERE r.staff_id = ?';
+      queryParams.push(userId);
+    } else if (role === 'company-manager') {
+      // Company managers can see records from their company
+      query += ' WHERE u.company_id = ?';
+      queryParams.push(company_id);
+    }
+    // Admin can see all records (no WHERE clause needed)
+
+    query += ' ORDER BY r.date DESC';
+
+    const [records] = await pool.query(query, queryParams);
     res.json(records);
   } catch (error) {
     console.error('Error fetching records:', error);
@@ -98,7 +159,9 @@ const uploadAudio = async (req, res) => {
     const audioFilePath = req.file.path;
     console.log(audioFilePath);
     const txtFilePath = getTxtPathFromMp3(audioFilePath);
-    const transcriptionResult = await nodewhisper(audioFilePath, {
+
+    // Use the queue for transcription
+    const transcriptionResult = await transcriptionQueue.addToQueue(audioFilePath, {
       modelName: 'large-v1',
       autoDownloadModelName: 'large-v1',
       removeWavFileAfterTranscription: true,
@@ -106,13 +169,11 @@ const uploadAudio = async (req, res) => {
         task: 'transcribe',
         language: 'ja',
         outputFormat: 'verbose_json',
-        // outputInText: true,
         outputInCsv: true
       },
       logger: console
     });
-    // console.log('Transcription result:', transcriptionResult);
-    console.log(process.env.DIFY_SECRET_KEY);
+
     // Call Dify API
     try {
       const txtFileId = await uploadFile(txtFilePath);
@@ -157,13 +218,14 @@ const uploadAudio = async (req, res) => {
 
         // Insert record into database
         const query = `
-        INSERT INTO records (file_id, staff_id, audio_file_path, stt, skill_sheet, lor, salesforce, skills, date)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())
+        INSERT INTO records (file_id, staff_id, employee_id, audio_file_path, stt, skill_sheet, lor, salesforce, skills, date)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
       `;
 
       const [result] = await pool.query(query, [
         fileId, 
         staffId, 
+        staffId,
         audioFilePath, 
         transcriptionResult, 
         outputs.skillsheet, 
@@ -178,7 +240,7 @@ const uploadAudio = async (req, res) => {
           id, 
           DATE_FORMAT(date, '%d/%m/%y %H:%i:%s') as date,
           file_id as fileId, 
-          staff_id as staffId, 
+          employee_id as staffId, 
           audio_file_path as audioFilePath,
           stt,
           skill_sheet as skillSheet,
@@ -258,7 +320,7 @@ const downloadSkillSheet = async (req, res) => {
   try {
     const { recordId } = req.params;
     const [records] = await pool.query(
-      'SELECT skill_sheet, file_id, staff_id, skills FROM records WHERE id = ?',
+      'SELECT skill_sheet, file_id, employee_id, skills FROM records WHERE id = ?',
       [recordId]
     );
     if (records.length === 0) {
@@ -272,7 +334,7 @@ const downloadSkillSheet = async (req, res) => {
       ? JSON.parse(cleanSkillsheet)
       : cleanSkillsheet;
     const fileId = records[0].file_id;
-    const staffId = records[0].staff_id;
+    const staffId = records[0].employee_id;
     // Parse and clean skills JSON
     let cleanSkillsData = null;
     try {
@@ -370,7 +432,7 @@ const updateStaffId = async (req, res) => {
       return res.status(400).json({ error: 'staffId is required' });
     }
     const [result] = await pool.query(
-      'UPDATE records SET staff_id = ? WHERE id = ?',
+      'UPDATE records SET employee_id = ? WHERE id = ?',
       [staffId, recordId]
     );
     if (result.affectedRows === 0) {
@@ -486,13 +548,13 @@ const downloadBulk = async (req, res) => {
     const { recordId } = req.params;
     // Get record info
     const [records] = await pool.query(
-      'SELECT file_id, audio_file_path, skill_sheet, salesforce, staff_id, skills FROM records WHERE id = ?',
+      'SELECT file_id, audio_file_path, skill_sheet, salesforce, employee_id, skills FROM records WHERE id = ?',
       [recordId]
     );
     if (records.length === 0) {
       return res.status(404).json({ error: 'Record not found' });
     }
-    const { file_id, audio_file_path, skill_sheet, salesforce, staff_id, skills } = records[0];
+    const { file_id, audio_file_path, skill_sheet, salesforce, employee_id, skills } = records[0];
     // Clean and parse skillsheet if it's a string
     const cleanSkillsheet = typeof skill_sheet === 'string' 
       ? skill_sheet.replace(/```json\n?|\n?```/g, '').trim()
@@ -529,7 +591,7 @@ const downloadBulk = async (req, res) => {
     skillSheetPDF.text('＋＋プロフィール＋＋');
     skillSheetPDF.text('______________________________________________________________');
     skillSheetPDF.moveDown(0.5);
-    skillSheetPDF.text(`氏名：${staff_id}`);
+    skillSheetPDF.text(`氏名：${employee_id}`);
     skillSheetPDF.moveDown(0.5);
     skillSheetPDF.text('______________________________________________________________');
     skillSheetPDF.moveDown(0.5);
