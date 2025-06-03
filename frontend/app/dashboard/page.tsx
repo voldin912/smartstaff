@@ -444,17 +444,58 @@ export default function DashboardPage() {
 
   const handleLoRCopy = async (record: Record) => {
     try {
-      // Copy the content to clipboard directly from the record
-      await navigator.clipboard.writeText(record.lor || '');
+      if (!record.lor) {
+        setAlertMessage({
+          type: 'error',
+          message: '推薦文がありません。'
+        });
+        return;
+      }
+
+      // Create a temporary textarea element
+      const textArea = document.createElement('textarea');
+      textArea.value = record.lor;
       
-      setAlertMessage({
-        type: 'success',
-        message: '推薦文をクリップボードにコピーしました。'
-      });
+      // Make the textarea out of viewport
+      textArea.style.position = 'fixed';
+      textArea.style.left = '-999999px';
+      textArea.style.top = '-999999px';
+      document.body.appendChild(textArea);
+      
+      // Select and copy the text
+      textArea.focus();
+      textArea.select();
+      
+      try {
+        const successful = document.execCommand('copy');
+        if (successful) {
+          setAlertMessage({
+            type: 'success',
+            message: '推薦文をクリップボードにコピーしました。'
+          });
+        } else {
+          throw new Error('Copy command failed');
+        }
+      } catch (err) {
+        // Fallback to clipboard API if available
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(record.lor);
+          setAlertMessage({
+            type: 'success',
+            message: '推薦文をクリップボードにコピーしました。'
+          });
+        } else {
+          throw new Error('Clipboard API not available');
+        }
+      } finally {
+        // Clean up
+        document.body.removeChild(textArea);
+      }
     } catch (error) {
+      console.error('Error copying LOR:', error);
       setAlertMessage({
         type: 'error',
-        message: '推薦文のコピー中にエラーが発生しました。'
+        message: '推薦文のコピーに失敗しました。ブラウザの設定を確認してください。'
       });
     }
   };
