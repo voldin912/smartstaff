@@ -58,7 +58,7 @@ const SalesforceSidebar: React.FC<SalesforceSidebarProps> = ({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-y-0 right-0 w-96 bg-white shadow-lg transform transition-transform duration-300 ease-in-out z-50">
+    <div className="fixed inset-y-0 right-0 w-[40%] min-w-[400px] bg-white shadow-lg transform transition-transform duration-300 ease-in-out z-50">
       <div className="h-full flex flex-col">
         {/* Header */}
         <div className="p-4 border-b flex justify-between items-center">
@@ -101,12 +101,20 @@ const SalesforceSidebar: React.FC<SalesforceSidebarProps> = ({
 
         {/* Save Button */}
         <div className="p-4 border-t bg-white">
-          <button
-            onClick={handleSave}
-            className="w-full px-4 py-2 bg-green-500 text-white rounded-md hover:bg-green-600 text-base font-semibold"
-          >
-            保存
-          </button>
+          <div className="flex justify-end gap-2">
+            <button
+              onClick={handleClose}
+              className="px-4 py-2 bg-gray-200 rounded"
+            >
+              キャンセル
+            </button>
+            <button
+              onClick={handleSave}
+              className="px-4 py-2 bg-blue-600 text-white rounded"
+            >
+              保存
+            </button>
+          </div>
         </div>
       </div>
     </div>

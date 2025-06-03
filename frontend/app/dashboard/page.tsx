@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import Image from "next/image";
 import Layout from "@/components/Layout";
 import Pagination from "@/components/molecules/pagination";
@@ -46,6 +46,9 @@ interface UploadStatus {
   estimatedTime?: string;
 }
 
+type SortField = 'date' | 'fileId';
+type SortOrder = 'asc' | 'desc';
+
 const convertToArray = (data: any): string[] => {
   if (Array.isArray(data)) return data;
   if (typeof data === 'string') {
@@ -67,7 +70,10 @@ export default function DashboardPage() {
   const [staffIdInput, setStaffIdInput] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [rowsPerPage, setRowsPerPage] = useState(10);
-  const [sortOrder, setSortOrder] = useState<'newest' | 'oldest'>('newest');
+  const [sortField, setSortField] = useState<SortField>('date');
+  const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
+  const [sortIconDate, setSortIconDate] = useState<'↑' | '↓'>('↓');
+  const [sortIconFileId, setSortIconFileId] = useState<'↑' | '↓'>('↓');
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [alertMessage, setAlertMessage] = useState<{ type: 'success' | 'error', message: string } | null>(null);
@@ -608,16 +614,29 @@ export default function DashboardPage() {
     rec.staffId.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const sortedRecords = [...filteredRecords].sort((a, b) => {
-    const dateA = parseDate(a.date);
-    const dateB = parseDate(b.date);
-    return sortOrder === 'newest' ? dateB - dateA : dateA - dateB;
-  });
+  const sortedRecords = useMemo(() => {
+    return [...filteredRecords].sort((a, b) => {
+      if (sortField === 'date') {
+        const dateA = parseDate(a.date);
+        const dateB = parseDate(b.date);
+        return sortOrder === 'desc' ? dateB - dateA : dateA - dateB;
+      } else {
+        // Sort by fileId
+        const fileIdA = a.fileId.toLowerCase();
+        const fileIdB = b.fileId.toLowerCase();
+        return sortOrder === 'desc' 
+          ? fileIdB.localeCompare(fileIdA)
+          : fileIdA.localeCompare(fileIdB);
+      }
+    });
+  }, [filteredRecords, sortField, sortOrder]);
 
   // Calculate pagination on the filtered and sorted records
-  const indexOfLastRecord = currentPage * rowsPerPage;
-  const indexOfFirstRecord = indexOfLastRecord - rowsPerPage;
-  const paginatedRecords = sortedRecords.slice(indexOfFirstRecord, indexOfLastRecord);
+  const paginatedRecords = useMemo(() => {
+    const indexOfLastRecord = currentPage * rowsPerPage;
+    const indexOfFirstRecord = indexOfLastRecord - rowsPerPage;
+    return sortedRecords.slice(indexOfFirstRecord, indexOfLastRecord);
+  }, [sortedRecords, currentPage, rowsPerPage]);
 
   // Auto-hide alert after 5 seconds
   useEffect(() => {
@@ -628,6 +647,22 @@ export default function DashboardPage() {
       return () => clearTimeout(timer);
     }
   }, [alertMessage]);
+
+  // Add function to handle column header click
+  const handleColumnSort = (field: SortField) => {
+    const newOrder = field === sortField && sortOrder === 'desc' ? 'asc' : 'desc';
+    setSortField(field);
+    setSortOrder(newOrder);
+    
+    // Update icons immediately
+    if (field === 'date') {
+      setSortIconDate(newOrder === 'asc' ? '↑' : '↓');
+      setSortIconFileId('↓');
+    } else {
+      setSortIconDate('↓');
+      setSortIconFileId(newOrder === 'asc' ? '↑' : '↓');
+    }
+  };
 
   return (
     <Layout>
@@ -700,24 +735,6 @@ export default function DashboardPage() {
           </h1>
           <div className="flex items-center gap-4 rounded-[5px] w-full sm:w-auto">
             <div className="relative rounded-[5px] flex flex-col items-end gap-2 w-full sm:w-auto">
-              <div className="relative w-full sm:w-56">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Image
-                    src="/search.svg"
-                    alt="Search"
-                    width={16}
-                    height={16}
-                    className="text-gray-400"
-                  />
-                </div>
-                <input
-                  type="text"
-                  placeholder="日付またはFile IDで検索"
-                  className="pl-10 pr-4 py-2 rounded-[5px] border border-gray-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-100 text-gray-700 w-full shadow-sm"
-                  value={searchTerm}
-                  onChange={e => setSearchTerm(e.target.value)}
-                />
-              </div>
               <input
                 type="file"
                 ref={fileInputRef}
@@ -737,7 +754,7 @@ export default function DashboardPage() {
                     <div className="w-5 h-5 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
                   </div>
                 ) : (
-                  <Image src="/upload.svg" alt="Upload" width={32} height={32} className="rounded-[5px]" />
+                  <Image src="/plus.svg" alt="Upload" width={32} height={32} className="rounded-[5px]" />
                 )}
               </button>
             </div>            
@@ -747,20 +764,28 @@ export default function DashboardPage() {
         {/* Records Section */}
         <div className="bg-white rounded-[5px] shadow">
           <div className="p-4 sm:p-6 lg:p-8">
-            <h2 className="text-lg sm:text-xl font-semibold mb-1 rounded-[5px]">Records</h2>
             <div className="flex justify-between items-center mb-6">
-              <div className="text-green-500 text-sm rounded-[5px]">過去30日間のデータ</div>
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-gray-700 whitespace-nowrap">並び替え:</span>
-                <select
-                  id="sortOrder"
-                  value={sortOrder}
-                  onChange={(e) => setSortOrder(e.target.value as 'newest' | 'oldest')}
-                  className="block w-32 py-1.5 pl-3 text-sm border border-gray-300 rounded-[5px] focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
-                >
-                  <option value="newest">新しい順</option>
-                  <option value="oldest">古い順</option>
-                </select>
+              <h2 className="text-lg sm:text-xl font-semibold rounded-[5px]">Records</h2>
+              <div className="flex items-center gap-4">
+                <div className="text-green-500 text-sm rounded-[5px]">過去30日間のデータ</div>
+                <div className="relative w-56">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <Image
+                      src="/search.svg"
+                      alt="Search"
+                      width={16}
+                      height={16}
+                      className="text-gray-400"
+                    />
+                  </div>
+                  <input
+                    type="text"
+                    placeholder="日付またはFile IDで検索"
+                    className="pl-10 pr-4 py-2 rounded-[5px] border border-gray-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-100 text-gray-700 w-full shadow-sm"
+                    value={searchTerm}
+                    onChange={e => setSearchTerm(e.target.value)}
+                  />
+                </div>
               </div>
             </div>
             <div className="overflow-x-auto rounded-[5px] -mx-4 sm:-mx-6 lg:-mx-8">
@@ -768,8 +793,18 @@ export default function DashboardPage() {
                 <table className="min-w-full text-left text-gray-700 rounded-[5px]">
                   <thead>
                     <tr className="border-b border-gray-200 text-xs text-gray-400 rounded-[5px]">
-                      <th className="py-3 px-4 font-medium text-center min-w-[100px] rounded-[5px]">Date</th>
-                      <th className="py-3 px-4 font-medium text-center min-w-[100px] rounded-[5px]">File ID</th>
+                      <th 
+                        className="py-3 px-4 font-medium text-center min-w-[100px] rounded-[5px] cursor-pointer hover:bg-gray-50"
+                        onClick={() => handleColumnSort('date')}
+                      >
+                        Date <span className="ml-1">{sortIconDate}</span>
+                      </th>
+                      <th 
+                        className="py-3 px-4 font-medium text-center min-w-[100px] rounded-[5px] cursor-pointer hover:bg-gray-50"
+                        onClick={() => handleColumnSort('fileId')}
+                      >
+                        File ID <span className="ml-1">{sortIconFileId}</span>
+                      </th>
                       <th className="py-3 px-4 font-medium text-center min-w-[100px] rounded-[5px]">Staff ID</th>
                       <th className="py-3 px-4 font-medium text-center min-w-[120px] rounded-[5px]">Skill Sheet</th>
                       <th className="py-3 px-4 font-medium text-center min-w-[120px] rounded-[5px]">Salesforce</th>
@@ -786,9 +821,9 @@ export default function DashboardPage() {
                     ) : (
                       paginatedRecords.map((rec) => (
                         <tr key={rec.id} className="border-b border-gray-100 hover:bg-gray-50 transition text-left align-middle rounded-[5px]">
-                          <td className="py-3 px-4 whitespace-nowrap align-middle min-w-[100px] rounded-[5px]">{formatDate(rec.date)}</td>
-                          <td className="py-3 px-4 whitespace-nowrap align-middle min-w-[100px] rounded-[5px]">{rec.fileId}</td>
-                          <td className="py-3 px-4 whitespace-nowrap align-middle min-w-[100px] rounded-[5px]">
+                          <td className="py-5 px-4 whitespace-nowrap align-middle min-w-[100px] rounded-[5px]">{formatDate(rec.date)}</td>
+                          <td className="py-5 px-4 whitespace-nowrap align-middle min-w-[100px] rounded-[5px]">{rec.fileId}</td>
+                          <td className="py-5 px-4 whitespace-nowrap align-middle min-w-[100px] rounded-[5px]">
                             <div className="flex items-center gap-x-2 rounded-[5px]">
                               {editingStaffId === rec.id ? (
                                 <input
@@ -809,7 +844,7 @@ export default function DashboardPage() {
                             </div>
                           </td>
                           {/* Skill Sheet icons */}
-                          <td className="py-3 px-4 align-middle min-w-[120px] rounded-[5px]">
+                          <td className="py-5 px-4 align-middle min-w-[120px] rounded-[5px]">
                             <div className="flex items-center justify-center gap-x-3 rounded-[5px]">
                               <button 
                                 className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center" 
@@ -831,7 +866,7 @@ export default function DashboardPage() {
                             </div>
                           </td>
                           {/* Salesforce icons */}
-                          <td className="py-3 px-4 align-middle min-w-[120px] rounded-[5px]">
+                          <td className="py-5 px-4 align-middle min-w-[120px] rounded-[5px]">
                             <div className="flex items-center justify-center gap-x-3 rounded-[5px]">
                               <button 
                                 className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center" 
@@ -853,45 +888,38 @@ export default function DashboardPage() {
                             </div>
                           </td>
                           {/* LoR icons */}
-                          <td className="py-3 px-4 align-middle min-w-[100px] rounded-[5px]">
+                          <td className="py-5 px-4 align-middle min-w-[100px] rounded-[5px]">
                             <div className="flex items-center justify-center rounded-[5px]">
                               <button 
-                                className="hover:text-indigo-600 rounded-[5px] w-5 h-5 flex items-center justify-center" 
+                                className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center" 
                                 title="Copy"
                                 onClick={() => handleLoRCopy(rec)}
                               >
-                                <svg className="w-5 h-5 rounded-[5px]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                                  <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
-                                </svg>
+                                <Image src="/copy1.svg" alt="copy" width={20} height={20} className="rounded-[5px]" />
                               </button>
                             </div>
                           </td>
                           {/* STT icons */}
-                          <td className="py-3 px-4 align-middle min-w-[100px] rounded-[5px]">
+                          <td className="py-5 px-4 align-middle min-w-[100px] rounded-[5px]">
                             <div className="flex items-center justify-center rounded-[5px]">
                               <button 
-                                className="hover:text-indigo-600 rounded-[5px] w-5 h-5 flex items-center justify-center" 
+                                className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center" 
                                 title="Download"
                                 onClick={() => handleSTTDownload(rec)}
                               >
-                                <svg className="w-5 h-5 rounded-[5px]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3" />
-                                </svg>
+                                <Image src="/download1.svg" alt="download" width={20} height={20} className="rounded-[5px]" />
                               </button>
                             </div>
                           </td>
                           {/* Bulk icons */}
-                          <td className="py-3 px-4 align-middle min-w-[100px] rounded-[5px]">
+                          <td className="py-5 px-4 align-middle min-w-[100px] rounded-[5px]">
                             <div className="flex items-center justify-center rounded-[5px]">
                               <button 
-                                className="hover:text-indigo-600 rounded-[5px] w-5 h-5 flex items-center justify-center" 
+                                className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center" 
                                 title="Download"
                                 onClick={() => handleBulkDownload(rec)}
                               >
-                                <svg className="w-5 h-5 rounded-[5px]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3" />
-                                </svg>
+                                <Image src="/download1.svg" alt="download" width={20} height={20} className="rounded-[5px]" />
                               </button>
                             </div>
                           </td>

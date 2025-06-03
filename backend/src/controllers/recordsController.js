@@ -213,13 +213,13 @@ const uploadAudio = async (req, res) => {
           : cleanSkillsheet;
         
         // Extract work content array from skillsheet
-        const workContentArray = Object.values(skillsheetData).map(career => career['work content']);
+        const workContentArray = Object.values(skillsheetData).map(career => career['summary']);
         console.log("workContentArray", workContentArray);
 
         // Insert record into database
         const query = `
-        INSERT INTO records (file_id, staff_id, employee_id, audio_file_path, stt, skill_sheet, lor, salesforce, skills, date)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+        INSERT INTO records (file_id, staff_id, employee_id, audio_file_path, stt, skill_sheet, lor, salesforce, skills, hope, date)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
       `;
 
       const [result] = await pool.query(query, [
@@ -231,7 +231,8 @@ const uploadAudio = async (req, res) => {
         outputs.skillsheet, 
         outputs.lor,
         JSON.stringify(workContentArray),
-        outputs.skills
+        outputs.skills,
+        outputs.hope
       ]);
 
       // Return the created record with formatted date
@@ -506,7 +507,7 @@ const downloadSalesforce = async (req, res) => {
     const { recordId } = req.params;
     // Get salesforce data and file_id from database
     const [records] = await pool.query(
-      'SELECT salesforce, file_id FROM records WHERE id = ?',
+      'SELECT salesforce, file_id, hope FROM records WHERE id = ?',
       [recordId]
     );
     if (records.length === 0) {
@@ -514,6 +515,7 @@ const downloadSalesforce = async (req, res) => {
     }
     const salesforceArr = JSON.parse(records[0].salesforce || '[]');
     const fileId = records[0].file_id;
+    const hope = records[0].hope;
 
     // Create PDF
     const doc = new PDFDocument({
@@ -529,12 +531,21 @@ const downloadSalesforce = async (req, res) => {
     doc.font('NotoSansJP').fontSize(16).text('セールスフォース', { align: 'center' });
     doc.moveDown();
 
+    // Add career history
     salesforceArr.forEach((content, idx) => {
       doc.font('NotoSansJP').fontSize(12).text(`経歴 ${idx + 1}`, { underline: true });
       doc.moveDown(0.2);
       doc.font('NotoSansJP').fontSize(12).text(content);
       doc.moveDown();
     });
+
+    // Add hope data if it exists
+    if (hope) {
+      doc.font('NotoSansJP').fontSize(14).text('スタッフ希望条件', { underline: true });
+      doc.moveDown(0.2);
+      doc.font('NotoSansJP').fontSize(12).text(hope);
+      doc.moveDown(2); // Add more space after hope data
+    }
 
     doc.end();
   } catch (error) {

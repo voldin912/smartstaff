@@ -32,16 +32,34 @@ const SkillSheetSidebar = ({ open, onClose, skillSheetData, skills, onSave }: Sk
   const [skillsList, setSkillsList] = useState<string>('');
   const [hasChanges, setHasChanges] = useState(false);
   const [initialData, setInitialData] = useState<string>('');
-
   useEffect(() => {
     if (skillSheetData) {
       try {
         const cleanedData = cleanJsonString(skillSheetData);
         const parsedData = typeof cleanedData === 'string' ? JSON.parse(cleanedData) : cleanedData;
-        const sanitizedData = Object.entries(parsedData).reduce((acc, [key, value]) => ({
-          ...acc,
-          [key]: typeof value === 'string' ? value : String(value || '')
-        }), {});
+        console.log("parsedData", parsedData);
+        const sanitizedData = Object.entries(parsedData).reduce((acc, [key, value]) => {
+          // If value is an object (career entry), sanitize its fields
+          if (value && typeof value === 'object' && !Array.isArray(value)) {
+            const careerValue = value as Partial<Career>;
+            return {
+              ...acc,
+              [key]: {
+                from: String(careerValue.from || ''),
+                to: String(careerValue.to || ''),
+                'company name': String(careerValue['company name'] || ''),
+                'employee type': String(careerValue['employee type'] || ''),
+                'work content': String(careerValue['work content'] || '')
+              }
+            };
+          }
+          // For non-object values, convert to string as before
+          return {
+            ...acc,
+            [key]: typeof value === 'string' ? value : String(value || '')
+          };
+        }, {});
+        console.log("sanitizedData", sanitizedData);
         setLocalData(sanitizedData);
         setInitialData(JSON.stringify(sanitizedData));
         setHasChanges(false);
@@ -83,7 +101,7 @@ const SkillSheetSidebar = ({ open, onClose, skillSheetData, skills, onSave }: Sk
     );
     setShikaku(Array.isArray(parsedSkills['資格']) ? parsedSkills['資格'].join(', ') : '');
     setSkillsList(Array.isArray(parsedSkills['スキル']) ? parsedSkills['スキル'].join(', ') : '');
-  }, [skillSheetData, skills]);
+  }, [skillSheetData, skills, open]);
 
   const handleChange = (careerKey: string, field: keyof Career, value: string) => {
     setLocalData(prev => {
@@ -138,7 +156,7 @@ const SkillSheetSidebar = ({ open, onClose, skillSheetData, skills, onSave }: Sk
       {/* Overlay */}
       <div className="fixed inset-0 bg-black opacity-30" onClick={handleClose}></div>
       {/* Sidebar */}
-      <div className="relative ml-auto w-full max-w-md h-full bg-white shadow-xl p-6 overflow-y-auto">
+      <div className="relative ml-auto w-full max-w-[40%] min-w-[400px] h-full bg-white shadow-xl p-6 overflow-y-auto">
         <button className="absolute top-4 right-4 text-gray-500 hover:text-gray-700" onClick={handleClose}>
           <span className="text-2xl">&times;</span>
         </button>
