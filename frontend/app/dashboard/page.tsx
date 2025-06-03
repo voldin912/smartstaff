@@ -178,7 +178,7 @@ export default function DashboardPage() {
 
     // Calculate estimated processing time based on file size
     const fileSizeInMB = file.size / (1024 * 1024);
-    const estimatedMinutes = Math.ceil(fileSizeInMB * 0.5); // Rough estimate: 0.5 minutes per MB
+    const estimatedMinutes = Math.ceil(fileSizeInMB * 1.5); // Rough estimate: 0.5 minutes per MB
     const estimatedTime = estimatedMinutes > 1 ? `${estimatedMinutes}分程度` : '1分程度';
 
     setUploadStatus({
@@ -200,7 +200,7 @@ export default function DashboardPage() {
       setUploadStatus(prev => ({
         ...prev,
         progress: 'transcribing',
-        message: `音声ファイルの文字起こしを開始しました。\n処理には${estimatedTime}かかります。\n完了までお待ちください。`
+        message: `音声ファイルの文字起こしを開始しました。\n完了までお待ちください。`
       }));
 
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/records/upload`, {
