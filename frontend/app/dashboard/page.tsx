@@ -456,7 +456,7 @@ export default function DashboardPage() {
 
       // Create a temporary textarea element
       const textArea = document.createElement('textarea');
-      textArea.value = record.lor;
+      textArea.value = record.lor ?? '';
       
       // Make the textarea out of viewport
       textArea.style.position = 'fixed';
@@ -481,7 +481,7 @@ export default function DashboardPage() {
       } catch (err) {
         // Fallback to clipboard API if available
         if (navigator.clipboard && window.isSecureContext) {
-          await navigator.clipboard.writeText(record.lor);
+          await navigator.clipboard.writeText(record.lor ?? '');
           setAlertMessage({
             type: 'success',
             message: '推薦文をクリップボードにコピーしました。'
@@ -754,6 +754,12 @@ export default function DashboardPage() {
                     予想処理時間: {uploadStatus.estimatedTime}
                   </p>
                 )}
+                <button
+                  className="mt-4 px-4 py-2 bg-gray-200 rounded hover:bg-gray-300"
+                  onClick={() => setUploadStatus({ ...uploadStatus, isUploading: false })}
+                >
+                  閉じる
+                </button>
               </div>
             </div>
           </div>
