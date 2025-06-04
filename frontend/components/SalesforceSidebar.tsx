@@ -73,12 +73,6 @@ const SalesforceSidebar: React.FC<SalesforceSidebarProps> = ({
           <div className="flex items-center gap-4">
             <span className="text-sm text-gray-500">Staff ID</span>
             <span className="text-base font-semibold text-gray-900">{staffId}</span>
-            <button className="text-gray-500 hover:text-gray-700">
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" strokeWidth="2" />
-                <path d="M5 15V5a2 2 0 012-2h10" stroke="currentColor" strokeWidth="2" />
-              </svg>
-            </button>
           </div>
         </div>
 

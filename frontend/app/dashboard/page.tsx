@@ -30,6 +30,7 @@ interface Record {
   date: string;
   fileId: string;
   staffId: string;
+  userName?: string;
   skillSheet: boolean;
   salesforce: string[] | null;
   lor: string | null;
@@ -46,7 +47,7 @@ interface UploadStatus {
   estimatedTime?: string;
 }
 
-type SortField = 'date' | 'fileId';
+type SortField = 'date' | 'fileId' | 'userName';
 type SortOrder = 'asc' | 'desc';
 
 const convertToArray = (data: any): string[] => {
@@ -74,6 +75,7 @@ export default function DashboardPage() {
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
   const [sortIconDate, setSortIconDate] = useState<'↑' | '↓'>('↓');
   const [sortIconFileId, setSortIconFileId] = useState<'↑' | '↓'>('↓');
+  const [sortIconUserName, setSortIconUserName] = useState<'↑' | '↓'>('↓');
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [alertMessage, setAlertMessage] = useState<{ type: 'success' | 'error', message: string } | null>(null);
@@ -650,9 +652,10 @@ export default function DashboardPage() {
   };
 
   const filteredRecords = records.filter(rec =>
-    rec.date.includes(searchTerm) ||
-    rec.fileId.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    rec.staffId.toLowerCase().includes(searchTerm.toLowerCase())
+    (rec.date || '').includes(searchTerm) ||
+    (rec.fileId || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (rec.staffId || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (rec.userName || '').toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   const sortedRecords = useMemo(() => {
@@ -694,14 +697,19 @@ export default function DashboardPage() {
     const newOrder = field === sortField && sortOrder === 'desc' ? 'asc' : 'desc';
     setSortField(field);
     setSortOrder(newOrder);
-    
-    // Update icons immediately
+
     if (field === 'date') {
       setSortIconDate(newOrder === 'asc' ? '↑' : '↓');
       setSortIconFileId('↓');
-    } else {
+      setSortIconUserName('↓');
+    } else if (field === 'fileId') {
       setSortIconDate('↓');
       setSortIconFileId(newOrder === 'asc' ? '↑' : '↓');
+      setSortIconUserName('↓');
+    } else if (field === 'userName') {
+      setSortIconDate('↓');
+      setSortIconFileId('↓');
+      setSortIconUserName(newOrder === 'asc' ? '↑' : '↓');
     }
   };
 
@@ -842,6 +850,12 @@ export default function DashboardPage() {
                       </th>
                       <th 
                         className="py-3 px-4 font-medium text-center min-w-[100px] rounded-[5px] cursor-pointer hover:bg-gray-50"
+                        onClick={() => handleColumnSort('userName')}
+                      >
+                        User Name <span className="ml-1">{sortIconUserName}</span>
+                      </th>
+                      <th 
+                        className="py-3 px-4 font-medium text-center min-w-[100px] rounded-[5px] cursor-pointer hover:bg-gray-50"
                         onClick={() => handleColumnSort('fileId')}
                       >
                         File ID <span className="ml-1">{sortIconFileId}</span>
@@ -863,6 +877,7 @@ export default function DashboardPage() {
                       paginatedRecords.map((rec) => (
                         <tr key={rec.id} className="border-b border-gray-100 hover:bg-gray-50 transition text-left align-middle rounded-[5px]">
                           <td className="py-5 px-4 whitespace-nowrap align-middle min-w-[100px] rounded-[5px]">{formatDate(rec.date)}</td>
+                          <td className="py-5 px-4 whitespace-nowrap align-middle min-w-[100px] rounded-[5px]">{rec.userName}</td>
                           <td className="py-5 px-4 whitespace-nowrap align-middle min-w-[100px] rounded-[5px]">{rec.fileId}</td>
                           <td className="py-5 px-4 whitespace-nowrap align-middle min-w-[100px] rounded-[5px]">
                             <div className="flex items-center gap-x-2 rounded-[5px]">
@@ -973,7 +988,7 @@ export default function DashboardPage() {
             </div>
           </div>
           <Pagination
-            totalItems={records.length}
+            totalItems={filteredRecords.length}
             currentPage={currentPage}
             rowsPerPage={rowsPerPage}
             onPageChange={handlePageChange}

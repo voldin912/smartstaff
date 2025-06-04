@@ -65,7 +65,8 @@ const getRecords = async (req, res) => {
         r.salesforce as salesforce,
         r.skills,
         r.audio_file_path as audioFilePath,
-        u.company_id as userCompanyId
+        u.company_id as userCompanyId,
+        u.name as userName
       FROM records r
       LEFT JOIN users u ON r.staff_id = u.id
     `;
@@ -317,6 +318,21 @@ const downloadSTT = async (req, res) => {
   }
 };
 
+// Helper to draw a solid horizontal line
+function drawSolidLine(doc, shouldStroke = false) {
+  const { left, right } = doc.page.margins;
+  const y = doc.y + 5;
+  if(shouldStroke) {
+    doc.lineWidth(1);
+    doc.moveTo(left, y).lineTo(doc.page.width - right, y).stroke();
+  }
+  else {
+    doc.lineWidth(0.5);
+    doc.moveTo(left, y).lineTo(doc.page.width - right, y).stroke();
+  }
+  doc.moveDown(0.5);
+}
+
 const downloadSkillSheet = async (req, res) => {
   try {
     const { recordId } = req.params;
@@ -348,46 +364,62 @@ const downloadSkillSheet = async (req, res) => {
     } catch (e) {
       cleanSkillsData = null;
     }
-    console.log("skillsData", cleanSkillsData, records[0].skills);
-    // Create PDF
-    const doc = new PDFDocument({ size: 'A4', margins: { top: 50, bottom: 50, left: 50, right: 50 } });
+
+    // Create PDF with wider content area
+    const doc = new PDFDocument({ 
+      size: 'A4',
+      margins: { 
+        top: 100,
+        bottom: 100,
+        left: 40,
+        right: 40
+      }
+    });
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename=skill_sheet_${fileId}.pdf`);
     doc.pipe(res);
     doc.registerFont('NotoSansJP', 'C:/Users/ALPHA/BITREP/auth-crud/backend/fonts/NotoSansJP-Regular.ttf');
+
+    // Title - Centered
     doc.font('NotoSansJP').fontSize(16).text('Personal Data Sheet', { align: 'center' });
     doc.moveDown();
+
+    // Profile Section
     doc.fontSize(12);
-    doc.text('______________________________________________________________');
-    doc.moveDown(0.5);
+    drawSolidLine(doc);
     doc.text('＋＋プロフィール＋＋');
-    doc.text('______________________________________________________________');
-    doc.moveDown(0.5);
-    doc.text(`氏名：${staffId}`);
-    doc.moveDown(0.5);
-    doc.text('______________________________________________________________');
-    doc.moveDown(0.5);
+    drawSolidLine(doc);
+    doc.text(`■氏名：${staffId}`);
+    drawSolidLine(doc, true);
+
+    // Career History Section
     doc.text('■経歴詳細');
+    drawSolidLine(doc);
     doc.moveDown();
+
+    // Career entries
     Object.keys(skillSheet).forEach((key, idx) => {
       const c = skillSheet[key];
       doc.text(`[期間]${c.from}～${c.to}`);
       doc.text(`[雇用形態]${c['employee type']}`);
-      doc.text(`[会社]${c['company name']}`);
+      // doc.text(`[会社]${c['company name']}`);
       doc.text('[経験職種]');
       const experiences = c['work content'].split('、');
       experiences.forEach(exp => {
-        doc.text(`・${exp.trim()}`);
+        doc.text(`${exp.trim()}`);
       });
-      doc.text('______________________________________________________________');
-      doc.moveDown();
+      drawSolidLine(doc, true);
     });
-    // --- Footer: Skills Section ---
+
+    // Skills Section
     if (cleanSkillsData) {
       doc.addPage();
-      doc.font('NotoSansJP').fontSize(14).text('＋＋語学力・資格・スキル＋＋', {align: 'left'});
+      drawSolidLine(doc, true);
+      doc.font('NotoSansJP').fontSize(14).text('＋＋語学力・資格・スキル＋＋');
+      drawSolidLine(doc);
       doc.moveDown();
-      // 語学力
+
+      // Language Skills
       doc.font('NotoSansJP').fontSize(12).text('■語学力');
       if (Array.isArray(cleanSkillsData['語学力']) && cleanSkillsData['語学力'].length > 0) {
         cleanSkillsData['語学力'].forEach(lang => {
@@ -399,7 +431,8 @@ const downloadSkillSheet = async (req, res) => {
         doc.text('  なし');
       }
       doc.moveDown(0.5);
-      // 資格
+
+      // Qualifications
       doc.font('NotoSansJP').fontSize(12).text('■資格');
       if (Array.isArray(cleanSkillsData['資格']) && cleanSkillsData['資格'].length > 0 && cleanSkillsData['資格'].some(q => q && q.trim() !== '')) {
         doc.text('  ' + cleanSkillsData['資格'].filter(q => q && q.trim() !== '').join('、'));
@@ -407,17 +440,21 @@ const downloadSkillSheet = async (req, res) => {
         doc.text('  なし');
       }
       doc.moveDown(0.5);
-      // スキル
+
+      // Skills
       doc.font('NotoSansJP').fontSize(12).text('■スキル');
       if (Array.isArray(cleanSkillsData['スキル']) && cleanSkillsData['スキル'].length > 0) {
         doc.text('  ' + cleanSkillsData['スキル'].join('、'));
       } else {
         doc.text('  なし');
       }
-      doc.moveDown();
-      
+      doc.moveDown(2);
+
+      // Footer note
+      doc.font('NotoSansJP').fontSize(10).text('株式会社レゾナゲート', { indent: 10, align: 'center' });
       doc.fillColor('black');
     }
+
     doc.end();
   } catch (error) {
     console.error('Error downloading skill sheet:', error);
