@@ -171,8 +171,7 @@ const uploadAudio = async (req, res) => {
         language: 'ja',
         outputFormat: 'verbose_json',
         outputInCsv: true
-      },
-      logger: console
+      }
     });
 
     // Call Dify API
@@ -520,14 +519,14 @@ const getSkillSheet = async (req, res) => {
 const updateSalesforce = async (req, res) => {
   try {
     const { recordId } = req.params;
-    const {salesforceData} = req.body;
+    const {salesforceData, lor} = req.body;
     // console.log("salesforceData", salesforceData);  
     if (!Array.isArray(salesforceData)) {
       return res.status(400).json({ error: 'Invalid salesforce data' });
     }
     const [result] = await pool.query(
-      'UPDATE records SET salesforce = ? WHERE id = ?',
-      [JSON.stringify(salesforceData), recordId]
+      'UPDATE records SET salesforce = ?, lor = ? WHERE id = ?',
+      [JSON.stringify(salesforceData), lor, recordId]
     );
     if (result.affectedRows === 0) {
       return res.status(404).json({ error: 'Record not found' });
@@ -596,13 +595,13 @@ const downloadBulk = async (req, res) => {
     const { recordId } = req.params;
     // Get record info
     const [records] = await pool.query(
-      'SELECT file_id, audio_file_path, skill_sheet, salesforce, employee_id, skills FROM records WHERE id = ?',
+      'SELECT file_id, audio_file_path, skill_sheet, salesforce, employee_id, skills, stt, hope FROM records WHERE id = ?',
       [recordId]
     );
     if (records.length === 0) {
       return res.status(404).json({ error: 'Record not found' });
     }
-    const { file_id, audio_file_path, skill_sheet, salesforce, employee_id, skills } = records[0];
+    const { file_id, audio_file_path, skill_sheet, salesforce, employee_id, skills, stt, hope } = records[0];
     // Clean and parse skillsheet if it's a string
     const cleanSkillsheet = typeof skill_sheet === 'string' 
       ? skill_sheet.replace(/```json\n?|\n?```/g, '').trim()
@@ -613,7 +612,8 @@ const downloadBulk = async (req, res) => {
     // Parse skills JSON
     let skillsData = null;
     try {
-      skillsData = typeof skills === 'string' ? JSON.parse(skills) : skills;
+      const cleanedSkills = skills.replace(/```json\n?|\n?```/g, '').trim();
+      skillsData = typeof skills === 'string' ? JSON.parse(cleanedSkills) : cleanedSkills;
     } catch (e) {
       skillsData = null;
     }
@@ -628,42 +628,86 @@ const downloadBulk = async (req, res) => {
       archive.file(audio_file_path, { name: `audio_${file_id}${audio_file_path.slice(audio_file_path.lastIndexOf('.'))}` });
     }
 
-    // 2. Add skillsheet PDF (in memory) - Updated to match downloadSkillSheet layout
-    const skillSheetPDF = new PDFDocument({ size: 'A4', margins: { top: 50, bottom: 50, left: 50, right: 50 } });
+    // 2. Add STT PDF
+    const sttPDF = new PDFDocument({
+      size: 'A4',
+      margins: {
+        top: 50,
+        bottom: 50,
+        left: 50,
+        right: 50
+      }
+    });
+    sttPDF.registerFont('NotoSansJP', 'C:/Users/ALPHA/BITREP/auth-crud/backend/fonts/NotoSansJP-Regular.ttf');
+    const paragraphs = stt
+      .replace(/\r\n/g, '\n')
+      .replace(/\r/g, '\n')
+      .split('\n')
+      .filter(p => p.trim() !== '');
+    sttPDF.font('NotoSansJP').fontSize(12);
+    paragraphs.forEach((paragraph, index) => {
+      if (index > 0) sttPDF.moveDown();
+      sttPDF.text(paragraph, {
+        align: 'left',
+        lineGap: 5,
+        features: ['kern', 'liga'],
+        encoding: 'utf8'
+      });
+    });
+    sttPDF.end();
+    archive.append(sttPDF, { name: `stt_${file_id}.pdf` });
+
+    // 3. Add skillsheet PDF
+    const skillSheetPDF = new PDFDocument({ 
+      size: 'A4',
+      margins: { 
+        top: 100,
+        bottom: 100,
+        left: 40,
+        right: 40
+      }
+    });
     skillSheetPDF.registerFont('NotoSansJP', 'C:/Users/ALPHA/BITREP/auth-crud/backend/fonts/NotoSansJP-Regular.ttf');
+
+    // Title - Centered
     skillSheetPDF.font('NotoSansJP').fontSize(16).text('Personal Data Sheet', { align: 'center' });
     skillSheetPDF.moveDown();
+
+    // Profile Section
     skillSheetPDF.fontSize(12);
-    skillSheetPDF.text('______________________________________________________________');
-    skillSheetPDF.moveDown(0.5);
+    drawSolidLine(skillSheetPDF);
     skillSheetPDF.text('＋＋プロフィール＋＋');
-    skillSheetPDF.text('______________________________________________________________');
-    skillSheetPDF.moveDown(0.5);
-    skillSheetPDF.text(`氏名：${employee_id}`);
-    skillSheetPDF.moveDown(0.5);
-    skillSheetPDF.text('______________________________________________________________');
-    skillSheetPDF.moveDown(0.5);
-    skillSheetPDF.text('●経歴詳細');
+    drawSolidLine(skillSheetPDF);
+    skillSheetPDF.text(`■氏名：${employee_id}`);
+    drawSolidLine(skillSheetPDF, true);
+
+    // Career History Section
+    skillSheetPDF.text('■経歴詳細');
+    drawSolidLine(skillSheetPDF);
     skillSheetPDF.moveDown();
+
+    // Career entries
     Object.keys(skillSheetObj).forEach((key, idx) => {
       const c = skillSheetObj[key];
       skillSheetPDF.text(`[期間]${c.from}～${c.to}`);
       skillSheetPDF.text(`[雇用形態]${c['employee type']}`);
-      skillSheetPDF.text(`[会社]${c['company name']}`);
       skillSheetPDF.text('[経験職種]');
       const experiences = c['work content'].split('、');
       experiences.forEach(exp => {
-        skillSheetPDF.text(`・${exp.trim()}`);
+        skillSheetPDF.text(`${exp.trim()}`);
       });
-      skillSheetPDF.text('______________________________________________________________');
-      skillSheetPDF.moveDown();
+      drawSolidLine(skillSheetPDF, true);
     });
-    // --- Footer: Skills Section ---
+
+    // Skills Section
     if (skillsData) {
       skillSheetPDF.addPage();
-      skillSheetPDF.font('NotoSansJP').fontSize(14).text('＋＋語学力・資格・スキル＋＋', {align: 'left'});
+      drawSolidLine(skillSheetPDF, true);
+      skillSheetPDF.font('NotoSansJP').fontSize(14).text('＋＋語学力・資格・スキル＋＋');
+      drawSolidLine(skillSheetPDF);
       skillSheetPDF.moveDown();
-      // 語学力
+
+      // Language Skills
       skillSheetPDF.font('NotoSansJP').fontSize(12).text('■語学力');
       if (Array.isArray(skillsData['語学力']) && skillsData['語学力'].length > 0) {
         skillsData['語学力'].forEach(lang => {
@@ -675,7 +719,8 @@ const downloadBulk = async (req, res) => {
         skillSheetPDF.text('  なし');
       }
       skillSheetPDF.moveDown(0.5);
-      // 資格
+
+      // Qualifications
       skillSheetPDF.font('NotoSansJP').fontSize(12).text('■資格');
       if (Array.isArray(skillsData['資格']) && skillsData['資格'].length > 0 && skillsData['資格'].some(q => q && q.trim() !== '')) {
         skillSheetPDF.text('  ' + skillsData['資格'].filter(q => q && q.trim() !== '').join('、'));
@@ -683,32 +728,49 @@ const downloadBulk = async (req, res) => {
         skillSheetPDF.text('  なし');
       }
       skillSheetPDF.moveDown(0.5);
-      // スキル
+
+      // Skills
       skillSheetPDF.font('NotoSansJP').fontSize(12).text('■スキル');
       if (Array.isArray(skillsData['スキル']) && skillsData['スキル'].length > 0) {
         skillSheetPDF.text('  ' + skillsData['スキル'].join('、'));
       } else {
         skillSheetPDF.text('  なし');
       }
-      skillSheetPDF.moveDown();
-      skillSheetPDF.font('NotoSansJP').fontSize(10).fillColor('gray').text('・ヒアリングした結果データが取得できない場合は不要項目として表示しない。', {indent: 10});
+      skillSheetPDF.moveDown(2);
+
+      // Footer note
+      skillSheetPDF.font('NotoSansJP').fontSize(10).text('株式会社レゾナゲート', { indent: 10, align: 'center' });
       skillSheetPDF.fillColor('black');
     }
     skillSheetPDF.end();
     archive.append(skillSheetPDF, { name: `skill_sheet_${file_id}.pdf` });
 
-    // 3. Add salesforce PDF (in memory)
+    // 4. Add salesforce PDF
     const salesforceArr = JSON.parse(salesforce || '[]');
-    const salesforcePDF = new PDFDocument({ size: 'A4', margins: { top: 50, bottom: 50, left: 50, right: 50 } });
+    const salesforcePDF = new PDFDocument({
+      size: 'A4',
+      margins: { top: 50, bottom: 50, left: 50, right: 50 }
+    });
     salesforcePDF.registerFont('NotoSansJP', 'C:/Users/ALPHA/BITREP/auth-crud/backend/fonts/NotoSansJP-Regular.ttf');
     salesforcePDF.font('NotoSansJP').fontSize(16).text('セールスフォース', { align: 'center' });
     salesforcePDF.moveDown();
+
+    // Add career history
     salesforceArr.forEach((content, idx) => {
       salesforcePDF.font('NotoSansJP').fontSize(12).text(`経歴 ${idx + 1}`, { underline: true });
       salesforcePDF.moveDown(0.2);
       salesforcePDF.font('NotoSansJP').fontSize(12).text(content);
       salesforcePDF.moveDown();
     });
+
+    // Add hope data if it exists
+    if (hope) {
+      salesforcePDF.font('NotoSansJP').fontSize(14).text('スタッフ希望条件', { underline: true });
+      salesforcePDF.moveDown(0.2);
+      salesforcePDF.font('NotoSansJP').fontSize(12).text(hope);
+      salesforcePDF.moveDown(2);
+    }
+
     salesforcePDF.end();
     archive.append(salesforcePDF, { name: `salesforce_${file_id}.pdf` });
 

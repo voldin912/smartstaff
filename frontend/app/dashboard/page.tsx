@@ -360,7 +360,7 @@ export default function DashboardPage() {
     setIsSalesforceOpen(true);
   };
 
-  const handleSalesforceSave = async (data: string[]) => {
+  const handleSalesforceSave = async (data: string[], lor: string) => {
     if (!selectedSalesforceRecord) return;
 
     try {
@@ -371,7 +371,7 @@ export default function DashboardPage() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ salesforceData: data }),
+        body: JSON.stringify({ salesforceData: data, lor: lor }),
       });
 
       if (response.ok) {
@@ -779,6 +779,7 @@ export default function DashboardPage() {
           open={isSalesforceOpen}
           onClose={() => setIsSalesforceOpen(false)}
           salesforceData={selectedSalesforceRecord ? convertToArray(selectedSalesforceRecord.salesforce) : null}
+          initialLor={selectedSalesforceRecord?.lor}
           onSave={handleSalesforceSave}
           staffId={selectedSalesforceRecord?.staffId}
         />

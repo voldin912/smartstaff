@@ -4,8 +4,9 @@ interface SalesforceSidebarProps {
   open: boolean;
   onClose: () => void;
   salesforceData: string[] | null;
-  onSave: (data: string[]) => void;
+  onSave: (data: string[], lor: string) => void;
   staffId?: string | number;
+  initialLor?: string | null;
 }
 
 const SalesforceSidebar: React.FC<SalesforceSidebarProps> = ({
@@ -14,8 +15,10 @@ const SalesforceSidebar: React.FC<SalesforceSidebarProps> = ({
   salesforceData,
   onSave,
   staffId,
+  initialLor = '',
 }) => {
   const [workContents, setWorkContents] = useState<string[]>([]);
+  const [lor, setLor] = useState<string>(initialLor || '');
   const [hasChanges, setHasChanges] = useState(false);
 
   useEffect(() => {
@@ -32,6 +35,10 @@ const SalesforceSidebar: React.FC<SalesforceSidebarProps> = ({
     }
   }, [salesforceData]);
 
+  useEffect(() => {
+    setLor(initialLor || '');
+  }, [initialLor]);
+
   const handleWorkContentChange = (index: number, value: string) => {
     const newWorkContents = [...workContents];
     newWorkContents[index] = value;
@@ -39,8 +46,13 @@ const SalesforceSidebar: React.FC<SalesforceSidebarProps> = ({
     setHasChanges(true);
   };
 
+  const handleLorChange = (value: string) => {
+    setLor(value);
+    setHasChanges(true);
+  };
+
   const handleSave = () => {
-    onSave(workContents);
+    onSave(workContents, lor);
     setHasChanges(false);
   };
 
@@ -91,6 +103,19 @@ const SalesforceSidebar: React.FC<SalesforceSidebarProps> = ({
               />
             </div>
           ))}
+
+          {/* LOR Input Area */}
+          <div className="bg-white rounded-xl shadow p-4 mt-4">
+            <div className="text-sm font-semibold text-gray-500 mb-2">推薦状</div>
+            <textarea
+              value={lor}
+              onChange={e => handleLorChange(e.target.value)}
+              className="w-full p-3 border border-gray-200 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-400 text-gray-800 bg-gray-100 min-h-[100px] max-h-60 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100"
+              rows={6}
+              placeholder="推薦状の内容を入力してください"
+              style={{ fontSize: '15px' }}
+            />
+          </div>
         </div>
 
         {/* Save Button */}

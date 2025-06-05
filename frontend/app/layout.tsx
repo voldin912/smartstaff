@@ -6,8 +6,13 @@ import { AuthProvider } from '@/contexts/AuthContext';
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'Company User Management',
-  description: 'A system for managing companies and users with role-based access control',
+  title: 'Smart Staff',
+  description: 'A system for creating staff sheets from audio files',
+  icons: {
+    icon: '/logo1.svg',
+    shortcut: '/logo1.svg',
+    apple: '/logo1.svg',
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
