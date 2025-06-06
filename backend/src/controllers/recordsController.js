@@ -160,22 +160,67 @@ const uploadAudio = async (req, res) => {
     const { staffId, fileId } = req.body;
     const audioFilePath = req.file.path;
     console.log(audioFilePath);
-    const txtFilePath = getTxtPathFromMp3(audioFilePath);
 
-    // Use the queue for transcription
-    const transcriptionResult = await transcriptionQueue.addToQueue(audioFilePath, {
-      modelName: 'large-v1',
-      autoDownloadModelName: 'large-v1',
-      removeWavFileAfterTranscription: true,
-      whisperOptions: {
-        task: 'transcribe',
-        language: 'ja',
-        outputFormat: 'verbose_json',
-        outputInCsv: true
+    // Function to split audio into chunks
+    const splitAudioIntoChunks = async (filePath, chunkSize = 4 * 1024 * 1024) => {
+      const fileBuffer = fs.readFileSync(filePath);
+      const chunks = [];
+      for (let i = 0; i < fileBuffer.length; i += chunkSize) {
+        chunks.push(fileBuffer.slice(i, i + chunkSize));
       }
-    });
+      return chunks;
+    };
 
-    // Call Dify API
+    // Function to process a single chunk
+    const processChunk = async (chunk, index) => {
+      const tempFilePath = `${audioFilePath}_chunk_${index}.wav`;
+      fs.writeFileSync(tempFilePath, chunk);
+
+      try {
+        const tempFileId = await uploadFile(tempFilePath);
+        console.log("tempFileId", tempFileId);
+        // Process chunk with Dify workflow
+        const difyResponse = await axios.post(
+          'https://api.dify.ai/v1/workflows/run',
+          {
+            inputs: {
+              "audioFile": {
+                "transfer_method": "local_file",
+                "upload_file_id": tempFileId,
+                "type": "audio"
+              }
+            },
+            user: 'voldin012'
+          },
+          {
+            headers: {
+              'Authorization': `Bearer ${process.env.DIFY_SECRET_KEY_STT}`,
+              'Content-Type': 'application/json'
+            }
+          }
+        );
+
+        // Clean up temp file
+        fs.unlinkSync(tempFilePath);
+        // console.log("difyResponse", difyResponse.data.data.outputs.stt);
+        return difyResponse.data.data.outputs.stt;
+      } catch (error) {
+        console.error(`Error processing chunk ${index}:`, error);
+        return '';
+      }
+    };
+
+    // Split audio into chunks and process them
+    const chunks = await splitAudioIntoChunks(audioFilePath);
+    const chunkResults = await Promise.all(chunks.map((chunk, index) => processChunk(chunk, index)));
+    
+    // Combine all chunk results
+    const combinedText = chunkResults.join('\n');
+    console.log("combinedText", combinedText);
+    const txtFilePath = getTxtPathFromMp3(audioFilePath);
+    fs.writeFileSync(txtFilePath, combinedText);
+
+    // Process combined text with main Dify workflow
     try {
       const txtFileId = await uploadFile(txtFilePath);
       const difyResponse = await axios.post(
@@ -200,10 +245,6 @@ const uploadAudio = async (req, res) => {
 
       const {status, outputs } = difyResponse.data.data;
       if (status === 'succeeded') {
-        // Debug logging
-        console.log("outputs.skillsheet:", outputs.skillsheet);
-        console.log("outputs.skills: ", typeof outputs.skillsheet);
-        
         // Clean and parse skillsheet if it's a string
         const cleanSkillsheet = typeof outputs.skillsheet === 'string' 
           ? outputs.skillsheet.replace(/```json\n?|\n?```/g, '').trim()
@@ -223,45 +264,44 @@ const uploadAudio = async (req, res) => {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
       `;
 
-      const [result] = await pool.query(query, [
-        fileId, 
-        staffId, 
-        staffId,
-        audioFilePath, 
-        transcriptionResult, 
-        outputs.skillsheet, 
-        outputs.lor,
-        JSON.stringify(workContentArray),
-        outputs.skills,
-        outputs.hope
-      ]);
+        const [result] = await pool.query(query, [
+          fileId, 
+          staffId, 
+          staffId,
+          audioFilePath, 
+          combinedText, 
+          outputs.skillsheet, 
+          outputs.lor,
+          JSON.stringify(workContentArray),
+          outputs.skills,
+          outputs.hope
+        ]);
 
-      // Return the created record with formatted date
-      const [newRecord] = await pool.query(
-        `SELECT 
-          id, 
-          DATE_FORMAT(date, '%d/%m/%y %H:%i:%s') as date,
-          file_id as fileId, 
-          employee_id as staffId, 
-          audio_file_path as audioFilePath,
-          stt,
-          skill_sheet as skillSheet,
-          lor,
-          salesforce as salesforce
-        FROM records 
-        WHERE id = ?`,
-        [result.insertId]
-      );
+        // Return the created record with formatted date
+        const [newRecord] = await pool.query(
+          `SELECT 
+            id, 
+            DATE_FORMAT(date, '%d/%m/%y %H:%i:%s') as date,
+            file_id as fileId, 
+            employee_id as staffId, 
+            audio_file_path as audioFilePath,
+            stt,
+            skill_sheet as skillSheet,
+            lor,
+            salesforce as salesforce
+          FROM records 
+          WHERE id = ?`,
+          [result.insertId]
+        );
 
-      // res.status(201).json(newRecord[0]); 
-      res.status(200).json(newRecord[0]);
-      }
-      else {
+        res.status(200).json(newRecord[0]);
+      } else {
+        console.log("difyResponse", difyResponse.data.data.outputs);
         res.status(500).json({ message: 'Failed to get response from Dify' });
       }
     } catch (difyError) {
       console.error('Error calling Dify API:', difyError);
-      // Continue with the response even if Dify API call fails
+      res.status(500).json({ error: 'Failed to process audio file' });
     }
   } catch (error) {
     console.error('Error uploading audio:', error);
