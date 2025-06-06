@@ -442,12 +442,15 @@ const downloadSkillSheet = async (req, res) => {
       const c = skillSheet[key];
       doc.text(`[期間]${c.from}～${c.to}`);
       doc.text(`[雇用形態]${c['employee type']}`);
-      // doc.text(`[会社]${c['company name']}`);
       doc.text('[経験職種]');
-      const experiences = c['work content'].split('、');
-      experiences.forEach(exp => {
-        doc.text(`${exp.trim()}`);
-      });
+      if (c['work content']) {
+        const experiences = c['work content'].split('、');
+        experiences.forEach(exp => {
+          doc.text(`${exp.trim()}`);
+        });
+      } else {
+        doc.text('なし');
+      }
       drawSolidLine(doc, true);
     });
 
@@ -733,10 +736,14 @@ const downloadBulk = async (req, res) => {
       skillSheetPDF.text(`[期間]${c.from}～${c.to}`);
       skillSheetPDF.text(`[雇用形態]${c['employee type']}`);
       skillSheetPDF.text('[経験職種]');
-      const experiences = c['work content'].split('、');
-      experiences.forEach(exp => {
-        skillSheetPDF.text(`${exp.trim()}`);
-      });
+      if (c['work content']) {
+        const experiences = c['work content'].split('、');
+        experiences.forEach(exp => {
+          skillSheetPDF.text(`${exp.trim()}`);
+        });
+      } else {
+        skillSheetPDF.text('なし');
+      }
       drawSolidLine(skillSheetPDF, true);
     });
 
