@@ -106,13 +106,13 @@ const SalesforceSidebar: React.FC<SalesforceSidebarProps> = ({
 
           {/* LOR Input Area */}
           <div className="bg-white rounded-xl shadow p-4 mt-4">
-            <div className="text-sm font-semibold text-gray-500 mb-2">推薦状</div>
+            <div className="text-sm font-semibold text-gray-500 mb-2">スタッフ対応メモ</div>
             <textarea
               value={lor}
               onChange={e => handleLorChange(e.target.value)}
               className="w-full p-3 border border-gray-200 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-400 text-gray-800 bg-gray-100 min-h-[100px] max-h-60 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100"
               rows={6}
-              placeholder="推薦状の内容を入力してください"
+              placeholder="スタッフ対応メモの内容を入力してください"
               style={{ fontSize: '15px' }}
             />
           </div>

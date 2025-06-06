@@ -81,7 +81,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         <div className="flex flex-col h-full rounded-[5px]">
           {/* Logo */}
           <div className="flex items-center justify-center h-16 px-4 rounded-[5px]">
-            <img src={'./logo1.svg'} alt='Logo' className='w-10 h-10 mr-2 rounded-[5px]' />
+            <img src={'./logo.png'} alt='Logo' className='w-10 h-10 mr-2 rounded-[5px]' />
             <span className="text-2xl text-black font-sans rounded-[5px]">Resona Gate</span>
           </div>
 

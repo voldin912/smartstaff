@@ -37,6 +37,7 @@ interface Record {
   stt: boolean;
   bulk: boolean;
   skills?: string[];
+  hope?: string | null;
 }
 
 // Add new interface for upload status
@@ -360,7 +361,7 @@ export default function DashboardPage() {
     setIsSalesforceOpen(true);
   };
 
-  const handleSalesforceSave = async (data: string[], lor: string) => {
+  const handleSalesforceSave = async (data: string[], hope: string) => {
     if (!selectedSalesforceRecord) return;
 
     try {
@@ -371,7 +372,7 @@ export default function DashboardPage() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ salesforceData: data, lor: lor }),
+        body: JSON.stringify({ salesforceData: data, hope: hope }),
       });
 
       if (response.ok) {
@@ -749,11 +750,6 @@ export default function DashboardPage() {
                 <p className="text-gray-600 text-center whitespace-pre-line">
                   {uploadStatus.message}
                 </p>
-                {uploadStatus.estimatedTime && uploadStatus.progress === 'transcribing' && (
-                  <p className="text-sm text-gray-500 mt-2">
-                    予想処理時間: {uploadStatus.estimatedTime}
-                  </p>
-                )}
                 <button
                   className="mt-4 px-4 py-2 bg-gray-200 rounded hover:bg-gray-300"
                   onClick={() => setUploadStatus({ ...uploadStatus, isUploading: false })}
@@ -779,7 +775,7 @@ export default function DashboardPage() {
           open={isSalesforceOpen}
           onClose={() => setIsSalesforceOpen(false)}
           salesforceData={selectedSalesforceRecord ? convertToArray(selectedSalesforceRecord.salesforce) : null}
-          initialLor={selectedSalesforceRecord?.lor}
+          initialLor={selectedSalesforceRecord?.hope}
           onSave={handleSalesforceSave}
           staffId={selectedSalesforceRecord?.staffId}
         />

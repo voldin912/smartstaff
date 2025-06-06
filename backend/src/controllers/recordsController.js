@@ -66,7 +66,8 @@ const getRecords = async (req, res) => {
         r.skills,
         r.audio_file_path as audioFilePath,
         u.company_id as userCompanyId,
-        u.name as userName
+        u.name as userName,
+        r.hope as hope
       FROM records r
       LEFT JOIN users u ON r.staff_id = u.id
     `;
@@ -519,14 +520,14 @@ const getSkillSheet = async (req, res) => {
 const updateSalesforce = async (req, res) => {
   try {
     const { recordId } = req.params;
-    const {salesforceData, lor} = req.body;
+    const {salesforceData, hope} = req.body;
     // console.log("salesforceData", salesforceData);  
     if (!Array.isArray(salesforceData)) {
       return res.status(400).json({ error: 'Invalid salesforce data' });
     }
     const [result] = await pool.query(
-      'UPDATE records SET salesforce = ?, lor = ? WHERE id = ?',
-      [JSON.stringify(salesforceData), lor, recordId]
+      'UPDATE records SET salesforce = ?, hope = ? WHERE id = ?',
+      [JSON.stringify(salesforceData), hope, recordId]
     );
     if (result.affectedRows === 0) {
       return res.status(404).json({ error: 'Record not found' });
