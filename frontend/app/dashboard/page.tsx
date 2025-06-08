@@ -18,11 +18,16 @@ const generateRandomString = (length: number) => {
   return result;
 };
 
-// Function to generate a file ID in the format FILE_timestamp_randomstring
-const generateFileId = () => {
-  const timestamp = Date.now();
-  const randomString = generateRandomString(8);
-  return `FILE_${timestamp}_${randomString}`;
+// Function to generate a file ID in the format originalname-YYYYMMDDHHMMSS
+const generateFileId = (originalName: string) => {
+  const now = new Date();
+  const dateStr = now.getFullYear() +
+    String(now.getMonth() + 1).padStart(2, '0') +
+    String(now.getDate()).padStart(2, '0') +
+    String(now.getHours()).padStart(2, '0') +
+    String(now.getMinutes()).padStart(2, '0') +
+    String(now.getSeconds()).padStart(2, '0');
+  return `${originalName}-${dateStr}`;
 };
 
 interface Record {
@@ -197,10 +202,10 @@ export default function DashboardPage() {
       message: 'ファイルをアップロード中です...',
       estimatedTime
     });
-
+    console.log("file.name.split('.')[0]", file.name.split('.')[0]);
     const formData = new FormData();
     formData.append('audio', file);
-    formData.append('fileId', generateFileId());
+    formData.append('fileId', generateFileId(file.name.split('.')[0]));
     formData.append('staffId', user?.id.toString() || '');
 
     try {
@@ -841,34 +846,34 @@ export default function DashboardPage() {
               </div>
             </div>
             <div className="overflow-x-auto rounded-[5px] -mx-4 sm:-mx-6 lg:-mx-8">
-              <div className="inline-block min-w-full align-middle">
+              <div className="inline-block min-w-full align-middle max-w-[300px]">
                 <table className="min-w-full text-left text-gray-700 rounded-[5px]">
                   <thead>
                     <tr className="border-b border-gray-200 text-xs text-gray-400 rounded-[5px]">
                       <th 
-                        className="py-3 px-4 font-medium text-center min-w-[100px] rounded-[5px] cursor-pointer hover:bg-gray-50"
+                        className="py-3 px-4 font-medium text-center min-w-[100px] max-w-[300px] rounded-[5px] cursor-pointer hover:bg-gray-50"
                         onClick={() => handleColumnSort('date')}
                       >
                         Date <span className="ml-1">{sortIconDate}</span>
                       </th>
                       <th 
-                        className="py-3 px-4 font-medium text-center min-w-[100px] rounded-[5px] cursor-pointer hover:bg-gray-50"
+                        className="py-3 px-4 font-medium text-center min-w-[100px] max-w-[300px] rounded-[5px] cursor-pointer hover:bg-gray-50"
                         onClick={() => handleColumnSort('userName')}
                       >
                         User Name <span className="ml-1">{sortIconUserName}</span>
                       </th>
                       <th 
-                        className="py-3 px-4 font-medium text-center min-w-[100px] rounded-[5px] cursor-pointer hover:bg-gray-50"
+                        className="py-3 px-4 font-medium text-center min-w-[100px] max-w-[300px] rounded-[5px] cursor-pointer hover:bg-gray-50"
                         onClick={() => handleColumnSort('fileId')}
                       >
                         File ID <span className="ml-1">{sortIconFileId}</span>
                       </th>
-                      <th className="py-3 px-4 font-medium text-center min-w-[100px] rounded-[5px]">Staff ID</th>
-                      <th className="py-3 px-4 font-medium text-center min-w-[120px] rounded-[5px]">Skill Sheet</th>
-                      <th className="py-3 px-4 font-medium text-center min-w-[120px] rounded-[5px]">Salesforce</th>
-                      <th className="py-3 px-4 font-medium text-center min-w-[100px] rounded-[5px]">LoR</th>
-                      <th className="py-3 px-4 font-medium text-center min-w-[100px] rounded-[5px]">STT</th>
-                      <th className="py-3 px-4 font-medium text-center min-w-[100px] rounded-[5px]">Bulk</th>
+                      <th className="py-3 px-4 font-medium text-center min-w-[100px] max-w-[300px] rounded-[5px]">Staff ID</th>
+                      <th className="py-3 px-4 font-medium text-center min-w-[120px] max-w-[300px] rounded-[5px]">Skill Sheet</th>
+                      <th className="py-3 px-4 font-medium text-center min-w-[120px] max-w-[300px] rounded-[5px]">Salesforce</th>
+                      <th className="py-3 px-4 font-medium text-center min-w-[100px] max-w-[300px] rounded-[5px]">LoR</th>
+                      <th className="py-3 px-4 font-medium text-center min-w-[100px] max-w-[300px] rounded-[5px]">STT</th>
+                      <th className="py-3 px-4 font-medium text-center min-w-[100px] max-w-[300px] rounded-[5px]">Bulk</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -879,11 +884,11 @@ export default function DashboardPage() {
                     ) : (
                       paginatedRecords.map((rec) => (
                         <tr key={rec.id} className="border-b border-gray-100 hover:bg-gray-50 transition text-left align-middle rounded-[5px]">
-                          <td className="py-5 px-4 whitespace-nowrap align-middle min-w-[100px] rounded-[5px]">{formatDate(rec.date)}</td>
-                          <td className="py-5 px-4 whitespace-nowrap align-middle min-w-[100px] rounded-[5px]">{rec.userName}</td>
-                          <td className="py-5 px-4 whitespace-nowrap align-middle min-w-[100px] rounded-[5px]">{rec.fileId}</td>
-                          <td className="py-5 px-4 whitespace-nowrap align-middle min-w-[100px] rounded-[5px]">
-                            <div className="flex items-center gap-x-2 rounded-[5px]">
+                          <td className="py-5 px-4 whitespace-nowrap align-middle min-w-[100px] max-w-[300px] rounded-[5px] truncate">{formatDate(rec.date)}</td>
+                          <td className="py-5 px-4 whitespace-nowrap align-middle min-w-[100px] max-w-[300px] rounded-[5px] truncate">{rec.userName}</td>
+                          <td className="py-5 px-4 whitespace-nowrap align-middle min-w-[100px] max-w-[300px] rounded-[5px] truncate">{rec.fileId}</td>
+                          <td className="py-5 px-4 whitespace-nowrap align-middle min-w-[100px] max-w-[300px] rounded-[5px]">
+                            <div className="flex items-center gap-x-2 rounded-[5px] truncate">
                               {editingStaffId === rec.id ? (
                                 <input
                                   ref={inputRef}
@@ -894,63 +899,63 @@ export default function DashboardPage() {
                                 />
                               ) : (
                                 <>
-                                  <button className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center" title="Edit Staff ID" onClick={() => handleEditStaffId(rec.id, rec.staffId)}>
+                                  <button className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center flex-shrink-0" title="Edit Staff ID" onClick={() => handleEditStaffId(rec.id, rec.staffId)}>
                                     <Image src="/edit1.svg" alt="Edit Staff ID" width={20} height={20} className="rounded-[5px]" />
                                   </button>
-                                  {rec.staffId}
+                                  <span className="truncate">{rec.staffId}</span>
                                 </>
                               )}
                             </div>
                           </td>
                           {/* Skill Sheet icons */}
-                          <td className="py-5 px-4 align-middle min-w-[120px] rounded-[5px]">
+                          <td className="py-5 px-4 align-middle min-w-[120px] max-w-[300px] rounded-[5px]">
                             <div className="flex items-center justify-center gap-x-3 rounded-[5px]">
                               <button 
-                                className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center" 
+                                className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center flex-shrink-0" 
                                 title="Edit"
                                 onClick={() => handleSkillSheetEdit(rec)}
                               >
                                 <Image src="/edit1.svg" alt="Edit" width={20} height={20} className="rounded-[5px]" />
                               </button>
                               <button 
-                                className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center" 
+                                className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center flex-shrink-0" 
                                 title="Download"
                                 onClick={() => handleSkillSheetDownload(rec)}
                               >
                                 <Image src="/download1.svg" alt="Download" width={20} height={20} className="rounded-[5px]" />
                               </button>
-                              <button className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center" title="Salesforce">
+                              <button className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center flex-shrink-0" title="Salesforce">
                                 <Image src="/salesforce1.svg" alt="Salesforce" width={20} height={20} className="rounded-[5px]" />
                               </button>
                             </div>
                           </td>
                           {/* Salesforce icons */}
-                          <td className="py-5 px-4 align-middle min-w-[120px] rounded-[5px]">
+                          <td className="py-5 px-4 align-middle min-w-[120px] max-w-[300px] rounded-[5px]">
                             <div className="flex items-center justify-center gap-x-3 rounded-[5px]">
                               <button 
-                                className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center" 
+                                className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center flex-shrink-0" 
                                 title="Edit"
                                 onClick={() => handleSalesforceEdit(rec)}
                               >
                                 <Image src="/edit1.svg" alt="Edit" width={20} height={20} className="rounded-[5px]" />
                               </button>
                               <button 
-                                className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center" 
+                                className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center flex-shrink-0" 
                                 title="Download"
                                 onClick={() => handleSalesforceDownload(rec)}
                               >
                                 <Image src="/download1.svg" alt="Download" width={20} height={20} className="rounded-[5px]" />
                               </button>
-                              <button className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center" title="Salesforce">
+                              <button className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center flex-shrink-0" title="Salesforce">
                                 <Image src="/salesforce1.svg" alt="Salesforce" width={20} height={20} className="rounded-[5px]" />
                               </button>
                             </div>
                           </td>
                           {/* LoR icons */}
-                          <td className="py-5 px-4 align-middle min-w-[100px] rounded-[5px]">
+                          <td className="py-5 px-4 align-middle min-w-[100px] max-w-[300px] rounded-[5px]">
                             <div className="flex items-center justify-center rounded-[5px]">
                               <button 
-                                className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center" 
+                                className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center flex-shrink-0" 
                                 title="Copy"
                                 onClick={() => handleLoRCopy(rec)}
                               >
@@ -959,10 +964,10 @@ export default function DashboardPage() {
                             </div>
                           </td>
                           {/* STT icons */}
-                          <td className="py-5 px-4 align-middle min-w-[100px] rounded-[5px]">
+                          <td className="py-5 px-4 align-middle min-w-[100px] max-w-[300px] rounded-[5px]">
                             <div className="flex items-center justify-center rounded-[5px]">
                               <button 
-                                className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center" 
+                                className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center flex-shrink-0" 
                                 title="Download"
                                 onClick={() => handleSTTDownload(rec)}
                               >
@@ -971,10 +976,10 @@ export default function DashboardPage() {
                             </div>
                           </td>
                           {/* Bulk icons */}
-                          <td className="py-5 px-4 align-middle min-w-[100px] rounded-[5px]">
+                          <td className="py-5 px-4 align-middle min-w-[100px] max-w-[300px] rounded-[5px]">
                             <div className="flex items-center justify-center rounded-[5px]">
                               <button 
-                                className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center" 
+                                className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center flex-shrink-0" 
                                 title="Download"
                                 onClick={() => handleBulkDownload(rec)}
                               >

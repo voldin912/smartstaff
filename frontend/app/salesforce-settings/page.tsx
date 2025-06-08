@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 interface SalesforceSettings {
   base_url: string;
   username: string;
+  password: string;
   security_token: string;
 }
 
@@ -21,6 +22,7 @@ export default function SalesforceSettingsPage() {
   const [settings, setSettings] = useState<SalesforceSettings>({
     base_url: '',
     username: '',
+    password: '',
     security_token: ''
   });
   const [objects, setObjects] = useState<SalesforceObject[]>([]);
@@ -48,6 +50,7 @@ export default function SalesforceSettingsPage() {
           setSettings({
             base_url: settingsData.base_url || '',
             username: settingsData.username || '',
+            password: settingsData.password || '',
             security_token: settingsData.security_token || ''
           });
         }
@@ -74,7 +77,7 @@ export default function SalesforceSettingsPage() {
       if (response.ok) {
         toast.success('設定を保存しました');
         // After saving, fetch objects if all fields are filled
-        if (settings.base_url && settings.username && settings.security_token) {
+        if (settings.base_url && settings.username && settings.password && settings.security_token) {
           await fetchObjects();
         }
       } else {
@@ -103,6 +106,7 @@ export default function SalesforceSettingsPage() {
 
       if (response.ok) {
         const data = await response.json();
+        console.log("data", data);
         setObjects(data);
       } else {
         toast.error('オブジェクトの取得に失敗しました');
@@ -155,6 +159,20 @@ export default function SalesforceSettingsPage() {
                 onChange={handleInputChange}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 placeholder="username@example.com"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                パスワード
+              </label>
+              <input
+                type="password"
+                name="password"
+                value={settings.password}
+                onChange={handleInputChange}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                placeholder="Password"
               />
             </div>
 

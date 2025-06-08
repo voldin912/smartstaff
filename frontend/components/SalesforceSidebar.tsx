@@ -75,17 +75,13 @@ const SalesforceSidebar: React.FC<SalesforceSidebarProps> = ({
         {/* Header */}
         <div className="p-4 border-b flex justify-between items-center">
           <div className="flex items-center gap-2">
-            <button onClick={handleClose} className="text-gray-500 hover:text-gray-700 mr-2">
+            <span className="text-lg font-semibold text-gray-700">Salesforce</span>
+          </div>
+          <button onClick={handleClose} className="text-gray-500 hover:text-gray-700 mr-2">
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
               </svg>
             </button>
-            <span className="text-lg font-semibold text-gray-700">Salesforce</span>
-          </div>
-          <div className="flex items-center gap-4">
-            <span className="text-sm text-gray-500">Staff ID</span>
-            <span className="text-base font-semibold text-gray-900">{staffId}</span>
-          </div>
         </div>
 
         {/* Experience Cards */}

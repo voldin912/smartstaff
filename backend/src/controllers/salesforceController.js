@@ -25,10 +25,13 @@ export const getSalesforceSettings = async (req, res) => {
 export const updateSalesforceSettings = async (req, res) => {
   try {
     const { role, company_id } = req.user;
-    const { base_url, username, security_token, target_company_id } = req.body;
+    const { base_url, username, password, security_token } = req.body;
     
+    console.log("req.body", base_url, username, password, security_token);
     // If user is admin and target_company_id is provided, update that company's settings
-    const actualCompanyId = role === 'admin' && target_company_id ? target_company_id : company_id;
+    const actualCompanyId = role === 'admin' ? 'admin' : company_id;
+
+    console.log("role, company_id", role, company_id);
     
     const [existing] = await pool.query(
       'SELECT * FROM salesforce WHERE company_id = ?',
@@ -38,14 +41,14 @@ export const updateSalesforceSettings = async (req, res) => {
     if (existing.length > 0) {
       // Update existing record
       await pool.query(
-        'UPDATE salesforce SET base_url = ?, username = ?, security_token = ? WHERE company_id = ?',
-        [base_url, username, security_token, actualCompanyId]
+        'UPDATE salesforce SET base_url = ?, username = ?, password = ?, security_token = ? WHERE company_id = ?',
+        [base_url, username, password, security_token, actualCompanyId]
       );
     } else {
       // Insert new record
       await pool.query(
-        'INSERT INTO salesforce (company_id, base_url, username, security_token) VALUES (?, ?, ?, ?)',
-        [actualCompanyId, base_url, username, security_token]
+        'INSERT INTO salesforce (company_id, base_url, username, password, security_token) VALUES (?, ?, ?, ?, ?)',
+        [actualCompanyId, base_url, username, password, security_token]
       );
     }
 
@@ -59,9 +62,9 @@ export const updateSalesforceSettings = async (req, res) => {
 // Get Salesforce objects
 export const getSalesforceObjects = async (req, res) => {
   try {
-    const { base_url, username, security_token } = req.body;
+    const { base_url, username, password, security_token } = req.body;
 
-    if (!base_url || !username || !security_token) {
+    if (!base_url || !username || !password || !security_token) {
       return res.status(400).json({ message: 'Missing required credentials' });
     }
 
@@ -70,8 +73,25 @@ export const getSalesforceObjects = async (req, res) => {
       loginUrl: base_url
     });
 
-    // Login to Salesforce
-    await conn.login(username, security_token);
+    // Login to Salesforce using callback style
+    const loginResult = await new Promise((resolve, reject) => {
+      conn.login(username, password + security_token, (err, userInfo) => {
+        if (err) {
+          resolve(err);
+        } else {
+          resolve(userInfo);
+        }
+      });
+    });
+
+    // Check if login was successful
+    if (loginResult instanceof Error) {
+      console.error('Salesforce login error:', loginResult);
+      return res.status(401).json({ 
+        message: 'Failed to authenticate with Salesforce',
+        error: loginResult.message
+      });
+    }
 
     // Get all objects
     const metadata = await conn.describeGlobal();
@@ -91,10 +111,4 @@ export const getSalesforceObjects = async (req, res) => {
       error: error.message 
     });
   }
-};
-
-export {
-  getSalesforceSettings,
-  updateSalesforceSettings,
-  getSalesforceObjects
 }; 

@@ -10,7 +10,7 @@ const router = express.Router();
 
 // Settings routes
 router.get('/settings', auth, getSalesforceSettings);
-router.post('/settings', auth, updateSalesforceSettings);
+router.put('/settings', auth, updateSalesforceSettings);
 router.post('/objects', auth, getSalesforceObjects);
 
 export default router; 

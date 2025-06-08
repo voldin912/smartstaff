@@ -6,6 +6,7 @@ const { nodewhisper } = pkg;
 import fs from 'fs';
 import PDFDocument from 'pdfkit';
 import archiver from 'archiver';
+import path from 'path';
 
 // Transcription Queue Manager
 class TranscriptionQueue {
@@ -159,8 +160,7 @@ const uploadAudio = async (req, res) => {
 
     const { staffId, fileId } = req.body;
     const audioFilePath = req.file.path;
-    console.log(audioFilePath);
-
+    
     // Function to split audio into chunks
     const splitAudioIntoChunks = async (filePath, chunkSize = 4 * 1024 * 1024) => {
       const fileBuffer = fs.readFileSync(filePath);
@@ -257,6 +257,7 @@ const uploadAudio = async (req, res) => {
         // Extract work content array from skillsheet
         const workContentArray = Object.values(skillsheetData).map(career => career['summary']);
         console.log("workContentArray", workContentArray);
+        console.log("outputs.skills", outputs.skills);
 
         // Insert record into database
         const query = `
@@ -416,7 +417,9 @@ const downloadSkillSheet = async (req, res) => {
       }
     });
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename=skill_sheet_${fileId}.pdf`);
+    // Encode the filename to handle special characters
+    const encodedFilename = encodeURIComponent(`スキルシート-${fileId}.pdf`);
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodedFilename}`);
     doc.pipe(res);
     doc.registerFont('NotoSansJP', 'C:/Users/ALPHA/BITREP/auth-crud/backend/fonts/NotoSansJP-Regular.ttf');
 
@@ -486,8 +489,14 @@ const downloadSkillSheet = async (req, res) => {
 
       // Skills
       doc.font('NotoSansJP').fontSize(12).text('■スキル');
-      if (Array.isArray(cleanSkillsData['スキル']) && cleanSkillsData['スキル'].length > 0) {
-        doc.text('  ' + cleanSkillsData['スキル'].join('、'));
+      if (cleanSkillsData['スキル']) {
+        // Split the skills string by newlines and add each skill on a new line
+        const skills = cleanSkillsData['スキル'].split('\n');
+        skills.forEach(skill => {
+          if (skill.trim()) {
+            doc.text('  ' + skill.trim());
+          }
+        });
       } else {
         doc.text('  なし');
       }
@@ -603,7 +612,9 @@ const downloadSalesforce = async (req, res) => {
       margins: { top: 50, bottom: 50, left: 50, right: 50 }
     });
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename=salesforce_${fileId}.pdf`);
+    // Encode the filename to handle special characters
+    const encodedFilename = encodeURIComponent(`セールスフォース-${fileId}.pdf`);
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodedFilename}`);
     doc.pipe(res);
 
     // Register and use Japanese font
@@ -663,7 +674,9 @@ const downloadBulk = async (req, res) => {
     }
     // Prepare archive
     res.setHeader('Content-Type', 'application/zip');
-    res.setHeader('Content-Disposition', `attachment; filename=bulk_${file_id}.zip`);
+    // Encode the filename to handle special characters
+    const encodedFilename = encodeURIComponent(`一括データ-${file_id}.zip`);
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodedFilename}`);
     const archive = archiver('zip', { zlib: { level: 9 } });
     archive.pipe(res);
 
@@ -779,8 +792,14 @@ const downloadBulk = async (req, res) => {
 
       // Skills
       skillSheetPDF.font('NotoSansJP').fontSize(12).text('■スキル');
-      if (Array.isArray(skillsData['スキル']) && skillsData['スキル'].length > 0) {
-        skillSheetPDF.text('  ' + skillsData['スキル'].join('、'));
+      if (cleanSkillsData['スキル']) {
+        // Split the skills string by newlines and add each skill on a new line
+        const skills = cleanSkillsData['スキル'].split('\n');
+        skills.forEach(skill => {
+          if (skill.trim()) {
+            skillSheetPDF.text('  ' + skill.trim());
+          }
+        });
       } else {
         skillSheetPDF.text('  なし');
       }
@@ -791,7 +810,7 @@ const downloadBulk = async (req, res) => {
       skillSheetPDF.fillColor('black');
     }
     skillSheetPDF.end();
-    archive.append(skillSheetPDF, { name: `skill_sheet_${file_id}.pdf` });
+    archive.append(skillSheetPDF, { name: `スキルシート_${file_id}.pdf` });
 
     // 4. Add salesforce PDF
     const salesforceArr = JSON.parse(salesforce || '[]');
@@ -820,7 +839,7 @@ const downloadBulk = async (req, res) => {
     }
 
     salesforcePDF.end();
-    archive.append(salesforcePDF, { name: `salesforce_${file_id}.pdf` });
+    archive.append(salesforcePDF, { name: `セールスフォース_${file_id}.pdf` });
 
     // Finalize archive
     archive.finalize();

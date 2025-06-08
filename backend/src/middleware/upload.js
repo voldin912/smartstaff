@@ -1,41 +1,46 @@
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
-import { fileURLToPath } from 'url';
 
-// Get __dirname equivalent in ES modules
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// Ensure upload directory exists
+const uploadDir = 'uploads/audio';
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
 
-// Configure multer for audio file storage
+// Configure multer storage
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
-    const uploadDir = path.join(__dirname, '../../uploads/audio');
-    // Create directory if it doesn't exist
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    }
     cb(null, uploadDir);
   },
   filename: function (req, file, cb) {
-    // Create unique filename with original extension
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, uniqueSuffix + path.extname(file.originalname));
+    // Get original filename without extension
+    const originalName = file.originalname.split('.')[0];
+    // Create date in YYYYmmddHHMMSS format
+    const now = new Date();
+    const dateStr = now.getFullYear() +
+      String(now.getMonth() + 1).padStart(2, '0') +
+      String(now.getDate()).padStart(2, '0') +
+      String(now.getHours()).padStart(2, '0') +
+      String(now.getMinutes()).padStart(2, '0') +
+      String(now.getSeconds()).padStart(2, '0');
+    // Create unique filename with original name as prefix
+    const uniqueSuffix = dateStr;
+    // Use the original filename directly
+    cb(null, `${uniqueSuffix}${path.extname(file.originalname)}`);
   }
 });
 
-// File filter to only allow audio files
-const fileFilter = (req, file, cb) => {
-  if (file.mimetype.startsWith('audio/')) {
-    cb(null, true);
-  } else {
-    cb(new Error('Only audio files are allowed!'), false);
-  }
-};
-
+// Configure multer upload
 const upload = multer({
   storage: storage,
-  fileFilter: fileFilter,
+  fileFilter: function (req, file, cb) {
+    // Accept only audio files
+    if (!file.mimetype.startsWith('audio/')) {
+      return cb(new Error('Only audio files are allowed!'));
+    }
+    cb(null, true);
+  },
   limits: {
     fileSize: 100 * 1024 * 1024 // 100MB limit
   }

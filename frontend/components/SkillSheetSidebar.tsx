@@ -100,7 +100,7 @@ const SkillSheetSidebar = ({ open, onClose, skillSheetData, skills, onSave }: Sk
         : ''
     );
     setShikaku(Array.isArray(parsedSkills['資格']) ? parsedSkills['資格'].join(', ') : '');
-    setSkillsList(Array.isArray(parsedSkills['スキル']) ? parsedSkills['スキル'].join(', ') : '');
+    setSkillsList(Array.isArray(parsedSkills['スキル']) ? parsedSkills['スキル'].join(', ') : parsedSkills['スキル']);
   }, [skillSheetData, skills, open]);
 
   const handleChange = (careerKey: string, field: keyof Career, value: string) => {
