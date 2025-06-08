@@ -334,7 +334,9 @@ const downloadSTT = async (req, res) => {
       }
     });
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename=stt_${fileId}.pdf`);
+    // Encode the filename to handle special characters
+    const encodedFilename = encodeURIComponent(`STT-${fileId}.pdf`);
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodedFilename}`);
     doc.pipe(res);
     doc.registerFont('NotoSansJP', 'C:/Users/ALPHA/BITREP/auth-crud/backend/fonts/NotoSansJP-Regular.ttf');
     const paragraphs = sttData
@@ -657,6 +659,7 @@ const downloadBulk = async (req, res) => {
       return res.status(404).json({ error: 'Record not found' });
     }
     const { file_id, audio_file_path, skill_sheet, salesforce, employee_id, skills, stt, hope } = records[0];
+    
     // Clean and parse skillsheet if it's a string
     const cleanSkillsheet = typeof skill_sheet === 'string' 
       ? skill_sheet.replace(/```json\n?|\n?```/g, '').trim()
@@ -664,25 +667,43 @@ const downloadBulk = async (req, res) => {
     const skillSheetObj = typeof cleanSkillsheet === 'string'
       ? JSON.parse(cleanSkillsheet)
       : cleanSkillsheet;
+
     // Parse skills JSON
     let skillsData = null;
     try {
-      const cleanedSkills = skills.replace(/```json\n?|\n?```/g, '').trim();
-      skillsData = typeof skills === 'string' ? JSON.parse(cleanedSkills) : cleanedSkills;
+      if (typeof skills === 'string') {
+        const cleanedSkills = skills.replace(/```json\n?|\n?```/g, '').trim();
+        skillsData = JSON.parse(cleanedSkills);
+      } else {
+        skillsData = skills;
+      }
     } catch (e) {
+      console.error('Error parsing skills data:', e);
       skillsData = null;
     }
+
     // Prepare archive
     res.setHeader('Content-Type', 'application/zip');
     // Encode the filename to handle special characters
     const encodedFilename = encodeURIComponent(`一括データ-${file_id}.zip`);
     res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodedFilename}`);
+    
     const archive = archiver('zip', { zlib: { level: 9 } });
+    
+    // Handle archive errors
+    archive.on('error', (err) => {
+      console.error('Archive error:', err);
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Failed to create archive' });
+      }
+    });
+
+    // Pipe archive to response
     archive.pipe(res);
 
     // 1. Add audio file
     if (audio_file_path && fs.existsSync(audio_file_path)) {
-      archive.file(audio_file_path, { name: `audio_${file_id}${audio_file_path.slice(audio_file_path.lastIndexOf('.'))}` });
+      archive.file(audio_file_path, { name: `audio_${file_id}${path.extname(audio_file_path)}` });
     }
 
     // 2. Add STT PDF
@@ -712,7 +733,7 @@ const downloadBulk = async (req, res) => {
       });
     });
     sttPDF.end();
-    archive.append(sttPDF, { name: `stt_${file_id}.pdf` });
+    archive.append(sttPDF, { name: `STT-${file_id}.pdf` });
 
     // 3. Add skillsheet PDF
     const skillSheetPDF = new PDFDocument({ 
@@ -792,11 +813,15 @@ const downloadBulk = async (req, res) => {
 
       // Skills
       skillSheetPDF.font('NotoSansJP').fontSize(12).text('■スキル');
-      if (cleanSkillsData['スキル']) {
+      if (skillsData['スキル']) {
         // Split the skills string by newlines and add each skill on a new line
-        const skills = cleanSkillsData['スキル'].split('\n');
+        const skills = typeof skillsData['スキル'] === 'string' 
+          ? skillsData['スキル'].split('\n')
+          : Array.isArray(skillsData['スキル']) 
+            ? skillsData['スキル']
+            : [];
         skills.forEach(skill => {
-          if (skill.trim()) {
+          if (skill && skill.trim()) {
             skillSheetPDF.text('  ' + skill.trim());
           }
         });
@@ -810,7 +835,7 @@ const downloadBulk = async (req, res) => {
       skillSheetPDF.fillColor('black');
     }
     skillSheetPDF.end();
-    archive.append(skillSheetPDF, { name: `スキルシート_${file_id}.pdf` });
+    archive.append(skillSheetPDF, { name: `スキルシート-${file_id}.pdf` });
 
     // 4. Add salesforce PDF
     const salesforceArr = JSON.parse(salesforce || '[]');
@@ -839,13 +864,15 @@ const downloadBulk = async (req, res) => {
     }
 
     salesforcePDF.end();
-    archive.append(salesforcePDF, { name: `セールスフォース_${file_id}.pdf` });
+    archive.append(salesforcePDF, { name: `セールスフォース-${file_id}.pdf` });
 
     // Finalize archive
-    archive.finalize();
+    await archive.finalize();
   } catch (error) {
     console.error('Error downloading bulk:', error);
-    res.status(500).json({ error: 'Failed to download bulk zip' });
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Failed to download bulk zip' });
+    }
   }
 };
 
