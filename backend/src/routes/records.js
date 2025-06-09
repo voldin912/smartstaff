@@ -1,6 +1,6 @@
 import express from 'express';
 import { auth } from '../middleware/auth.js';
-import { getRecords, uploadAudio, testAPI, downloadSTT, downloadSkillSheet, updateStaffId, updateSkillSheet, getSkillSheet, updateSalesforce, downloadSalesforce, downloadBulk } from '../controllers/recordsController.js';
+import { getRecords, uploadAudio, testAPI, downloadSTT, downloadSkillSheet, updateStaffId, updateSkillSheet, getSkillSheet, updateSalesforce, downloadSalesforce, downloadBulk, updateLoR } from '../controllers/recordsController.js';
 import upload from '../middleware/upload.js';
 
 const router = express.Router();
@@ -37,5 +37,8 @@ router.get('/:recordId/bulk', auth, downloadBulk);
 
 // Test API
 router.get('/test', auth, testAPI);
+
+// Update LoR
+router.put('/:recordId/lor', auth, updateLoR);
 
 export default router;

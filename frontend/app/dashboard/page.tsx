@@ -7,6 +7,7 @@ import Pagination from "@/components/molecules/pagination";
 import { useAuth } from "@/contexts/AuthContext";
 import SkillSheetSidebar from "@/components/SkillSheetSidebar";
 import SalesforceSidebar from "@/components/SalesforceSidebar";
+import LoRSidebar from "@/components/LoRSidebar";
 
 // Function to generate a random string of specified length
 const generateRandomString = (length: number) => {
@@ -96,6 +97,8 @@ export default function DashboardPage() {
     progress: 'uploading',
     message: '',
   });
+  const [isLoROpen, setIsLoROpen] = useState(false);
+  const [selectedLoRRecord, setSelectedLoRRecord] = useState<Record | null>(null);
 
   useEffect(() => {
     fetchRecords();
@@ -606,6 +609,45 @@ export default function DashboardPage() {
     }
   };
 
+  const handleLoREdit = (record: Record) => {
+    setSelectedLoRRecord(record);
+    setIsLoROpen(true);
+  };
+
+  const handleLoRSave = async (data: string) => {
+    if (!selectedLoRRecord) return;
+
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/records/${selectedLoRRecord.id}/lor`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ lor: data }),
+      });
+
+      if (res.ok) {
+        fetchRecords();
+        setIsLoROpen(false);
+        setSelectedLoRRecord(null);
+        setAlertMessage({
+          type: 'success',
+          message: 'スタッフ対応メモを更新しました。'
+        });
+      } else {
+        throw new Error('Failed to update LoR');
+      }
+    } catch (error) {
+      console.error('Error updating LoR:', error);
+      setAlertMessage({
+        type: 'error',
+        message: 'スタッフ対応メモの更新に失敗しました。'
+      });
+    }
+  };
+
   const parseDate = (dateString: string) => {
     try {
       // Handle DD/MM/YY format
@@ -785,6 +827,18 @@ export default function DashboardPage() {
           staffId={selectedSalesforceRecord?.staffId}
         />
 
+        {/* LoR Sidebar */}
+        <LoRSidebar
+          open={isLoROpen}
+          onClose={() => {
+            setIsLoROpen(false);
+            setSelectedLoRRecord(null);
+          }}
+          lorData={selectedLoRRecord?.lor || null}
+          onSave={handleLoRSave}
+          staffId={selectedLoRRecord?.staffId}
+        />
+
         {/* Header */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8 rounded-[5px]">
           <h1 className="text-xl sm:text-2xl font-semibold text-gray-900 rounded-[5px]">
@@ -953,10 +1007,15 @@ export default function DashboardPage() {
                           </td>
                           {/* LoR icons */}
                           <td className="py-5 px-4 align-middle min-w-[100px] max-w-[300px] rounded-[5px]">
-                            <div className="flex items-center justify-center rounded-[5px]">
-                              <button 
-                                className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center flex-shrink-0" 
-                                title="Copy"
+                            <div className="flex items-center justify-center rounded-[5px] gap-x-3">
+                              <button
+                                onClick={() => handleLoREdit(rec)}
+                                className="text-blue-600 hover:text-blue-800 transition-colors"
+                                title="編集"
+                              >
+                                <Image src="/edit1.svg" alt="Edit" width={20} height={20} className="rounded-[5px]" />
+                              </button>
+                              <button
                                 onClick={() => handleLoRCopy(rec)}
                               >
                                 <Image src="/copy1.svg" alt="copy" width={20} height={20} className="rounded-[5px]" />

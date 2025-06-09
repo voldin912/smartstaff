@@ -449,12 +449,23 @@ const downloadSkillSheet = async (req, res) => {
       doc.text(`[雇用形態]${c['employee type']}`);
       doc.text('[経験職種]');
       if (c['work content']) {
-        const experiences = c['work content'].split('、');
-        experiences.forEach(exp => {
-          doc.text(`${exp.trim()}`);
-        });
+        const experiences = c['work content'];
+        // Handle both string and array formats
+        if (Array.isArray(experiences)) {
+          experiences.forEach(exp => {
+            if (exp && exp.trim()) {
+              doc.text(`  ${exp.trim()}`);
+            }
+          });
+        } else if (typeof experiences === 'string') {
+          // Split by newlines if it's a string
+          const expArray = experiences.split('\n').filter(exp => exp.trim());
+          expArray.forEach(exp => {
+            doc.text(`  ${exp.trim()}`);
+          });
+        }
       } else {
-        doc.text('なし');
+        doc.text('  なし');
       }
       drawSolidLine(doc, true);
     });
@@ -493,12 +504,8 @@ const downloadSkillSheet = async (req, res) => {
       doc.font('NotoSansJP').fontSize(12).text('■スキル');
       if (cleanSkillsData['スキル']) {
         // Split the skills string by newlines and add each skill on a new line
-        const skills = cleanSkillsData['スキル'].split('\n');
-        skills.forEach(skill => {
-          if (skill.trim()) {
-            doc.text('  ' + skill.trim());
-          }
-        });
+        const skills = cleanSkillsData['スキル'];
+        doc.text(skills);
       } else {
         doc.text('  なし');
       }
@@ -771,10 +778,8 @@ const downloadBulk = async (req, res) => {
       skillSheetPDF.text(`[雇用形態]${c['employee type']}`);
       skillSheetPDF.text('[経験職種]');
       if (c['work content']) {
-        const experiences = c['work content'].split('、');
-        experiences.forEach(exp => {
-          skillSheetPDF.text(`${exp.trim()}`);
-        });
+        const experiences = c['work content'];
+        skillSheetPDF.text(`${experiences}`);
       } else {
         skillSheetPDF.text('なし');
       }
@@ -815,7 +820,7 @@ const downloadBulk = async (req, res) => {
       skillSheetPDF.font('NotoSansJP').fontSize(12).text('■スキル');
       if (skillsData['スキル']) {
         // Split the skills string by newlines and add each skill on a new line
-        const skills = typeof skillsData['スキル'] === 'string' 
+        const skills = typeof skillsData['スキル'] === 'string' && skillsData['スキル'].includes('\n')
           ? skillsData['スキル'].split('\n')
           : Array.isArray(skillsData['スキル']) 
             ? skillsData['スキル']
@@ -876,6 +881,31 @@ const downloadBulk = async (req, res) => {
   }
 };
 
+const updateLoR = async (req, res) => {
+  try {
+    const { recordId } = req.params;
+    const { lor } = req.body;
+
+    if (typeof lor !== 'string') {
+      return res.status(400).json({ error: 'Invalid LoR data' });
+    }
+
+    const [result] = await pool.query(
+      'UPDATE records SET lor = ? WHERE id = ?',
+      [lor, recordId]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Record not found' });
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error updating LoR:', error);
+    res.status(500).json({ error: 'Failed to update LoR' });
+  }
+};
+
 export {
   getRecords,
   uploadAudio,
@@ -887,5 +917,6 @@ export {
   getSkillSheet,
   updateSalesforce,
   downloadSalesforce,
-  downloadBulk
+  downloadBulk,
+  updateLoR
 };

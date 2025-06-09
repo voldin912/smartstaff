@@ -59,6 +59,19 @@ export const updateSalesforceSettings = async (req, res) => {
   }
 };
 
+async function sfLogin(conn, username, password, security_token) {
+  return new Promise((resolve, reject) => {
+      conn.login(username, password + security_token, (err, userInfo) => {
+          if (err) {
+              console.log("err", err);
+              resolve(err)
+          } else {
+              resolve(userInfo)
+          }
+      })
+  })
+}
+
 // Get Salesforce objects
 export const getSalesforceObjects = async (req, res) => {
   try {
@@ -73,40 +86,116 @@ export const getSalesforceObjects = async (req, res) => {
       loginUrl: base_url
     });
 
-    // Login to Salesforce using callback style
-    const loginResult = await new Promise((resolve, reject) => {
-      conn.login(username, password + security_token, (err, userInfo) => {
-        if (err) {
-          resolve(err);
-        } else {
-          resolve(userInfo);
-        }
-      });
-    });
-
-    // Check if login was successful
-    if (loginResult instanceof Error) {
-      console.error('Salesforce login error:', loginResult);
+    let userInfo;
+    try {
+      userInfo = await conn.login(username, password + security_token);
+      console.log("Login successful for user:", userInfo.username);
+    } catch (error) {
+      console.error('Salesforce login error:', error);
       return res.status(401).json({ 
         message: 'Failed to authenticate with Salesforce',
-        error: loginResult.message
+        error: error.message
       });
     }
 
-    // Get all objects
+    // Get all objects with detailed metadata
     const metadata = await conn.describeGlobal();
-    const objects = metadata.sobjects
-      .filter(obj => obj.queryable && obj.createable && obj.updateable)
-      .map(obj => ({
-        name: obj.name,
-        label: obj.label
-      }))
-      .sort((a, b) => a.label.localeCompare(b.label));
+    const objects = await Promise.all(
+      metadata.sobjects
+        .filter(obj => obj.queryable && obj.createable && obj.updateable)
+        .map(async (obj) => {
+          try {
+            // Get detailed metadata for each object
+            const describe = await conn.describe(obj.name);
+            return {
+              name: obj.name,
+              label: obj.label,
+              labelPlural: obj.labelPlural,
+              keyPrefix: obj.keyPrefix,
+              fields: describe.fields.map(field => ({
+                name: field.name,
+                label: field.label,
+                type: field.type,
+                length: field.length,
+                required: field.nillable === false,
+                unique: field.unique,
+                picklistValues: field.picklistValues || [],
+                referenceTo: field.referenceTo || []
+              })),
+              createable: obj.createable,
+              updateable: obj.updateable,
+              deletable: obj.deletable,
+              queryable: obj.queryable,
+              searchable: obj.searchable,
+              triggerable: obj.triggerable,
+              custom: obj.custom,
+              customSetting: obj.customSetting,
+              deprecatedAndHidden: obj.deprecatedAndHidden,
+              hasSubtypes: obj.hasSubtypes,
+              isSubtype: obj.isSubtype,
+              isInterface: obj.isInterface,
+              isApexTriggerable: obj.isApexTriggerable,
+              isWorkflowEnabled: obj.isWorkflowEnabled,
+              isFeedEnabled: obj.isFeedEnabled,
+              isSearchable: obj.isSearchable,
+              isLayoutable: obj.isLayoutable,
+              isCompactLayoutable: obj.isCompactLayoutable,
+              isProcessEnabled: obj.isProcessEnabled,
+              isReplicateable: obj.isReplicateable,
+              isRetrieveable: obj.isRetrieveable,
+              isUndeletable: obj.isUndeletable,
+              isMergeable: obj.isMergeable,
+              isQueryable: obj.isQueryable,
+              isTriggerable: obj.isTriggerable,
+              isUpdateable: obj.isUpdateable,
+              isCreateable: obj.isCreateable,
+              isDeletable: obj.isDeletable,
+              isCustom: obj.isCustom,
+              isCustomSetting: obj.isCustomSetting,
+              isDeprecatedAndHidden: obj.isDeprecatedAndHidden,
+              isHasSubtypes: obj.isHasSubtypes,
+              isIsSubtype: obj.isIsSubtype,
+              isIsInterface: obj.isIsInterface,
+              isIsApexTriggerable: obj.isIsApexTriggerable,
+              isIsWorkflowEnabled: obj.isIsWorkflowEnabled,
+              isIsFeedEnabled: obj.isIsFeedEnabled,
+              isIsSearchable: obj.isIsSearchable,
+              isIsLayoutable: obj.isIsLayoutable,
+              isIsCompactLayoutable: obj.isIsCompactLayoutable,
+              isIsProcessEnabled: obj.isIsProcessEnabled,
+              isIsReplicateable: obj.isIsReplicateable,
+              isIsRetrieveable: obj.isIsRetrieveable,
+              isIsUndeletable: obj.isIsUndeletable,
+              isIsMergeable: obj.isIsMergeable,
+              isIsQueryable: obj.isIsQueryable,
+              isIsTriggerable: obj.isIsTriggerable,
+              isIsUpdateable: obj.isIsUpdateable,
+              isIsCreateable: obj.isIsCreateable,
+              isIsDeletable: obj.isIsDeletable
+            };
+          } catch (error) {
+            console.error(`Error getting metadata for ${obj.name}:`, error);
+            return {
+              name: obj.name,
+              label: obj.label,
+              error: 'Failed to get detailed metadata'
+            };
+          }
+        })
+    );
 
-    res.json(objects);
+    // Sort objects by label
+    objects.sort((a, b) => a.label.localeCompare(b.label));
+
+    res.json({
+      success: true,
+      objects: objects,
+      totalObjects: objects.length
+    });
   } catch (error) {
     console.error('Error fetching Salesforce objects:', error);
     res.status(500).json({ 
+      success: false,
       message: 'Failed to fetch Salesforce objects',
       error: error.message 
     });

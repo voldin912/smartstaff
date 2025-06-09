@@ -73,6 +73,7 @@ export default function SalesforceSettingsPage() {
         },
         body: JSON.stringify(settings)
       });
+      console.log("response", response);
 
       if (response.ok) {
         toast.success('設定を保存しました');
@@ -95,6 +96,7 @@ export default function SalesforceSettingsPage() {
     try {
       setLoading(true);
       const token = localStorage.getItem('token');
+      console.log("token", token);
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/salesforce/objects`, {
         method: 'POST',
         headers: {
