@@ -19,6 +19,7 @@ interface AuthContextType {
   register: (data: any) => Promise<void>;
   logout: () => void;
   isAuthenticated: boolean;
+  apiCall: <T>(url: string, options?: RequestInit) => Promise<T>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -31,6 +32,39 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     checkAuth();
   }, []);
+
+  const handleUnauthorized = () => {
+    localStorage.removeItem('token');
+    setUser(null);
+    router.push('/login');
+  };
+
+  const apiCall = async <T,>(url: string, options: RequestInit = {}): Promise<T> => {
+    const token = localStorage.getItem('token');
+    if (!token) {
+      handleUnauthorized();
+      throw new Error('No token found');
+    }
+
+    const response = await fetch(url, {
+      ...options,
+      headers: {
+        ...options.headers,
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (response.status === 401) {
+      handleUnauthorized();
+      throw new Error('Unauthorized');
+    }
+
+    if (!response.ok) {
+      throw new Error('API call failed');
+    }
+
+    return response.json();
+  };
 
   const checkAuth = async () => {
     try {
@@ -49,6 +83,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (response.ok) {
         const userData = await response.json();
         setUser(userData);
+      } else if (response.status === 401) {
+        handleUnauthorized();
       } else {
         localStorage.removeItem('token');
       }
@@ -123,6 +159,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         register,
         logout,
         isAuthenticated: !!user,
+        apiCall,
       }}
     >
       {children}

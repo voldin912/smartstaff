@@ -17,8 +17,25 @@ interface SalesforceObject {
   label: string;
 }
 
+interface AccountField {
+  name: string;
+  label: string;
+  type: string;
+}
+
+interface CareerFieldMapping {
+  jobDescription: string;
+}
+
+interface CareerMapping {
+  careerNumber: number;
+  fields: {
+    jobDescription: string;
+  };
+}
+
 export default function SalesforceSettingsPage() {
-  const { user } = useAuth();
+  const { user, apiCall } = useAuth();
   const [settings, setSettings] = useState<SalesforceSettings>({
     base_url: '',
     username: '',
@@ -26,34 +43,65 @@ export default function SalesforceSettingsPage() {
     security_token: ''
   });
   const [objects, setObjects] = useState<SalesforceObject[]>([]);
+  const [accountFields, setAccountFields] = useState<AccountField[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedObject, setSelectedObject] = useState('');
+  const [selectedAccountField, setSelectedAccountField] = useState('');
+  const [careerMappings, setCareerMappings] = useState<CareerMapping[]>([]);
+  const [isLoadingMappings, setIsLoadingMappings] = useState(false);
 
   useEffect(() => {
     fetchSettings();
   }, []);
 
+  useEffect(() => {
+    const allFieldsFilled = settings.base_url && 
+                          settings.username && 
+                          settings.password && 
+                          settings.security_token;
+    
+    if (allFieldsFilled) {
+      fetchAccountFields();
+    } else {
+      setAccountFields([]);
+      setSelectedAccountField('');
+    }
+  }, [settings]);
+
+  useEffect(() => {
+    const fetchMappings = async () => {
+      if (settings.base_url && settings.username && settings.password && settings.security_token) {
+        try {
+          setIsLoadingMappings(true);
+          const mappings = await apiCall<CareerMapping[]>(`${process.env.NEXT_PUBLIC_API_URL}/api/salesforce/career-mappings`);
+          setCareerMappings(mappings);
+        } catch (error) {
+          console.error('Error fetching career mappings:', error);
+          toast.error('職務経歴フィールドマッピングの取得に失敗しました');
+        } finally {
+          setIsLoadingMappings(false);
+        }
+      } else {
+        // Clear mappings if any field is empty
+        setCareerMappings([]);
+      }
+    };
+
+    fetchMappings();
+  }, [settings.base_url, settings.username, settings.password, settings.security_token, apiCall]);
+
   const fetchSettings = async () => {
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/salesforce/settings`, {
-        headers: {
-          Authorization: `Bearer ${token}`
-        }
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        // If user is admin, data will be an array, so we take the first item
-        const settingsData = Array.isArray(data) ? data[0] : data;
-        if (settingsData) {
-          setSettings({
-            base_url: settingsData.base_url || '',
-            username: settingsData.username || '',
-            password: settingsData.password || '',
-            security_token: settingsData.security_token || ''
-          });
-        }
+      const settingsData = await apiCall<any>(`${process.env.NEXT_PUBLIC_API_URL}/api/salesforce/settings`);
+      // If user is admin, data will be an array, so we take the first item
+      const data = Array.isArray(settingsData) ? settingsData[0] : settingsData;
+      if (data) {
+        setSettings({
+          base_url: data.base_url || '',
+          username: data.username || '',
+          password: data.password || '',
+          security_token: data.security_token || ''
+        });
       }
     } catch (error) {
       console.error('Error fetching settings:', error);
@@ -61,61 +109,28 @@ export default function SalesforceSettingsPage() {
     }
   };
 
-  const handleSave = async () => {
+  const fetchAccountFields = async () => {
     try {
       setLoading(true);
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/salesforce/settings`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify(settings)
-      });
-      console.log("response", response);
-
-      if (response.ok) {
-        toast.success('設定を保存しました');
-        // After saving, fetch objects if all fields are filled
-        if (settings.base_url && settings.username && settings.password && settings.security_token) {
-          await fetchObjects();
-        }
-      } else {
-        toast.error('設定の保存に失敗しました');
-      }
-    } catch (error) {
-      console.error('Error saving settings:', error);
-      toast.error('設定の保存中にエラーが発生しました');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchObjects = async () => {
-    try {
-      setLoading(true);
-      const token = localStorage.getItem('token');
-      console.log("token", token);
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/salesforce/objects`, {
+      const data = await apiCall<any>(`${process.env.NEXT_PUBLIC_API_URL}/api/salesforce/objects`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
         },
         body: JSON.stringify(settings)
       });
 
-      if (response.ok) {
-        const data = await response.json();
-        console.log("data", data);
-        setObjects(data);
-      } else {
-        toast.error('オブジェクトの取得に失敗しました');
+      const accountObject = data.objects.find((obj: any) => obj.name === 'Account');
+      if (accountObject && accountObject.fields) {
+        setAccountFields(accountObject.fields.map((field: any) => ({
+          name: field.name,
+          label: field.label,
+          type: field.type
+        })));
       }
     } catch (error) {
-      console.error('Error fetching objects:', error);
-      toast.error('オブジェクトの取得中にエラーが発生しました');
+      console.error('Error fetching account fields:', error);
+      toast.error('Accountフィールドの取得中にエラーが発生しました');
     } finally {
       setLoading(false);
     }
@@ -129,12 +144,57 @@ export default function SalesforceSettingsPage() {
     }));
   };
 
+  const handleFieldMappingChange = (careerNumber: number, fieldName: string, value: string) => {
+    setCareerMappings(prevMappings => {
+      const newMappings = [...prevMappings];
+      const mappingIndex = newMappings.findIndex(m => m.careerNumber === careerNumber);
+      
+      if (mappingIndex !== -1) {
+        newMappings[mappingIndex] = {
+          ...newMappings[mappingIndex],
+          fields: {
+            ...newMappings[mappingIndex].fields,
+            [fieldName]: value
+          }
+        };
+      }
+      
+      return newMappings;
+    });
+  };
+
+  const handleSaveMappings = async () => {
+    try {
+      setLoading(true);
+      const response = await apiCall<{ message: string }>(`${process.env.NEXT_PUBLIC_API_URL}/api/salesforce/career-mappings`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(careerMappings)
+      });
+
+      // Show success message from the API response
+      toast.success(response.message || '職務経歴フィールドマッピングの保存が完了しました');
+
+      // Refresh the mappings after successful save
+      const updatedMappings = await apiCall<CareerMapping[]>(`${process.env.NEXT_PUBLIC_API_URL}/api/salesforce/career-mappings`);
+      setCareerMappings(updatedMappings);
+    } catch (error: any) {
+      console.error('Error saving mappings:', error);
+      // Show error message from the API if available, otherwise show generic message
+      toast.error(error.message || '職務経歴フィールドマッピングの保存中にエラーが発生しました');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <Layout>
       <div className="container mx-auto px-4 py-8">
         <h1 className="text-2xl font-bold mb-6">Salesforce設定</h1>
         
-        <div className="bg-white rounded-lg shadow p-6 max-w-2xl">
+        <div className="bg-white rounded-lg shadow p-6 max-w-4xl">
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -192,7 +252,7 @@ export default function SalesforceSettingsPage() {
               />
             </div>
 
-            <div className="flex justify-end">
+            {/* <div className="flex justify-end">
               <button
                 onClick={handleSave}
                 disabled={loading}
@@ -200,26 +260,57 @@ export default function SalesforceSettingsPage() {
               >
                 保存
               </button>
-            </div>
-          </div>
+            </div> */}
 
-          {objects.length > 0 && (
-            <div className="mt-8">
-              <h2 className="text-lg font-semibold mb-4">Salesforceオブジェクト</h2>
-              <select
-                value={selectedObject}
-                onChange={(e) => setSelectedObject(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              >
-                <option value="">オブジェクトを選択</option>
-                {objects.map((obj) => (
-                  <option key={obj.name} value={obj.name}>
-                    {obj.label} ({obj.name})
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
+            {accountFields.length > 0 && (
+              <div className="mt-8">
+                <div className="flex justify-between items-center mb-4">
+                  <h2 className="text-lg font-semibold">職務経歴フィールドマッピング</h2>
+                  <button
+                    onClick={handleSaveMappings}
+                    disabled={loading || isLoadingMappings}
+                    className={`px-4 py-2 rounded-md text-white ${
+                      loading || isLoadingMappings
+                        ? 'bg-gray-400 cursor-not-allowed'
+                        : 'bg-indigo-600 hover:bg-indigo-700'
+                    }`}
+                  >
+                    {loading ? '保存中...' : '保存'}
+                  </button>
+                </div>
+
+                {isLoadingMappings ? (
+                  <div className="flex justify-center items-center py-8">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+                  </div>
+                ) : (
+                  <div className="space-y-6">
+                    {careerMappings.map((mapping) => (
+                      <div key={mapping.careerNumber} className="border rounded-lg p-4">
+                        <h3 className="text-md font-medium mb-3">職務経歴 {mapping.careerNumber}</h3>
+                        <div className="grid grid-cols-1 gap-4">
+                          <div>
+                            <select
+                              value={mapping.fields.jobDescription}
+                              onChange={(e) => handleFieldMappingChange(mapping.careerNumber, 'jobDescription', e.target.value)}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            >
+                              <option value="">フィールドを選択</option>
+                              {accountFields.map((field) => (
+                                <option key={field.name} value={field.name}>
+                                  {field.label} ({field.name})
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </Layout>

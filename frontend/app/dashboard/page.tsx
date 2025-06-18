@@ -8,6 +8,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import SkillSheetSidebar from "@/components/SkillSheetSidebar";
 import SalesforceSidebar from "@/components/SalesforceSidebar";
 import LoRSidebar from "@/components/LoRSidebar";
+import { toast } from 'sonner';
 
 // Function to generate a random string of specified length
 const generateRandomString = (length: number) => {
@@ -99,6 +100,10 @@ export default function DashboardPage() {
   });
   const [isLoROpen, setIsLoROpen] = useState(false);
   const [selectedLoRRecord, setSelectedLoRRecord] = useState<Record | null>(null);
+  const [showSalesforceModal, setShowSalesforceModal] = useState(false);
+  const [modalStaffId, setModalStaffId] = useState<string | null>(null);
+  const [modalType, setModalType] = useState<'skillSheet' | 'salesforce' | null>(null);
+  const [modalData, setModalData] = useState<any>(null);
 
   useEffect(() => {
     fetchRecords();
@@ -761,6 +766,44 @@ export default function DashboardPage() {
     }
   };
 
+  // Handler for salesforce icon click (Skill Sheet or Salesforce column)
+  const handleSalesforceIconClick = (staffId: string, type: 'skillSheet' | 'salesforce', data: any) => {
+    setModalStaffId(staffId);
+    setModalType(type);
+    setModalData(data);
+    setShowSalesforceModal(true);
+  };
+
+  const handleSalesforceSync = async () => {
+    if (!modalStaffId || !modalType) return;
+    const token = localStorage.getItem("token");
+    try {
+      const body: any = { staffId: modalStaffId, type: modalType };
+      if (modalType === 'skillSheet') {
+        body.skillSheet = modalData;
+      } else if (modalType === 'salesforce') {
+        body.salesforce = modalData;
+      }
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/salesforce/sync-account`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.message || '連携に失敗しました');
+      } else {
+        toast.success(data.message || '連携が完了しました');
+      }
+    } catch (e) {
+      toast.error('サーバーエラーが発生しました');
+    }
+    setShowSalesforceModal(false);
+  };
+
   return (
     <Layout>
       <div className="min-h-screen bg-[#f8fafd] px-4 sm:px-6 lg:px-8 py-6 rounded-[5px]">
@@ -838,6 +881,28 @@ export default function DashboardPage() {
           onSave={handleLoRSave}
           staffId={selectedLoRRecord?.staffId}
         />
+
+        {/* Modal for Salesforce confirmation */}
+        {showSalesforceModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-30">
+            <div className="bg-gray-50 border border-gray-400 rounded-md p-8 min-w-[350px] max-w-[95vw] flex flex-col items-center">
+              <div className="text-center mb-6">
+                <div className="text-lg mb-2">以下スタッフIDの情報をセールスフォースへ連携します。<br/>よろしいですか？</div>
+                <div className="text-xl font-semibold mt-4 mb-2">Staff ID　{modalStaffId}</div>
+              </div>
+              <div className="flex gap-8 mt-2">
+                <button
+                  className="border border-gray-400 rounded px-8 py-2 text-lg hover:bg-gray-200"
+                  onClick={() => setShowSalesforceModal(false)}
+                >キャンセル</button>
+                <button
+                  className="border border-gray-400 rounded px-8 py-2 text-lg hover:bg-gray-200"
+                  onClick={handleSalesforceSync}
+                >連携する</button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Header */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8 rounded-[5px]">
@@ -978,7 +1043,11 @@ export default function DashboardPage() {
                               >
                                 <Image src="/download1.svg" alt="Download" width={20} height={20} className="rounded-[5px]" />
                               </button>
-                              <button className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center flex-shrink-0" title="Salesforce">
+                              <button 
+                                className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center flex-shrink-0" 
+                                title="Salesforce"
+                                onClick={() => handleSalesforceIconClick(rec.staffId, 'skillSheet', rec.skillSheet)}
+                              >
                                 <Image src="/salesforce1.svg" alt="Salesforce" width={20} height={20} className="rounded-[5px]" />
                               </button>
                             </div>
@@ -1000,7 +1069,11 @@ export default function DashboardPage() {
                               >
                                 <Image src="/download1.svg" alt="Download" width={20} height={20} className="rounded-[5px]" />
                               </button>
-                              <button className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center flex-shrink-0" title="Salesforce">
+                              <button 
+                                className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center flex-shrink-0" 
+                                title="Salesforce"
+                                onClick={() => handleSalesforceIconClick(rec.staffId, 'salesforce', rec.salesforce)}
+                              >
                                 <Image src="/salesforce1.svg" alt="Salesforce" width={20} height={20} className="rounded-[5px]" />
                               </button>
                             </div>
