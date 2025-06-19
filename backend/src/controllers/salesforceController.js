@@ -369,7 +369,17 @@ export const syncAccountWithSalesforce = async (req, res) => {
     // 4. Prepare the array of work contents
     let workContents = [];
     if (type === 'skillSheet' && skillSheet) {
-      let parsed = typeof skillSheet === 'string' ? JSON.parse(skillSheet) : skillSheet;
+      // Clean the skillSheet data by removing markdown code blocks and other symbols
+      let cleanedSkillSheet = skillSheet;
+      
+      // Remove markdown code blocks (```json, ```, etc.)
+      cleanedSkillSheet = cleanedSkillSheet.replace(/```json*\n?/g, '');
+      cleanedSkillSheet = cleanedSkillSheet.replace(/```/g, '');
+      
+      // Remove extra whitespace and newlines
+      cleanedSkillSheet = cleanedSkillSheet.trim();
+      
+      let parsed = typeof cleanedSkillSheet === 'string' ? JSON.parse(cleanedSkillSheet) : cleanedSkillSheet;
       workContents = Object.values(parsed).map(career => career['work content'] || '').filter(Boolean);
     } else if (type === 'salesforce') {
       let arr = salesforce;
