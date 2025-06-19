@@ -26,6 +26,7 @@ export const updateSalesforceSettings = async (req, res) => {
   try {
     const { role, company_id } = req.user;
     const { base_url, username, password, security_token } = req.body;
+    console.log("req.body", req.body);
     
     console.log("req.body", base_url, username, password, security_token);
     // If user is admin and target_company_id is provided, update that company's settings
@@ -211,7 +212,7 @@ export const saveCareerMappings = async (req, res) => {
     if (!Array.isArray(mappings) || mappings.length === 0) {
       return res.status(400).json({ message: '無効なマッピングデータです' });
     }
-
+    console.log(role, company_id);
     // Use admin as company_id for admin users
     const actualCompanyId = role === 'admin' ? 'admin' : company_id;
 

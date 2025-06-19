@@ -36,7 +36,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const handleUnauthorized = () => {
     localStorage.removeItem('token');
     setUser(null);
-    router.push('/login');
   };
 
   const apiCall = async <T,>(url: string, options: RequestInit = {}): Promise<T> => {
