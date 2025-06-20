@@ -98,10 +98,12 @@ const getRecords = async (req, res) => {
   try {
     const { role, company_id, id: userId } = req.user;
     
+    console.log('User info:', { role, company_id, userId });
+    
     let query = `
       SELECT 
         r.id, 
-        DATE_FORMAT(r.date, '%d/%m/%y %H:%i:%s') as date,
+        DATE_FORMAT(r.date, '%Y/%m/%d %H:%i:%s') as date,
         r.file_id as fileId, 
         r.employee_id as staffId, 
         r.stt,
@@ -124,16 +126,30 @@ const getRecords = async (req, res) => {
       // Members can only see their own records
       query += ' WHERE r.staff_id = ?';
       queryParams.push(userId);
+      console.log('Filtering for member - staff_id:', userId);
     } else if (role === 'company-manager') {
       // Company managers can see records from their company
       query += ' WHERE u.company_id = ?';
       queryParams.push(company_id);
+      console.log('Filtering for company-manager - company_id:', company_id);
+    } else if (role === 'admin') {
+      console.log('Admin user - no filtering applied, showing all records');
+      // For admin, we want to see all records, so no WHERE clause
+    } else {
+      console.log('Unknown role:', role);
+      // Default to showing only user's own records for unknown roles
+      query += ' WHERE r.staff_id = ?';
+      queryParams.push(userId);
     }
-    // Admin can see all records (no WHERE clause needed)
 
     query += ' ORDER BY r.date DESC';
+    
+    console.log('Final query:', query);
+    console.log('Query params:', queryParams);
 
     const [records] = await pool.query(query, queryParams);
+    console.log('Records found:', records.length);
+    
     res.json(records);
   } catch (error) {
     console.error('Error fetching records:', error);

@@ -48,6 +48,7 @@ export default function SalesforceSettingsPage() {
   const [selectedAccountField, setSelectedAccountField] = useState('');
   const [careerMappings, setCareerMappings] = useState<CareerMapping[]>([]);
   const [isLoadingMappings, setIsLoadingMappings] = useState(false);
+  const [staffMemo, setStaffMemo] = useState('');
 
   useEffect(() => {
     fetchSettings();
@@ -144,7 +145,7 @@ export default function SalesforceSettingsPage() {
       
       // Check if data and data.objects exist
       if (!data || !data.objects || !Array.isArray(data.objects)) {
-        console.error('Invalid response structure:', data);
+        console.log('Invalid response structure:', data);
         return;
       }
 
@@ -195,6 +196,10 @@ export default function SalesforceSettingsPage() {
     });
   };
 
+  const handleStaffMemoChange = (value: string) => {
+    setStaffMemo(value);
+  };
+
   const handleSaveMappings = async () => {
     try {
       setLoading(true);
@@ -205,7 +210,7 @@ export default function SalesforceSettingsPage() {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify(careerMappings)
+        body: JSON.stringify({careerMappings, staffMemo})
       });
 
       // Show success message from the API response
@@ -343,6 +348,25 @@ export default function SalesforceSettingsPage() {
                 </div>
               ) : (
                 <div className="space-y-6">
+                  <div>
+                    <h3 className="text-md font-medium mb-3">スタープ対応メモ</h3>
+                    <div className="grid grid-cols-1 gap-4">
+                        <div>
+                          <select
+                            value={staffMemo}
+                            onChange={(e) => handleStaffMemoChange( e.target.value)}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                          >
+                            <option value="">フィールドを選択</option>
+                            {accountFields.map((field) => (
+                              <option key={field.name} value={field.name}>
+                                {field.label} ({field.name})
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                  </div>
                   {careerMappings.map((mapping) => (
                     <div key={mapping.careerNumber} className="border rounded-lg p-4">
                       <h3 className="text-md font-medium mb-3">職務経歴 {mapping.careerNumber}</h3>

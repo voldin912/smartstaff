@@ -207,8 +207,9 @@ export const getSalesforceObjects = async (req, res) => {
 export const saveCareerMappings = async (req, res) => {
   try {
     const { role, company_id } = req.user;
-    const mappings = req.body;
-
+    const {careerMappings, staffMemo} = req.body;
+    const mappings = careerMappings
+    console.log("mapping staffmemo", mappings, staffMemo)
     if (!Array.isArray(mappings) || mappings.length === 0) {
       return res.status(400).json({ message: '無効なマッピングデータです' });
     }
@@ -238,10 +239,11 @@ export const saveCareerMappings = async (req, res) => {
           // Update existing mapping
           await connection.query(
             `UPDATE career_mappings SET
-              job_description_field = ?
+              job_description_field = ?, staff_memo = ?
             WHERE company_id = ? AND career_index = ?`,
             [
               jobDescription,
+              staffMemo,
               actualCompanyId,
               careerNumber
             ]
@@ -250,12 +252,13 @@ export const saveCareerMappings = async (req, res) => {
           // Insert new mapping
           await connection.query(
             `INSERT INTO career_mappings (
-              company_id, career_index, job_description_field
-            ) VALUES (?, ?, ?)`,
+              company_id, career_index, job_description_field, staff_memo
+            ) VALUES (?, ?, ?, ?)`,
             [
               actualCompanyId,
               careerNumber,
-              jobDescription
+              jobDescription, 
+              staffMemo
             ]
           );
         }
@@ -334,7 +337,7 @@ export const getCareerMappings = async (req, res) => {
 };
 
 export const syncAccountWithSalesforce = async (req, res) => {
-  const { staffId, type, skillSheet, salesforce } = req.body;
+  const { staffId, type, skillSheet, salesforce, hope } = req.body;
   if (!staffId) {
     return res.status(400).json({ message: 'Staff IDが指定されていません' });
   }
@@ -365,7 +368,7 @@ export const syncAccountWithSalesforce = async (req, res) => {
     if (!accounts.length) {
       return res.status(404).json({ message: '指定したStaff IDのアカウントが見つかりません' });
     }
-    console.log("salesforce", type,salesforce);
+    console.log("salesforce", type,salesforce,skillSheet,hope);
     // 4. Prepare the array of work contents
     let workContents = [];
     if (type === 'skillSheet' && skillSheet) {
@@ -409,6 +412,16 @@ export const syncAccountWithSalesforce = async (req, res) => {
         return res.status(400).json({ message: `マッピングが見つかりません (行: ${i + 1})` });
       }
       updateObj[mapping.job_description_field] = workContents[i];
+    }
+
+    if (hope) { 
+      const [staffRows] = await pool.query(
+        'SELECT staff_memo FROM career_mappings WHERE company_id = ? AND career_index = 1',
+        [actualCompanyId]
+      );
+      const staff = staffRows[0];
+      // console.log("staff", staff);
+      updateObj[staff.staff_memo] = hope;
     }
 
     // 6. Update Salesforce

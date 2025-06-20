@@ -71,7 +71,7 @@ const convertToArray = (data: any): string[] => {
   return [];
 };
 
-export default function DashboardPage() {
+export default function AdminDashboardPage() {
   const { user } = useAuth();
   const [records, setRecords] = useState<Record[]>([]);
   const [loading, setLoading] = useState(true);
@@ -104,6 +104,7 @@ export default function DashboardPage() {
   const [modalStaffId, setModalStaffId] = useState<string | null>(null);
   const [modalType, setModalType] = useState<'skillSheet' | 'salesforce' | null>(null);
   const [modalData, setModalData] = useState<any>(null);
+  const [staffMemo, setStaffMemo] = useState('')
 
   useEffect(() => {
     fetchRecords();
@@ -118,6 +119,7 @@ export default function DashboardPage() {
       });
       if (res.ok) {
         const data = await res.json();
+        console.log("data",data)
         setRecords(data);
       }
     } catch (e) {
@@ -369,7 +371,6 @@ export default function DashboardPage() {
   };
 
   const handleSalesforceEdit = (record: Record) => {
-    // console.log("handleSalesforceEdit", record);
     setSelectedSalesforceRecord(record);
     setIsSalesforceOpen(true);
   };
@@ -516,6 +517,46 @@ export default function DashboardPage() {
     }
   };
 
+  const handleLoREdit = (record: Record) => {
+    setSelectedLoRRecord(record);
+    setIsLoROpen(true);
+  };
+
+  const handleLoRSave = async (data: string) => {
+    if (!selectedLoRRecord) return;
+
+    try {
+      const token = localStorage.getItem("token");
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/records/${selectedLoRRecord.id}/lor`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ lor: data }),
+      });
+
+      if (response.ok) {
+        setAlertMessage({
+          type: 'success',
+          message: '推薦文を更新しました。'
+        });
+        fetchRecords();
+        setIsLoROpen(false);
+      } else {
+        setAlertMessage({
+          type: 'error',
+          message: '推薦文の更新に失敗しました。'
+        });
+      }
+    } catch (error) {
+      setAlertMessage({
+        type: 'error',
+        message: '推薦文の更新中にエラーが発生しました。'
+      });
+    }
+  };
+
   const handleSTTDownload = async (record: Record) => {
     try {
       const token = localStorage.getItem("token");
@@ -549,18 +590,18 @@ export default function DashboardPage() {
 
         setAlertMessage({
           type: 'success',
-          message: 'STTデータのダウンロードが完了しました。'
+          message: 'STTのダウンロードが完了しました。'
         });
       } else {
         setAlertMessage({
           type: 'error',
-          message: 'STTデータのダウンロードに失敗しました。'
+          message: 'STTのダウンロードに失敗しました。'
         });
       }
     } catch (error) {
       setAlertMessage({
         type: 'error',
-        message: 'STTデータのダウンロード中にエラーが発生しました。'
+        message: 'STTのダウンロード中にエラーが発生しました。'
       });
     }
   };
@@ -586,7 +627,7 @@ export default function DashboardPage() {
         link.href = url;
         
         // Set the filename using the record's fileId
-        link.download = `bulk-${record.fileId}.zip`;
+        link.download = `bulk-${record.fileId}.pdf`;
         
         // Append to body, click, and remove
         document.body.appendChild(link);
@@ -598,179 +639,62 @@ export default function DashboardPage() {
 
         setAlertMessage({
           type: 'success',
-          message: '一括データのダウンロードが完了しました。'
+          message: 'Bulkのダウンロードが完了しました。'
         });
       } else {
         setAlertMessage({
           type: 'error',
-          message: '一括データのダウンロードに失敗しました。'
+          message: 'Bulkのダウンロードに失敗しました。'
         });
       }
     } catch (error) {
       setAlertMessage({
         type: 'error',
-        message: '一括データのダウンロード中にエラーが発生しました。'
-      });
-    }
-  };
-
-  const handleLoREdit = (record: Record) => {
-    setSelectedLoRRecord(record);
-    setIsLoROpen(true);
-  };
-
-  const handleLoRSave = async (data: string) => {
-    if (!selectedLoRRecord) return;
-
-    try {
-      const token = localStorage.getItem("token");
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/records/${selectedLoRRecord.id}/lor`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ lor: data }),
-      });
-
-      if (res.ok) {
-        fetchRecords();
-        setIsLoROpen(false);
-        setSelectedLoRRecord(null);
-        setAlertMessage({
-          type: 'success',
-          message: 'スタッフ対応メモを更新しました。'
-        });
-      } else {
-        throw new Error('Failed to update LoR');
-      }
-    } catch (error) {
-      console.error('Error updating LoR:', error);
-      setAlertMessage({
-        type: 'error',
-        message: 'スタッフ対応メモの更新に失敗しました。'
+        message: 'Bulkのダウンロード中にエラーが発生しました。'
       });
     }
   };
 
   const parseDate = (dateString: string) => {
-    try {
-      // Handle DD/MM/YY format
-      if (dateString.includes('/')) {
-        const [day, month, year] = dateString.split(' ')[0].split('/');
-        const time = dateString.split(' ')[1];
-        // Convert 2-digit year to 4-digit year
-        const fullYear = parseInt(year) < 50 ? 2000 + parseInt(year) : 1900 + parseInt(year);
-        dateString = `${fullYear}-${month.padStart(2, '0')}-${day.padStart(2, '0')} ${time}`;
-      }
-      return new Date(dateString).getTime();
-    } catch (error) {
-      console.error('Error parsing date for sorting:', error);
-      return 0; // Return 0 for invalid dates to sort them to the end
-    }
+    const date = new Date(dateString);
+    return {
+      year: date.getFullYear(),
+      month: date.getMonth() + 1,
+      day: date.getDate(),
+      hours: date.getHours(),
+      minutes: date.getMinutes(),
+      seconds: date.getSeconds()
+    };
   };
 
   const formatDate = (dateString: string) => {
-    try {
-      // Handle DD/MM/YY format
-      if (dateString.includes('/')) {
-        const [day, month, year] = dateString.split(' ')[0].split('/');
-        const time = dateString.split(' ')[1];
-        // Convert 2-digit year to 4-digit year
-        const fullYear = parseInt(year) < 50 ? 2000 + parseInt(year) : 1900 + parseInt(year);
-        dateString = `${fullYear}-${month.padStart(2, '0')}-${day.padStart(2, '0')} ${time}`;
-      }
-
-      const date = new Date(dateString);
-      
-      // If the date is invalid, return the original string
-      if (isNaN(date.getTime())) {
-        console.warn('Invalid date string:', dateString);
-        return dateString;
-      }
-
-      // Format the date in YYYY-MM-DD HH:mm:ss format
-      const year = date.getFullYear();
-      const month = String(date.getMonth() + 1).padStart(2, '0');
-      const day = String(date.getDate()).padStart(2, '0');
-      const hours = String(date.getHours()).padStart(2, '0');
-      const minutes = String(date.getMinutes()).padStart(2, '0');
-      const seconds = String(date.getSeconds()).padStart(2, '0');
-
-      return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
-    } catch (error) {
-      console.error('Error formatting date:', error);
-      return dateString;
-    }
+    const date = parseDate(dateString);
+    return `${date.year}/${String(date.month).padStart(2, '0')}/${String(date.day).padStart(2, '0')}`;
   };
 
-  const filteredRecords = records.filter(rec =>
-    (rec.date || '').includes(searchTerm) ||
-    (rec.fileId || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (rec.staffId || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (rec.userName || '').toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
-  const sortedRecords = useMemo(() => {
-    return [...filteredRecords].sort((a, b) => {
-      if (sortField === 'date') {
-        const dateA = parseDate(a.date);
-        const dateB = parseDate(b.date);
-        return sortOrder === 'desc' ? dateB - dateA : dateA - dateB;
-      } else {
-        // Sort by fileId
-        const fileIdA = a.fileId.toLowerCase();
-        const fileIdB = b.fileId.toLowerCase();
-        return sortOrder === 'desc' 
-          ? fileIdB.localeCompare(fileIdA)
-          : fileIdA.localeCompare(fileIdB);
-      }
-    });
-  }, [filteredRecords, sortField, sortOrder]);
-
-  // Calculate pagination on the filtered and sorted records
-  const paginatedRecords = useMemo(() => {
-    const indexOfLastRecord = currentPage * rowsPerPage;
-    const indexOfFirstRecord = indexOfLastRecord - rowsPerPage;
-    return sortedRecords.slice(indexOfFirstRecord, indexOfLastRecord);
-  }, [sortedRecords, currentPage, rowsPerPage]);
-
-  // Auto-hide alert after 5 seconds
-  useEffect(() => {
-    if (alertMessage) {
-      const timer = setTimeout(() => {
-        setAlertMessage(null);
-      }, 5000);
-      return () => clearTimeout(timer);
-    }
-  }, [alertMessage]);
-
-  // Add function to handle column header click
   const handleColumnSort = (field: SortField) => {
-    const newOrder = field === sortField && sortOrder === 'desc' ? 'asc' : 'desc';
-    setSortField(field);
-    setSortOrder(newOrder);
+    if (sortField === field) {
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortOrder('asc');
+    }
 
+    // Update sort icons
     if (field === 'date') {
-      setSortIconDate(newOrder === 'asc' ? '↑' : '↓');
-      setSortIconFileId('↓');
-      setSortIconUserName('↓');
+      setSortIconDate(sortOrder === 'asc' ? '↑' : '↓');
     } else if (field === 'fileId') {
-      setSortIconDate('↓');
-      setSortIconFileId(newOrder === 'asc' ? '↑' : '↓');
-      setSortIconUserName('↓');
+      setSortIconFileId(sortOrder === 'asc' ? '↑' : '↓');
     } else if (field === 'userName') {
-      setSortIconDate('↓');
-      setSortIconFileId('↓');
-      setSortIconUserName(newOrder === 'asc' ? '↑' : '↓');
+      setSortIconUserName(sortOrder === 'asc' ? '↑' : '↓');
     }
   };
 
-  // Handler for salesforce icon click (Skill Sheet or Salesforce column)
-  const handleSalesforceIconClick = (staffId: string, type: 'skillSheet' | 'salesforce', data: any) => {
+  const handleSalesforceIconClick = (staffId: string, type: 'skillSheet' | 'salesforce', data: any, hope: any) => {
     setModalStaffId(staffId);
     setModalType(type);
     setModalData(data);
+    setStaffMemo(hope)
     setShowSalesforceModal(true);
   };
 
@@ -784,6 +708,8 @@ export default function DashboardPage() {
       } else if (modalType === 'salesforce') {
         body.salesforce = modalData;
       }
+      body.hope = staffMemo;
+      console.log(body)
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/salesforce/sync-account`, {
         method: 'POST',
         headers: {
@@ -803,6 +729,56 @@ export default function DashboardPage() {
     }
     setShowSalesforceModal(false);
   };
+
+  // Computed values for filtering and pagination
+  const filteredRecords = useMemo(() => {
+    return records.filter(record => {
+      const searchLower = searchTerm.toLowerCase();
+      return (
+        formatDate(record.date).toLowerCase().includes(searchLower) ||
+        record.fileId.toLowerCase().includes(searchLower)
+      );
+    }).sort((a, b) => {
+      let aValue: any, bValue: any;
+      
+      switch (sortField) {
+        case 'date':
+          aValue = new Date(a.date);
+          bValue = new Date(b.date);
+          break;
+        case 'fileId':
+          aValue = a.fileId;
+          bValue = b.fileId;
+          break;
+        case 'userName':
+          aValue = a.userName || '';
+          bValue = b.userName || '';
+          break;
+        default:
+          return 0;
+      }
+      
+      if (sortOrder === 'asc') {
+        return aValue > bValue ? 1 : -1;
+      } else {
+        return aValue < bValue ? 1 : -1;
+      }
+    });
+  }, [records, searchTerm, sortField, sortOrder]);
+
+  const paginatedRecords = useMemo(() => {
+    const startIndex = (currentPage - 1) * rowsPerPage;
+    const endIndex = startIndex + rowsPerPage;
+    return filteredRecords.slice(startIndex, endIndex);
+  }, [filteredRecords, currentPage, rowsPerPage]);
+
+  // Redirect if not admin
+  if (user && user.role !== 'admin') {
+    // Redirect to appropriate company dashboard
+    const companySlug = user.company?.slug || 'default';
+    window.location.href = `/${companySlug}/dashboard`;
+    return null;
+  }
 
   return (
     <Layout>
@@ -997,9 +973,9 @@ export default function DashboardPage() {
                   </thead>
                   <tbody>
                     {loading ? (
-                      <tr><td colSpan={8} className="text-center py-8">Loading...</td></tr>
+                      <tr><td colSpan={9} className="text-center py-8">Loading...</td></tr>
                     ) : paginatedRecords.length === 0 ? (
-                      <tr><td colSpan={8} className="text-center py-8">No records found</td></tr>
+                      <tr><td colSpan={9} className="text-center py-8">No records found</td></tr>
                     ) : (
                       paginatedRecords.map((rec) => (
                         <tr key={rec.id} className="border-b border-gray-100 hover:bg-gray-50 transition text-left align-middle rounded-[5px]">
@@ -1046,7 +1022,7 @@ export default function DashboardPage() {
                               <button 
                                 className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center flex-shrink-0" 
                                 title="Salesforce"
-                                onClick={() => handleSalesforceIconClick(rec.staffId, 'skillSheet', rec.skillSheet)}
+                                onClick={() => handleSalesforceIconClick(rec.staffId, 'skillSheet', rec.skillSheet, rec.hope)}
                               >
                                 <Image src="/salesforce1.svg" alt="Salesforce" width={20} height={20} className="rounded-[5px]" />
                               </button>
@@ -1072,7 +1048,7 @@ export default function DashboardPage() {
                               <button 
                                 className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center flex-shrink-0" 
                                 title="Salesforce"
-                                onClick={() => handleSalesforceIconClick(rec.staffId, 'salesforce', rec.salesforce)}
+                                onClick={() => handleSalesforceIconClick(rec.staffId, 'salesforce', rec.salesforce, rec.hope)}
                               >
                                 <Image src="/salesforce1.svg" alt="Salesforce" width={20} height={20} className="rounded-[5px]" />
                               </button>

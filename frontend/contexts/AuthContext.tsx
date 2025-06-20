@@ -10,6 +10,12 @@ interface User {
   role: 'admin' | 'company-manager' | 'member';
   company_id: number | null;
   avatar: string | null;
+  company?: {
+    id: number;
+    name: string;
+    slug: string;
+    logo: string | null;
+  };
 }
 
 interface AuthContextType {
@@ -113,7 +119,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const { token } = await response.json();
       localStorage.setItem('token', token);
       await checkAuth();
-      router.push('/dashboard');
+      
+      // Redirect to appropriate dashboard based on user role and company
+      if (user) {
+        const baseSlug = user.role === 'admin' ? 'admin' : (user.company?.slug || 'default');
+        router.push(`/${baseSlug}/dashboard`);
+      } else {
+        router.push('/dashboard');
+      }
     } catch (error) {
       throw error;
     }
@@ -137,7 +150,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const { token } = await response.json();
       localStorage.setItem('token', token);
       await checkAuth();
-      router.push('/dashboard');
+      
+      // Redirect to appropriate dashboard based on user role and company
+      if (user) {
+        const baseSlug = user.role === 'admin' ? 'admin' : (user.company?.slug || 'default');
+        router.push(`/${baseSlug}/dashboard`);
+      } else {
+        router.push('/dashboard');
+      }
     } catch (error) {
       throw error;
     }

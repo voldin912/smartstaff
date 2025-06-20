@@ -69,7 +69,22 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
   if (!user) return null;
 
-  const filteredNavItems = navItems.filter((item) => item.roles.includes(user.role));
+  // Generate dynamic navigation items based on user role and company
+  const getDynamicNavItems = () => {
+    const baseSlug = user.role === 'admin' ? 'admin' : (user.company?.slug || 'default');
+    
+    return navItems.map(item => {
+      if (item.href === '/dashboard') {
+        return {
+          ...item,
+          href: `/${baseSlug}/dashboard`
+        };
+      }
+      return item;
+    });
+  };
+
+  const filteredNavItems = getDynamicNavItems().filter((item) => item.roles.includes(user.role));
 
   return (
     <div className="min-h-screen bg-gray-100 rounded-[5px]">
@@ -81,8 +96,34 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         <div className="flex flex-col h-full rounded-[5px]">
           {/* Logo */}
           <div className="flex items-center justify-center h-16 px-4 rounded-[5px]">
-            <img src={'./logo.png'} alt='Logo' className='w-10 h-10 mr-2 rounded-[5px]' />
-            <span className="text-2xl text-black font-sans rounded-[5px]">Resona Gate</span>
+            {user.company ? (
+              <>
+                {user.company.logo ? (
+                  <img 
+                    src={`${process.env.NEXT_PUBLIC_API_URL}${user.company.logo}`} 
+                    alt={user.company.name} 
+                    className='w-10 h-10 mr-2 rounded-[5px] object-cover' 
+                  />
+                ) : (
+                  <img 
+                    src={'/logo1.svg'} 
+                    alt={user.company.name} 
+                    className='w-10 h-10 mr-2 rounded-[5px] object-cover' 
+                  />
+                )}
+                <span className="text-2xl text-black font-sans rounded-[5px] truncate max-w-[180px]">
+                  {user.company.name.length > 12 
+                    ? `${user.company.name.substring(0, 12)}...` 
+                    : user.company.name
+                  }
+                </span>
+              </>
+            ) : (
+              <>
+                <img src={'/logo.png'} alt='Logo' className='w-10 h-10 mr-2 rounded-[5px]' />
+                <span className="text-2xl text-black font-sans rounded-[5px]">Smart Staff</span>
+              </>
+            )}
           </div>
 
           {/* Navigation */}

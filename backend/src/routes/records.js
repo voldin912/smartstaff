@@ -1,7 +1,7 @@
 import express from 'express';
 import { auth } from '../middleware/auth.js';
 import { getRecords, uploadAudio, testAPI, downloadSTT, downloadSkillSheet, updateStaffId, updateSkillSheet, getSkillSheet, updateSalesforce, downloadSalesforce, downloadBulk, updateLoR } from '../controllers/recordsController.js';
-import upload from '../middleware/upload.js';
+import { upload } from '../middleware/upload.js';
 
 const router = express.Router();
 

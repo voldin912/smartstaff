@@ -104,6 +104,27 @@ router.get('/me', auth, async (req, res) => {
   try {
     const user = { ...req.user };
     delete user.password;
+    
+    // If user is admin, set specific company info
+    if (user.role === 'admin') {
+      user.company = {
+        id: 0,
+        name: 'Smart Staff',
+        slug: 'admin',
+        logo: ''
+      };
+    }
+    // If user has a company_id, fetch company information
+    else if (user.company_id) {
+      const [companies] = await pool.query(
+        'SELECT id, name, slug, logo FROM companies WHERE id = ?', 
+        [user.company_id]
+      );
+      if (companies.length > 0) {
+        user.company = companies[0];
+      }
+    }
+    
     res.json(user);
   } catch (error) {
     console.error(error);
