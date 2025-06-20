@@ -30,7 +30,7 @@ export const updateSalesforceSettings = async (req, res) => {
     
     console.log("req.body", base_url, username, password, security_token);
     // If user is admin and target_company_id is provided, update that company's settings
-    const actualCompanyId = role === 'admin' ? 'admin' : company_id;
+    const actualCompanyId = role === 'admin' ? 'admin' : String(company_id);
 
     console.log("role, company_id", role, company_id);
     
@@ -215,7 +215,7 @@ export const saveCareerMappings = async (req, res) => {
     }
     console.log(role, company_id);
     // Use admin as company_id for admin users
-    const actualCompanyId = role === 'admin' ? 'admin' : company_id;
+    const actualCompanyId = role === 'admin' ? 'admin' : String(company_id);
 
     // Start a transaction
     const connection = await pool.getConnection();
@@ -234,7 +234,6 @@ export const saveCareerMappings = async (req, res) => {
       for (const mapping of mappings) {
         const { careerNumber, fields } = mapping;
         const { jobDescription } = fields;
-
         if (existingIndices.has(careerNumber)) {
           // Update existing mapping
           await connection.query(
@@ -245,7 +244,7 @@ export const saveCareerMappings = async (req, res) => {
               jobDescription,
               staffMemo,
               actualCompanyId,
-              careerNumber
+              Number(careerNumber)
             ]
           );
         } else {
@@ -256,7 +255,7 @@ export const saveCareerMappings = async (req, res) => {
             ) VALUES (?, ?, ?, ?)`,
             [
               actualCompanyId,
-              careerNumber,
+              Number(careerNumber),
               jobDescription, 
               staffMemo
             ]
@@ -264,22 +263,11 @@ export const saveCareerMappings = async (req, res) => {
         }
       }
 
-      // Delete any mappings that are no longer needed
-      const newIndices = new Set(mappings.map(m => m.careerNumber));
-      const indicesToDelete = [...existingIndices].filter(index => !newIndices.has(index));
-      
-      if (indicesToDelete.length > 0) {
-        await connection.query(
-          'DELETE FROM career_mappings WHERE company_id = ? AND career_index IN (?)',
-          [actualCompanyId, indicesToDelete]
-        );
-      }
-
       await connection.commit();
       res.json({ message: '職務経歴フィールドマッピングの保存が完了しました' });
     } catch (error) {
       await connection.rollback();
-      throw error;
+      console.log(error)
     } finally {
       connection.release();
     }
@@ -295,12 +283,13 @@ export const getCareerMappings = async (req, res) => {
     const { role, company_id } = req.user;
     
     // Use admin as company_id for admin users
-    const actualCompanyId = role === 'admin' ? 'admin' : company_id;
+    const actualCompanyId = role === 'admin' ? 'admin' : String(company_id);
 
     const [mappings] = await pool.query(
       `SELECT 
         career_index as careerNumber,
-        job_description_field as jobDescription
+        job_description_field as jobDescription,
+        staff_memo as staffMemo
       FROM career_mappings 
       WHERE company_id = ?
       ORDER BY career_index ASC`,
@@ -311,7 +300,8 @@ export const getCareerMappings = async (req, res) => {
     const formattedMappings = mappings.map(mapping => ({
       careerNumber: mapping.careerNumber,
       fields: {
-        jobDescription: mapping.jobDescription || ''
+        jobDescription: mapping.jobDescription || '',
+        staffMemo: mapping.staffMemo || ''
       }
     }));
 
@@ -324,7 +314,8 @@ export const getCareerMappings = async (req, res) => {
       return {
         careerNumber: i + 1,
         fields: {
-          jobDescription: ''
+          jobDescription: '',
+          staffMemo: ''
         }
       };
     });
@@ -345,7 +336,7 @@ export const syncAccountWithSalesforce = async (req, res) => {
   try {
     // 1. Get Salesforce credentials for this company/user
     const { role, company_id } = req.user;
-    const actualCompanyId = role === 'admin' ? 'admin' : company_id;
+    const actualCompanyId = role === 'admin' ? 'admin' : String(company_id);
     const [settingsRows] = await pool.query(
       'SELECT * FROM salesforce WHERE company_id = ?',
       [actualCompanyId]

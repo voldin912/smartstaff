@@ -78,6 +78,8 @@ export default function SalesforceSettingsPage() {
           const headers = { Authorization: `Bearer ${token}` };
           const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/salesforce/career-mappings`, { headers });
           const mappings = await response.json();
+          console.log("mappings", mappings)
+          setStaffMemo(mappings[0].fields.staffMemo)
           setCareerMappings(mappings);
         } catch (error) {
           console.error('Error fetching career mappings:', error);
@@ -212,6 +214,8 @@ export default function SalesforceSettingsPage() {
         },
         body: JSON.stringify({careerMappings, staffMemo})
       });
+
+      console.log("careerMappings",careerMappings)
 
       // Show success message from the API response
       toast.success('職務経歴フィールドマッピングの保存が完了しました');
