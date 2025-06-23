@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 
 interface User {
@@ -26,18 +26,120 @@ interface AuthContextType {
   logout: () => void;
   isAuthenticated: boolean;
   apiCall: <T>(url: string, options?: RequestInit) => Promise<T>;
+  showLogoutWarning: boolean;
+  dismissLogoutWarning: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+// Auto logout timeout in milliseconds (30 minutes)
+const AUTO_LOGOUT_TIMEOUT = 30 * 60 * 1000;
+// Warning timeout in milliseconds (5 minutes before logout)
+const WARNING_TIMEOUT = 25 * 60 * 1000;
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [showLogoutWarning, setShowLogoutWarning] = useState(false);
   const router = useRouter();
+  const logoutTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const warningTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     checkAuth();
   }, []);
+
+  // Set up activity listeners for auto logout
+  useEffect(() => {
+    if (!user) return;
+
+    const resetLogoutTimer = () => {
+      // Clear existing timers
+      if (logoutTimerRef.current) {
+        clearTimeout(logoutTimerRef.current);
+      }
+      if (warningTimerRef.current) {
+        clearTimeout(warningTimerRef.current);
+      }
+      
+      // Hide warning if it was showing
+      setShowLogoutWarning(false);
+      
+      // Set warning timer (25 minutes)
+      warningTimerRef.current = setTimeout(() => {
+        setShowLogoutWarning(true);
+      }, WARNING_TIMEOUT);
+      
+      // Set logout timer (30 minutes)
+      logoutTimerRef.current = setTimeout(() => {
+        console.log('Auto logout triggered due to inactivity');
+        logout();
+      }, AUTO_LOGOUT_TIMEOUT);
+    };
+
+    // Reset timer on user activity
+    const handleUserActivity = () => {
+      resetLogoutTimer();
+    };
+
+    // Set up event listeners for user activity
+    const events = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart', 'click'];
+    
+    events.forEach(event => {
+      document.addEventListener(event, handleUserActivity, true);
+    });
+
+    // Start the initial timer
+    resetLogoutTimer();
+
+    // Cleanup function
+    return () => {
+      if (logoutTimerRef.current) {
+        clearTimeout(logoutTimerRef.current);
+      }
+      if (warningTimerRef.current) {
+        clearTimeout(warningTimerRef.current);
+      }
+      
+      events.forEach(event => {
+        document.removeEventListener(event, handleUserActivity, true);
+      });
+    };
+  }, [user]);
+
+  const dismissLogoutWarning = () => {
+    setShowLogoutWarning(false);
+    // Reset the timers when user dismisses the warning
+    if (logoutTimerRef.current) {
+      clearTimeout(logoutTimerRef.current);
+    }
+    if (warningTimerRef.current) {
+      clearTimeout(warningTimerRef.current);
+    }
+    
+    // Restart the timers
+    if (user) {
+      const resetLogoutTimer = () => {
+        if (logoutTimerRef.current) {
+          clearTimeout(logoutTimerRef.current);
+        }
+        if (warningTimerRef.current) {
+          clearTimeout(warningTimerRef.current);
+        }
+        
+        warningTimerRef.current = setTimeout(() => {
+          setShowLogoutWarning(true);
+        }, WARNING_TIMEOUT);
+        
+        logoutTimerRef.current = setTimeout(() => {
+          console.log('Auto logout triggered due to inactivity');
+          logout();
+        }, AUTO_LOGOUT_TIMEOUT);
+      };
+      
+      resetLogoutTimer();
+    }
+  };
 
   const handleUnauthorized = () => {
     localStorage.removeItem('token');
@@ -164,6 +266,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const logout = () => {
+    // Clear the logout timer
+    if (logoutTimerRef.current) {
+      clearTimeout(logoutTimerRef.current);
+      logoutTimerRef.current = null;
+    }
+    if (warningTimerRef.current) {
+      clearTimeout(warningTimerRef.current);
+      warningTimerRef.current = null;
+    }
+    
+    setShowLogoutWarning(false);
     localStorage.removeItem('token');
     setUser(null);
     router.push('/login');
@@ -179,6 +292,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         logout,
         isAuthenticated: !!user,
         apiCall,
+        showLogoutWarning,
+        dismissLogoutWarning,
       }}
     >
       {children}

@@ -57,7 +57,7 @@ const LoRSidebar: React.FC<LoRSidebarProps> = ({
         {/* Header */}
         <div className="p-4 border-b flex justify-between items-center">
           <div className="flex items-center gap-2">
-            <span className="text-lg font-semibold text-gray-700">スタッフ対応メモ</span>
+            <span className="text-lg font-semibold text-gray-700">推薦文</span>
             {staffId && <span className="text-sm text-gray-500">(ID: {staffId})</span>}
           </div>
           <button onClick={handleClose} className="text-gray-500 hover:text-gray-700 mr-2">
@@ -74,7 +74,7 @@ const LoRSidebar: React.FC<LoRSidebarProps> = ({
               value={lor}
               onChange={e => handleLorChange(e.target.value)}
               className="w-full h-full p-3 border border-gray-200 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-400 text-gray-800 bg-gray-100 max-h-[calc(100vh-150px)] scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100"
-              placeholder="スタッフ対応メモの内容を入力してください"
+              placeholder="推薦文の内容を入力してください"
               style={{ fontSize: '15px' }}
             />
           </div>

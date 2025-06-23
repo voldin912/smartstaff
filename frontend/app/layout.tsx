@@ -3,6 +3,7 @@ import { Inter } from 'next/font/google';
 import './globals.css';
 import { AuthProvider } from '@/contexts/AuthContext';
 import { Toaster } from 'sonner';
+import LogoutWarning from '@/components/LogoutWarning';
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -22,6 +23,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className={inter.className} suppressHydrationWarning>
         <AuthProvider>
           {children}
+          <LogoutWarning />
           <Toaster position="top-right" richColors />
         </AuthProvider>
       </body>
