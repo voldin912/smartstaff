@@ -627,7 +627,7 @@ export default function AdminDashboardPage() {
         link.href = url;
         
         // Set the filename using the record's fileId
-        link.download = `bulk-${record.fileId}.pdf`;
+        link.download = `bulk-${record.fileId}.zip`;
         
         // Append to body, click, and remove
         document.body.appendChild(link);

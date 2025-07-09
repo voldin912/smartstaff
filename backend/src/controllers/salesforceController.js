@@ -327,6 +327,253 @@ export const getCareerMappings = async (req, res) => {
   }
 };
 
+// Helper function to parse existing field content
+function parseFieldContent(content) {
+  if (!content) return { skillSheet: null, salesforce: null, salesMemo: null, lastUpdated: {} };
+  
+  try {
+    // Try to parse as JSON (old format)
+    const parsed = JSON.parse(content);
+    return {
+      skillSheet: parsed.skillSheet || null,
+      salesforce: parsed.salesforce || null,
+      salesMemo: parsed.salesMemo || null,
+      lastUpdated: parsed.lastUpdated || {}
+    };
+  } catch {
+    // If not JSON, check if it's the new clean format
+    if (content.includes('【スキルシート情報】') || content.includes('【Salesforce情報】') || content.includes('【営業担当メモ】')) {
+      return parseCleanFormat(content);
+    }
+    
+    // If not clean format, treat as legacy format
+    // Check if the content looks like staff memo (hope content)
+    // This is a simple heuristic - you might want to adjust this logic
+    if (content.includes('希望') || content.includes('メモ') || content.includes('担当') || 
+        content.includes('営業') || content.includes('対応') || content.length < 200) {
+      return {
+        skillSheet: null,
+        salesforce: null,
+        salesMemo: content,
+        lastUpdated: { salesMemo: new Date().toISOString() }
+      };
+    }
+    
+    // Otherwise treat as skill sheet content
+    return {
+      skillSheet: content,
+      salesforce: null,
+      salesMemo: null,
+      lastUpdated: { skillSheet: new Date().toISOString() }
+    };
+  }
+}
+
+// Helper function to parse clean formatted content
+function parseCleanFormat(content) {
+  const result = {
+    skillSheet: null,
+    salesforce: null,
+    salesMemo: null,
+    lastUpdated: {}
+  };
+  
+  // Split by separator
+  const sections = content.split(/\n\n---\n\n/);
+  
+  sections.forEach(section => {
+    const lines = section.trim().split('\n');
+    if (lines.length < 2) return;
+    
+    const headerLine = lines[0];
+    const contentLines = lines.slice(2); // Skip header and empty line
+    
+    if (headerLine.includes('【スキルシート情報】')) {
+      result.skillSheet = contentLines.join('\n').trim();
+      // Extract timestamp if available
+      const timestampMatch = headerLine.match(/最終更新: (.+?)\)/);
+      if (timestampMatch) {
+        result.lastUpdated.skillSheet = new Date(timestampMatch[1]).toISOString();
+      }
+    } else if (headerLine.includes('【Salesforce情報】')) {
+      result.salesforce = contentLines.join('\n').trim();
+      // Extract timestamp if available
+      const timestampMatch = headerLine.match(/最終更新: (.+?)\)/);
+      if (timestampMatch) {
+        result.lastUpdated.salesforce = new Date(timestampMatch[1]).toISOString();
+      }
+    } else if (headerLine.includes('【営業担当メモ】')) {
+      result.salesMemo = contentLines.join('\n').trim();
+      // Extract timestamp if available
+      const timestampMatch = headerLine.match(/最終更新: (.+?)\)/);
+      if (timestampMatch) {
+        result.lastUpdated.salesMemo = new Date(timestampMatch[1]).toISOString();
+      }
+    }
+  });
+  
+  return result;
+}
+
+// Helper function to merge data according to business rules
+function mergeFieldData(existingData, newData, newType) {
+  const now = new Date().toISOString();
+  
+  // If existing data is empty, just use new data
+  if (!existingData.skillSheet && !existingData.salesforce && !existingData.salesMemo) {
+    return {
+      [newType]: newData,
+      lastUpdated: { [newType]: now }
+    };
+  }
+  
+  // If new data is empty, return existing data
+  if (!newData) {
+    return existingData;
+  }
+  
+  let result = { ...existingData };
+  
+  if (newType === 'skillSheet') {
+    if (existingData.skillSheet) {
+      // Rule: If skill sheet already exists, overwrite when type is skill sheet
+      result.skillSheet = newData;
+      result.lastUpdated = { ...result.lastUpdated, skillSheet: now };
+    } else {
+      // Rule: If only salesforce exists, add skill sheet data
+      result.skillSheet = newData;
+      result.lastUpdated = { ...result.lastUpdated, skillSheet: now };
+    }
+  } else if (newType === 'salesforce') {
+    if (existingData.salesforce) {
+      // Rule: If salesforce already exists, overwrite when type is salesforce
+      result.salesforce = newData;
+      result.lastUpdated = { ...result.lastUpdated, salesforce: now };
+    } else {
+      // Rule: If only skill sheet exists, add salesforce data
+      result.salesforce = newData;
+      result.lastUpdated = { ...result.lastUpdated, salesforce: now };
+    }
+  } else if (newType === 'hope') {
+    // Treat hope as salesMemo for consistency
+    if (existingData.salesMemo) {
+      // Rule: If sales memo already exists, overwrite when type is hope
+      result.salesMemo = newData;
+      result.lastUpdated = { ...result.lastUpdated, salesMemo: now };
+    } else {
+      // Rule: Add sales memo data if it doesn't exist
+      result.salesMemo = newData;
+      result.lastUpdated = { ...result.lastUpdated, salesMemo: now };
+    }
+  }
+  
+  return result;
+}
+
+// Helper function to format data for Salesforce storage
+function formatForSalesforce(mergedData) {
+  // If we have multiple types of data, store as clean formatted text
+  if (mergedData.skillSheet || mergedData.salesforce || mergedData.salesMemo) {
+    return formatMergedDataForDisplay(mergedData);
+  }
+  
+  return '';
+}
+
+// Helper function to format merged data for clean display
+function formatMergedDataForDisplay(mergedData) {
+  const { skillSheet, salesforce, salesMemo, lastUpdated } = mergedData;
+  
+  let displayText = '';
+  let sections = [];
+  
+  // Add sections in specific order: salesMemo first, skillSheet second, salesforce third
+  
+  // 1. Add sales memo section if exists (FIRST)
+  if (salesMemo) {
+    sections.push({
+      type: 'salesMemo',
+      content: salesMemo,
+      lastUpdated: lastUpdated.salesMemo
+    });
+  }
+  
+  // 2. Add skill sheet section if exists (SECOND)
+  if (skillSheet) {
+    sections.push({
+      type: 'skillSheet',
+      content: skillSheet,
+      lastUpdated: lastUpdated.skillSheet
+    });
+  }
+  
+  // 3. Add salesforce section if exists (THIRD)
+  if (salesforce) {
+    sections.push({
+      type: 'salesforce',
+      content: salesforce,
+      lastUpdated: lastUpdated.salesforce
+    });
+  }
+  
+  // Format sections with clear separators
+  sections.forEach((section, index) => {
+    if (index > 0) {
+      displayText += '\n\n---\n\n'; // Clear separator between sections
+    }
+    
+    let sectionLabel;
+    switch (section.type) {
+      case 'skillSheet':
+        sectionLabel = 'スキルシート情報';
+        break;
+      case 'salesforce':
+        sectionLabel = 'Salesforce情報';
+        break;
+      case 'salesMemo':
+        sectionLabel = '営業担当メモ';
+        break;
+      default:
+        sectionLabel = 'その他情報';
+    }
+    
+    const lastUpdated = section.lastUpdated ? new Date(section.lastUpdated).toLocaleString('ja-JP') : '';
+    
+    displayText += `【${sectionLabel}】`;
+    if (lastUpdated) {
+      displayText += ` (最終更新: ${lastUpdated})`;
+    }
+    displayText += '\n\n';
+    displayText += section.content;
+  });
+  
+  return displayText.trim();
+}
+
+// Helper function to extract and format merged data for display
+function extractMergedData(content) {
+  if (!content) return { skillSheet: null, salesforce: null, salesMemo: null, lastUpdated: {} };
+  
+  try {
+    // Try to parse as JSON (new format)
+    const parsed = JSON.parse(content);
+    return {
+      skillSheet: parsed.skillSheet || null,
+      salesforce: parsed.salesforce || null,
+      salesMemo: parsed.salesMemo || null,
+      lastUpdated: parsed.lastUpdated || {}
+    };
+  } catch {
+    // If not JSON, treat as legacy format
+    return {
+      skillSheet: content,
+      salesforce: null,
+      salesMemo: null,
+      lastUpdated: { skillSheet: new Date().toISOString() }
+    };
+  }
+}
+
 export const syncAccountWithSalesforce = async (req, res) => {
   const { staffId, type, skillSheet, salesforce, hope } = req.body;
   if (!staffId) {
@@ -359,7 +606,9 @@ export const syncAccountWithSalesforce = async (req, res) => {
     if (!accounts.length) {
       return res.status(404).json({ message: '指定したStaff IDのアカウントが見つかりません' });
     }
-    console.log("salesforce", type,salesforce,skillSheet,hope);
+    
+    console.log("salesforce", type, salesforce, skillSheet, hope);
+    
     // 4. Prepare the array of work contents
     let workContents = [];
     if (type === 'skillSheet' && skillSheet) {
@@ -391,8 +640,9 @@ export const syncAccountWithSalesforce = async (req, res) => {
     }
     console.log("workContents", workContents);
 
-    // 5. For each work content, get the mapping and update Salesforce
+    // 5. For each work content, get the mapping and update Salesforce with merging logic
     const updateObj = { Id: accounts[0].Id };
+    
     for (let i = 0; i < workContents.length; i++) {
       const [mappingRows] = await pool.query(
         'SELECT job_description_field FROM career_mappings WHERE company_id = ? AND career_index = ?',
@@ -402,17 +652,45 @@ export const syncAccountWithSalesforce = async (req, res) => {
       if (!mapping || !mapping.job_description_field) {
         return res.status(400).json({ message: `マッピングが見つかりません (行: ${i + 1})` });
       }
-      updateObj[mapping.job_description_field] = workContents[i];
+      
+      const fieldName = mapping.job_description_field;
+      const existingContent = accounts[0][fieldName] || '';
+      
+      // Parse existing content
+      const existingData = parseFieldContent(existingContent);
+      
+      // Merge with new data
+      const mergedData = mergeFieldData(existingData, workContents[i], type);
+      
+      // Format for Salesforce storage
+      const formattedContent = formatForSalesforce(mergedData);
+      
+      updateObj[fieldName] = formattedContent;
     }
 
+    // Handle hope field with same merging logic
     if (hope) { 
       const [staffRows] = await pool.query(
         'SELECT staff_memo FROM career_mappings WHERE company_id = ? AND career_index = 1',
         [actualCompanyId]
       );
       const staff = staffRows[0];
-      // console.log("staff", staff);
-      updateObj[staff.staff_memo] = hope;
+      
+      if (staff && staff.staff_memo) {
+        const fieldName = staff.staff_memo;
+        const existingContent = accounts[0][fieldName] || '';
+        
+        // Parse existing content
+        const existingData = parseFieldContent(existingContent);
+        
+        // Merge with new data (treat hope as skillSheet type for consistency)
+        const mergedData = mergeFieldData(existingData, hope, 'skillSheet');
+        
+        // Format for Salesforce storage
+        const formattedContent = formatForSalesforce(mergedData);
+        
+        updateObj[fieldName] = formattedContent;
+      }
     }
 
     // 6. Update Salesforce
