@@ -891,7 +891,7 @@ export default function AdminDashboardPage() {
                 type="file"
                 ref={fileInputRef}
                 onChange={handleFileChange}
-                accept="audio/*"
+                accept="audio/*,.m4a"
                 className="hidden"
               />
               <button

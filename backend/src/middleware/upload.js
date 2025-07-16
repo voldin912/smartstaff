@@ -59,8 +59,10 @@ const logoStorage = multer.diskStorage({
 const upload = multer({
   storage: audioStorage,
   fileFilter: function (req, file, cb) {
-    // Accept only audio files
-    if (!file.mimetype.startsWith('audio/')) {
+    // Accept audio files and .m4a files
+    const allowedExts = ['.mp3', '.wav', '.ogg', '.m4a', '.aac', '.flac'];
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (!file.mimetype.startsWith('audio/') && !allowedExts.includes(ext)) {
       return cb(new Error('Only audio files are allowed!'));
     }
     cb(null, true);

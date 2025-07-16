@@ -7,6 +7,8 @@ import fs from 'fs';
 import PDFDocument from 'pdfkit';
 import archiver from 'archiver';
 import path from 'path';
+import ffmpeg from 'fluent-ffmpeg';
+import ffmpegPath from 'ffmpeg-static';
 
 
 // import path from 'path'
@@ -93,6 +95,8 @@ class TranscriptionQueue {
 
 const transcriptionQueue = new TranscriptionQueue();
 
+ffmpeg.setFfmpegPath(ffmpegPath);
+
 // Get all records
 const getRecords = async (req, res) => {
   try {
@@ -103,7 +107,7 @@ const getRecords = async (req, res) => {
     let query = `
       SELECT 
         r.id, 
-        DATE_FORMAT(r.date, '%Y/%m/%d %H:%i:%s') as date,
+        DATE_FORMAT(r.date, '%Y-%m-%d %H:%i:%s') as date,
         r.file_id as fileId, 
         r.employee_id as staffId, 
         r.stt,
@@ -219,7 +223,22 @@ const uploadAudio = async (req, res) => {
     }
 
     const { staffId, fileId } = req.body;
-    const audioFilePath = req.file.path;
+    let audioFilePath = req.file.path;
+    const ext = path.extname(audioFilePath).toLowerCase();
+    // If file is .m4a, convert to .wav
+    if (ext === '.m4a') {
+      const wavPath = audioFilePath.replace(/\.m4a$/i, '.mp3');
+      await new Promise((resolve, reject) => {
+        ffmpeg(audioFilePath)
+          .toFormat('mp3')
+          .on('end', () => resolve())
+          .on('error', (err) => reject(err))
+          .save(wavPath);
+      });
+      // Optionally remove the original m4a file
+      fs.unlinkSync(audioFilePath);
+      audioFilePath = wavPath;
+    }
     
     // Function to split audio into chunks
     const splitAudioIntoChunks = async (filePath, chunkSize = 4 * 1024 * 1024) => {
@@ -342,7 +361,7 @@ const uploadAudio = async (req, res) => {
         const [newRecord] = await pool.query(
           `SELECT 
             id, 
-            DATE_FORMAT(date, '%d/%m/%y %H:%i:%s') as date,
+            DATE_FORMAT(date, '%Y-%m-%d %H:%i:%s') as date,
             file_id as fileId, 
             employee_id as staffId, 
             audio_file_path as audioFilePath,
