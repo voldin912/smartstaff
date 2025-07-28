@@ -163,7 +163,13 @@ const getRecords = async (req, res) => {
 
 const uploadFile = async (filePath) => {
   const form = new FormData();
-  form.append('file', fs.createReadStream(filePath));
+  form.append('file', fs.createReadStream(filePath), {
+    filename: filePath.split('/').pop(), // ensure filename is included
+    contentType: 'audio/mpeg', // explicitly set the correct MIME type
+  });
+  form.append('type', 'audio');
+  form.append('purpose', 'workflow_input');
+  form.append('user', 'voldin012');
 
   const response = await axios.post('https://api.dify.ai/v1/files/upload', form, {
     headers: {
@@ -252,7 +258,7 @@ const uploadAudio = async (req, res) => {
 
     // Function to process a single chunk
     const processChunk = async (chunk, index) => {
-      const tempFilePath = `${audioFilePath}_chunk_${index}.wav`;
+      const tempFilePath = `${audioFilePath}_chunk_${index}.mp3`;
       fs.writeFileSync(tempFilePath, chunk);
 
       try {
@@ -279,6 +285,8 @@ const uploadAudio = async (req, res) => {
           }
         );
 
+        console.log("dify Response", difyResponse.data.data)
+
         // Clean up temp file
         fs.unlinkSync(tempFilePath);
         // console.log("difyResponse", difyResponse.data.data.outputs.stt);
@@ -294,6 +302,7 @@ const uploadAudio = async (req, res) => {
     const chunkResults = await Promise.all(chunks.map((chunk, index) => processChunk(chunk, index)));
     
     // Combine all chunk results
+    console.log("chunk len", chunks.length)
     const combinedText = chunkResults.join('\n');
     console.log("combinedText", combinedText);
     const txtFilePath = getTxtPathFromMp3(audioFilePath);
@@ -323,6 +332,7 @@ const uploadAudio = async (req, res) => {
       );
 
       const {status, outputs } = difyResponse.data.data;
+      console.log("outputs", outputs)
       if (status === 'succeeded') {
         // Clean and parse skillsheet if it's a string
         const cleanSkillsheet = typeof outputs.skillsheet === 'string' 
