@@ -218,7 +218,7 @@ const testAPI = async (req, res) => {
 };
 
 const getTxtPathFromMp3 = (mp3Path) => {
-  return mp3Path.replace(/\.mp3$/i, '.wav.csv');
+  return mp3Path.replace(/\.(mp3|wav|m4a|flac|aac)$/i, '.csv');
 }
 
 // Upload audio file and create record
@@ -339,9 +339,16 @@ const uploadAudio = async (req, res) => {
           ? outputs.skillsheet.replace(/```json\n?|\n?```/g, '').trim()
           : outputs.skillsheet;
         
-        const skillsheetData = typeof cleanSkillsheet === 'string'
-          ? JSON.parse(cleanSkillsheet)
-          : cleanSkillsheet;
+          if (typeof cleanSkillsheet === "string") {
+            try {
+              skillsheetData = JSON.parse(cleanSkillsheet);
+            } catch (e) {
+              console.error("Invalid JSON in cleanSkillsheet:", e);
+              skillsheetData = {}; // or null / fallback value
+            }
+          } else {
+            skillsheetData = cleanSkillsheet;
+          }
         
         // Extract work content array from skillsheet
         const workContentArray = Object.values(skillsheetData).map(career => career['summary']);
