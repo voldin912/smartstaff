@@ -46,6 +46,24 @@ const SalesforceSidebar: React.FC<SalesforceSidebarProps> = ({
     setHasChanges(true);
   };
 
+  const handleAddCareer = (index: number) => {
+    const newWorkContents = [...workContents];
+    newWorkContents.splice(index + 1, 0, ''); // Add empty string after the clicked index
+    setWorkContents(newWorkContents);
+    setHasChanges(true);
+  };
+
+  const handleDeleteCareer = (index: number) => {
+    if (workContents.length <= 1) {
+      alert('最低1つの経歴が必要です。');
+      return;
+    }
+    const newWorkContents = [...workContents];
+    newWorkContents.splice(index, 1);
+    setWorkContents(newWorkContents);
+    setHasChanges(true);
+  };
+
   const handleLorChange = (value: string) => {
     setLor(value);
     setHasChanges(true);
@@ -88,7 +106,23 @@ const SalesforceSidebar: React.FC<SalesforceSidebarProps> = ({
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {workContents.map((content, index) => (
             <div key={index} className="bg-white rounded-xl shadow p-4">
-              <div className="text-sm font-semibold text-gray-500 mb-2">経歴 {index + 1}</div>
+              <div className="flex justify-between items-center mb-2">
+                <div className="text-sm font-semibold text-gray-500">経歴 {index + 1}</div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => handleAddCareer(index)}
+                    className="px-3 py-1 text-xs bg-green-500 text-white rounded hover:bg-green-600 transition-colors"
+                  >
+                    追加
+                  </button>
+                  <button
+                    onClick={() => handleDeleteCareer(index)}
+                    className="px-3 py-1 text-xs bg-red-500 text-white rounded hover:bg-red-600 transition-colors"
+                  >
+                    削除
+                  </button>
+                </div>
+              </div>
               <textarea
                 value={content}
                 onChange={e => handleWorkContentChange(index, e.target.value)}

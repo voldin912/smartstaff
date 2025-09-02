@@ -32,6 +32,7 @@ const SkillSheetSidebar = ({ open, onClose, skillSheetData, skills, onSave }: Sk
   const [skillsList, setSkillsList] = useState<string>('');
   const [hasChanges, setHasChanges] = useState(false);
   const [initialData, setInitialData] = useState<string>('');
+
   useEffect(() => {
     if (skillSheetData) {
       try {
@@ -117,6 +118,53 @@ const SkillSheetSidebar = ({ open, onClose, skillSheetData, skills, onSave }: Sk
     });
   };
 
+  const handleAddCareer = (careerKey: string) => {
+    const careerKeys = Object.keys(localData);
+    const currentIndex = careerKeys.indexOf(careerKey);
+    const newKey = `career_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    setLocalData(prev => {
+      const newData = { ...prev };
+      const newCareer: Career = {
+        from: '',
+        to: '',
+        'company name': '',
+        'employee type': '',
+        'work content': ''
+      };
+      
+      // Insert the new career after the current one
+      const newCareerKeys = [...careerKeys];
+      newCareerKeys.splice(currentIndex + 1, 0, newKey);
+      
+      const reorderedData: SkillSheetData = {};
+      newCareerKeys.forEach(key => {
+        if (key === newKey) {
+          reorderedData[key] = newCareer;
+        } else {
+          reorderedData[key] = prev[key];
+        }
+      });
+      
+      setHasChanges(true);
+      return reorderedData;
+    });
+  };
+
+  const handleDeleteCareer = (careerKey: string) => {
+    if (Object.keys(localData).length <= 1) {
+      alert('最低1つの経歴が必要です。');
+      return;
+    }
+    
+    setLocalData(prev => {
+      const newData = { ...prev };
+      delete newData[careerKey];
+      setHasChanges(true);
+      return newData;
+    });
+  };
+
   const handleSave = () => {
     const gogakuArr = gogakuryoku
       .split(',')
@@ -167,7 +215,23 @@ const SkillSheetSidebar = ({ open, onClose, skillSheetData, skills, onSave }: Sk
             if (!career) return null;
             return (
               <div key={careerKey} className="mb-6 border-b pb-4">
-                <h3 className="font-semibold mb-2">経歴{idx + 1}</h3>
+                <div className="flex justify-between items-center mb-2">
+                  <h3 className="font-semibold">経歴{idx + 1}</h3>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => handleAddCareer(careerKey)}
+                      className="px-3 py-1 text-xs bg-green-500 text-white rounded hover:bg-green-600 transition-colors"
+                    >
+                      追加
+                    </button>
+                    <button
+                      onClick={() => handleDeleteCareer(careerKey)}
+                      className="px-3 py-1 text-xs bg-red-500 text-white rounded hover:bg-red-600 transition-colors"
+                    >
+                      削除
+                    </button>
+                  </div>
+                </div>
                 <div className="mb-2">
                   <label className="block text-sm font-medium">期間（from）</label>
                   <input
