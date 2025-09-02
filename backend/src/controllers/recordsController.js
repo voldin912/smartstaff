@@ -333,6 +333,7 @@ const uploadAudio = async (req, res) => {
 
       const {status, outputs } = difyResponse.data.data;
       console.log("outputs", outputs)
+      let skillsheetData = {};
       if (status === 'succeeded') {
         // Clean and parse skillsheet if it's a string
         const cleanSkillsheet = typeof outputs.skillsheet === 'string' 
