@@ -487,9 +487,20 @@ const downloadSkillSheet = async (req, res) => {
     const cleanSkillsheet = typeof records[0].skill_sheet === 'string' 
       ? records[0].skill_sheet.replace(/```json\n?|\n?```/g, '').trim()
       : records[0].skill_sheet;
-    const skillSheet = typeof cleanSkillsheet === 'string'
-      ? JSON.parse(cleanSkillsheet)
-      : cleanSkillsheet;
+
+    let skillSheet = {}
+
+    if (typeof cleanSkillsheet === "string") {
+      try {
+        skillSheet = JSON.parse(cleanSkillsheet);
+      } catch (e) {
+        console.error("Invalid JSON in cleanSkillsheet:", e);
+        skillSheet = {}; // or null / fallback value
+      }
+    } else {
+      skillSheet = cleanSkillsheet;
+    }
+    
     const fileId = records[0].file_id;
     const staffId = records[0].employee_id;
     // Parse and clean skills JSON
@@ -768,9 +779,19 @@ const downloadBulk = async (req, res) => {
     const cleanSkillsheet = typeof skill_sheet === 'string' 
       ? skill_sheet.replace(/```json\n?|\n?```/g, '').trim()
       : skill_sheet;
-    const skillSheetObj = typeof cleanSkillsheet === 'string'
-      ? JSON.parse(cleanSkillsheet)
-      : cleanSkillsheet;
+
+    let skillSheetObj = {};
+
+    if (typeof cleanSkillsheet === "string") {
+      try {
+        skillSheetObj = JSON.parse(cleanSkillsheet);
+      } catch (e) {
+        console.error("Invalid JSON in cleanSkillsheet:", e);
+        skillSheetObj = {}; // or null / fallback value
+      }
+    } else {
+      skillSheetObj = cleanSkillsheet;
+    }
 
     // Parse skills JSON
     let skillsData = null;
