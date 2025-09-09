@@ -82,7 +82,11 @@ router.post(
     try {
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
-        return res.status(400).json({ errors: errors.array() });
+        console.error('Validation errors:', errors.array());
+        return res.status(400).json({ 
+          message: 'Validation failed',
+          errors: errors.array() 
+        });
       }
 
       const { name, email, password, role, company_id } = req.body;
@@ -123,8 +127,11 @@ router.post(
       delete newUser[0].password;
       res.status(201).json(newUser[0]);
     } catch (error) {
-      console.error(error);
-      res.status(500).json({ message: 'Server error' });
+      console.error('Error creating user:', error);
+      res.status(500).json({ 
+        message: 'Server error',
+        error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+      });
     }
   }
 );

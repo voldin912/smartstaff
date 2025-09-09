@@ -104,6 +104,15 @@ export default function UsersPage() {
         }
       });
 
+      console.log('Sending user data:', {
+        name: formData.name,
+        email: formData.email,
+        role: formData.role,
+        company_id: formData.company_id,
+        hasPassword: !!formData.password,
+        hasAvatar: !!formData.avatar
+      });
+
       const response = await fetch(
         `${process.env.NEXT_PUBLIC_API_URL}/api/users${selectedUser ? `/${selectedUser.id}` : ''}`,
         {
@@ -129,8 +138,22 @@ export default function UsersPage() {
         });
         setSelectedUser(null);
       } else {
-        const error = await response.json();
-        throw new Error(error.message || 'Failed to save user');
+        let errorMessage = 'Failed to save user';
+        try {
+          const errorData = await response.json();
+          console.error('Backend error response:', errorData);
+          
+          if (errorData.errors && Array.isArray(errorData.errors)) {
+            // Handle validation errors
+            errorMessage = errorData.errors.map((err: any) => err.msg || err.message).join(', ');
+          } else {
+            errorMessage = errorData.message || errorData.error || `HTTP ${response.status}: ${response.statusText}`;
+          }
+        } catch (parseError) {
+          console.error('Failed to parse error response:', parseError);
+          errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+        }
+        throw new Error(errorMessage);
       }
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Failed to save user');

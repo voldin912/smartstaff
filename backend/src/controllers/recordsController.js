@@ -262,6 +262,7 @@ const uploadAudio = async (req, res) => {
       fs.writeFileSync(tempFilePath, chunk);
 
       try {
+        
         const tempFileId = await uploadFile(tempFilePath);
         console.log("tempFileId", tempFileId);
         // Process chunk with Dify workflow
@@ -299,7 +300,18 @@ const uploadAudio = async (req, res) => {
 
     // Split audio into chunks and process them
     const chunks = await splitAudioIntoChunks(audioFilePath);
-    const chunkResults = await Promise.all(chunks.map((chunk, index) => processChunk(chunk, index)));
+    
+    // Process chunks sequentially with waiting time between each chunk
+    const chunkResults = [];
+    for (let i = 0; i < chunks.length; i++) {
+      const result = await processChunk(chunks[i], i);
+      chunkResults.push(result);
+      
+      // Wait 0.5 seconds between each chunk processing
+      if (i < chunks.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    }
     
     // Combine all chunk results
     console.log("chunk len", chunks.length)
