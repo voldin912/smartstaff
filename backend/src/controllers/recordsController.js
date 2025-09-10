@@ -323,25 +323,49 @@ const uploadAudio = async (req, res) => {
     // Process combined text with main Dify workflow
     try {
       const txtFileId = await uploadFile(txtFilePath);
-      const difyResponse = await axios.post(
-        'https://api.dify.ai/v1/workflows/run',
-        {
-          inputs: {
-            "txtFile": {
-              "transfer_method": "local_file",
-              "upload_file_id": txtFileId,
-              "type": "document"
+      
+      // Retry logic for Dify API calls
+      let difyResponse;
+      let retryCount = 0;
+      const maxRetries = 3;
+      
+      while (retryCount < maxRetries) {
+        try {
+          difyResponse = await axios.post(
+            'https://api.dify.ai/v1/workflows/run',
+            {
+              inputs: {
+                "txtFile": {
+                  "transfer_method": "local_file",
+                  "upload_file_id": txtFileId,
+                  "type": "document"
+                }
+              },
+              user: 'voldin012'
+            },
+            {
+              headers: {
+                'Authorization': `Bearer ${process.env.DIFY_SECRET_KEY}`,
+                'Content-Type': 'application/json'
+              },
+              timeout: 240000 // 4分のタイムアウト
             }
-          },
-          user: 'voldin012'
-        },
-        {
-          headers: {
-            'Authorization': `Bearer ${process.env.DIFY_SECRET_KEY}`,
-            'Content-Type': 'application/json'
+          );
+          break; // Success, exit retry loop
+        } catch (error) {
+          retryCount++;
+          console.error(`Dify API attempt ${retryCount} failed:`, error.message);
+          
+          if (retryCount >= maxRetries) {
+            throw error; // Re-throw the error if all retries failed
           }
+          
+          // Wait before retry (exponential backoff)
+          const waitTime = Math.pow(2, retryCount) * 1000; // 2s, 4s, 8s
+          console.log(`Waiting ${waitTime}ms before retry ${retryCount + 1}...`);
+          await new Promise(resolve => setTimeout(resolve, waitTime));
         }
-      );
+      }
 
       const {status, outputs } = difyResponse.data.data;
       console.log("outputs", outputs)
@@ -411,7 +435,26 @@ const uploadAudio = async (req, res) => {
       }
     } catch (difyError) {
       console.error('Error calling Dify API:', difyError);
-      res.status(500).json({ error: 'Failed to process audio file' });
+      
+      if (difyError.code === 'ECONNABORTED' || difyError.response?.status === 504) {
+        res.status(504).json({ 
+          error: 'Dify API Timeout',
+          message: 'The Dify API took too long to respond. Please try again with a smaller file or contact support.',
+          details: 'Gateway timeout - the server did not respond within the expected time'
+        });
+      } else if (difyError.response) {
+        res.status(difyError.response.status).json({ 
+          error: 'Dify API Error',
+          message: `Dify API returned error: ${difyError.response.status} ${difyError.response.statusText}`,
+          details: difyError.response.data
+        });
+      } else {
+        res.status(500).json({ 
+          error: 'Failed to process audio file',
+          message: 'An unexpected error occurred while processing the audio file',
+          details: difyError.message
+        });
+      }
     }
   } catch (error) {
     console.error('Error uploading audio:', error);
