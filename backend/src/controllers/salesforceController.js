@@ -327,13 +327,41 @@ export const getCareerMappings = async (req, res) => {
   }
 };
 
+// Helper function to add timestamp to logs
+function logWithTimestamp(message, data = null) {
+  const timestamp = new Date().toISOString();
+  if (data) {
+    console.log(`[${timestamp}] ${message}`, data);
+  } else {
+    console.log(`[${timestamp}] ${message}`);
+  }
+}
+
 // Helper function to parse existing field content
 function parseFieldContent(content) {
-  if (!content) return { skillSheet: null, salesforce: null, salesMemo: null, lastUpdated: {} };
-  
+  if (!content) {
+    logWithTimestamp('[parseFieldContent] Empty content, returning default structure');
+    return { skillSheet: null, salesforce: null, salesMemo: null, lastUpdated: {} };
+  }
+
+  logWithTimestamp('[parseFieldContent] Parsing content:', {
+    contentLength: content.length,
+    startsWithBracket: content.trim().startsWith('{'),
+    hasJapaneseHeaders: content.includes('【'),
+    contentPreview: content.substring(0, 200) + (content.length > 200 ? '...' : '')
+  });
+
   try {
     // Try to parse as JSON (old format)
     const parsed = JSON.parse(content);
+    logWithTimestamp('[parseFieldContent] Successfully parsed as JSON', {
+      hasSkillSheet: !!parsed.skillSheet,
+      hasSalesforce: !!parsed.salesforce,
+      hasSalesMemo: !!parsed.salesMemo,
+      skillSheetLength: parsed.skillSheet?.length || 0,
+      salesforceLength: parsed.salesforce?.length || 0,
+      salesMemoLength: parsed.salesMemo?.length || 0
+    });
     return {
       skillSheet: parsed.skillSheet || null,
       salesforce: parsed.salesforce || null,
@@ -343,14 +371,30 @@ function parseFieldContent(content) {
   } catch {
     // If not JSON, check if it's the new clean format
     if (content.includes('【スキルシート情報】') || content.includes('【Salesforce情報】') || content.includes('【営業担当メモ】')) {
-      return parseCleanFormat(content);
+      logWithTimestamp('[parseFieldContent] Detected clean format with headers');
+      const result = parseCleanFormat(content);
+      logWithTimestamp('[parseFieldContent] Clean format parsed result:', {
+        hasSkillSheet: !!result.skillSheet,
+        hasSalesforce: !!result.salesforce,
+        hasSalesMemo: !!result.salesMemo,
+        skillSheetLength: result.skillSheet?.length || 0,
+        salesforceLength: result.salesforce?.length || 0,
+        salesMemoLength: result.salesMemo?.length || 0
+      });
+      return result;
     }
-    
+
     // If not clean format, treat as legacy format
-    // Check if the content looks like staff memo (hope content)
-    // This is a simple heuristic - you might want to adjust this logic
-    if (content.includes('希望') || content.includes('メモ') || content.includes('担当') || 
-        content.includes('営業') || content.includes('対応') || content.length < 200) {
+    // IMPORTANT: Check if the content looks like staff memo (hope content)
+    // This is a heuristic - adjust as needed
+    const isLikelyMemo = content.includes('希望') || content.includes('メモ') || content.includes('担当') ||
+        content.includes('営業') || content.includes('対応') || content.length < 200;
+
+    if (isLikelyMemo) {
+      logWithTimestamp('[parseFieldContent] Detected legacy sales memo content', {
+        contentLength: content.length,
+        contentPreview: content.substring(0, 100)
+      });
       return {
         skillSheet: null,
         salesforce: null,
@@ -358,8 +402,11 @@ function parseFieldContent(content) {
         lastUpdated: { salesMemo: new Date().toISOString() }
       };
     }
-    
+
     // Otherwise treat as skill sheet content
+    logWithTimestamp('[parseFieldContent] Treating as legacy skill sheet content', {
+      contentLength: content.length
+    });
     return {
       skillSheet: content,
       salesforce: null,
@@ -418,55 +465,91 @@ function parseCleanFormat(content) {
 // Helper function to merge data according to business rules
 function mergeFieldData(existingData, newData, newType) {
   const now = new Date().toISOString();
-  
-  // If existing data is empty, just use new data
-  if (!existingData.skillSheet && !existingData.salesforce && !existingData.salesMemo) {
-    return {
-      [newType]: newData,
-      lastUpdated: { [newType]: now }
-    };
-  }
-  
-  // If new data is empty, return existing data
+
+  logWithTimestamp('[mergeFieldData] === START MERGE OPERATION ===');
+  logWithTimestamp('[mergeFieldData] Input - Existing Data:', {
+    hasSkillSheet: !!existingData.skillSheet,
+    hasSalesforce: !!existingData.salesforce,
+    hasSalesMemo: !!existingData.salesMemo,
+    skillSheetLength: existingData.skillSheet?.length || 0,
+    salesforceLength: existingData.salesforce?.length || 0,
+    salesMemoLength: existingData.salesMemo?.length || 0,
+    skillSheetPreview: existingData.skillSheet ? existingData.skillSheet.substring(0, 100) + '...' : null,
+    salesforcePreview: existingData.salesforce ? existingData.salesforce.substring(0, 100) + '...' : null,
+    salesMemoPreview: existingData.salesMemo ? existingData.salesMemo.substring(0, 100) + '...' : null,
+    lastUpdated: existingData.lastUpdated
+  });
+
+  logWithTimestamp('[mergeFieldData] Input - New Data:', {
+    newType,
+    newDataLength: newData?.length || 0,
+    newDataPreview: newData ? newData.substring(0, 100) + '...' : null,
+    newDataFull: newData // Log full new data for debugging
+  });
+
+  // CRITICAL: Always preserve existing data that is not being updated
+  // Initialize result with all existing data to prevent data loss
+  let result = {
+    skillSheet: existingData.skillSheet || null,
+    salesforce: existingData.salesforce || null,
+    salesMemo: existingData.salesMemo || null,
+    lastUpdated: { ...existingData.lastUpdated }
+  };
+
+  // If new data is empty, return existing data unchanged
   if (!newData) {
-    return existingData;
+    logWithTimestamp('[mergeFieldData] ⚠️ No new data provided, preserving all existing data unchanged');
+    return result;
   }
-  
-  let result = { ...existingData };
-  
+
+  // Update only the specific field type that is being synced
   if (newType === 'skillSheet') {
-    if (existingData.skillSheet) {
-      // Rule: If skill sheet already exists, overwrite when type is skill sheet
-      result.skillSheet = newData;
-      result.lastUpdated = { ...result.lastUpdated, skillSheet: now };
-    } else {
-      // Rule: If only salesforce exists, add skill sheet data
-      result.skillSheet = newData;
-      result.lastUpdated = { ...result.lastUpdated, skillSheet: now };
-    }
+    logWithTimestamp('[mergeFieldData] ✓ Updating skillSheet data, PRESERVING salesforce and salesMemo');
+    result.skillSheet = newData;
+    result.lastUpdated.skillSheet = now;
   } else if (newType === 'salesforce') {
-    if (existingData.salesforce) {
-      // Rule: If salesforce already exists, overwrite when type is salesforce
-      result.salesforce = newData;
-      result.lastUpdated = { ...result.lastUpdated, salesforce: now };
-    } else {
-      // Rule: If only skill sheet exists, add salesforce data
-      result.salesforce = newData;
-      result.lastUpdated = { ...result.lastUpdated, salesforce: now };
-    }
-  } else if (newType === 'hope') {
+    logWithTimestamp('[mergeFieldData] ✓ Updating salesforce data, PRESERVING skillSheet and salesMemo');
+    result.salesforce = newData;
+    result.lastUpdated.salesforce = now;
+  } else if (newType === 'hope' || newType === 'salesMemo') {
     // Treat hope as salesMemo for consistency
-    if (existingData.salesMemo) {
-      // Rule: If sales memo already exists, overwrite when type is hope
-      result.salesMemo = newData;
-      result.lastUpdated = { ...result.lastUpdated, salesMemo: now };
-    } else {
-      // Rule: Add sales memo data if it doesn't exist
-      result.salesMemo = newData;
-      result.lastUpdated = { ...result.lastUpdated, salesMemo: now };
-    }
+    logWithTimestamp('[mergeFieldData] ✓ Updating salesMemo data, PRESERVING skillSheet and salesforce');
+    result.salesMemo = newData;
+    result.lastUpdated.salesMemo = now;
+  } else {
+    logWithTimestamp('[mergeFieldData] ⚠️ Unknown type: ' + newType + ', preserving all existing data');
   }
-  
+
+  logWithTimestamp('[mergeFieldData] Output - Merged Result:', {
+    hasSkillSheet: !!result.skillSheet,
+    hasSalesforce: !!result.salesforce,
+    hasSalesMemo: !!result.salesMemo,
+    skillSheetLength: result.skillSheet?.length || 0,
+    salesforceLength: result.salesforce?.length || 0,
+    salesMemoLength: result.salesMemo?.length || 0,
+    skillSheetPreview: result.skillSheet ? result.skillSheet.substring(0, 100) + '...' : null,
+    salesforcePreview: result.salesforce ? result.salesforce.substring(0, 100) + '...' : null,
+    salesMemoPreview: result.salesMemo ? result.salesMemo.substring(0, 100) + '...' : null,
+    lastUpdated: result.lastUpdated
+  });
+
+  // Verify data preservation
+  const dataPreserved = {
+    skillSheetPreserved: newType !== 'skillSheet' ? (!!existingData.skillSheet === !!result.skillSheet) : true,
+    salesforcePreserved: newType !== 'salesforce' ? (!!existingData.salesforce === !!result.salesforce) : true,
+    salesMemoPreserved: newType !== 'hope' && newType !== 'salesMemo' ? (!!existingData.salesMemo === !!result.salesMemo) : true
+  };
+
+  logWithTimestamp('[mergeFieldData] Data Preservation Check:', dataPreserved);
+
+  if (!dataPreserved.skillSheetPreserved || !dataPreserved.salesforcePreserved || !dataPreserved.salesMemoPreserved) {
+    logWithTimestamp('[mergeFieldData] ❌❌❌ CRITICAL WARNING: DATA LOSS DETECTED! ❌❌❌', dataPreserved);
+  } else {
+    logWithTimestamp('[mergeFieldData] ✓✓✓ All data preserved successfully ✓✓✓');
+  }
+
+  logWithTimestamp('[mergeFieldData] === END MERGE OPERATION ===');
+
   return result;
 }
 
@@ -576,7 +659,24 @@ function extractMergedData(content) {
 
 export const syncAccountWithSalesforce = async (req, res) => {
   const { staffId, type, skillSheet, salesforce, hope } = req.body;
+
+  logWithTimestamp('[syncAccountWithSalesforce] ========================================');
+  logWithTimestamp('[syncAccountWithSalesforce] NEW SYNC REQUEST STARTED');
+  logWithTimestamp('[syncAccountWithSalesforce] ========================================');
+
+  logWithTimestamp('[syncAccountWithSalesforce] Request Parameters:', {
+    staffId,
+    type,
+    hasSkillSheet: !!skillSheet,
+    hasSalesforce: !!salesforce,
+    hasHope: !!hope,
+    skillSheetLength: skillSheet?.length || 0,
+    salesforceLength: typeof salesforce === 'string' ? salesforce.length : JSON.stringify(salesforce || []).length,
+    hopeLength: hope?.length || 0
+  });
+
   if (!staffId) {
+    logWithTimestamp('[syncAccountWithSalesforce] ❌ Error: Staff ID not provided');
     return res.status(400).json({ message: 'Staff IDが指定されていません' });
   }
 
@@ -584,47 +684,82 @@ export const syncAccountWithSalesforce = async (req, res) => {
     // 1. Get Salesforce credentials for this company/user
     const { role, company_id } = req.user;
     const actualCompanyId = role === 'admin' ? 'admin' : String(company_id);
+
+    logWithTimestamp('[syncAccountWithSalesforce] User Info:', { role, company_id, actualCompanyId });
+
     const [settingsRows] = await pool.query(
       'SELECT * FROM salesforce WHERE company_id = ?',
       [actualCompanyId]
     );
     const settings = settingsRows[0];
+
     if (!settings) {
+      logWithTimestamp('[syncAccountWithSalesforce] ❌ Error: Salesforce settings not found');
       return res.status(400).json({ message: 'Salesforce設定が見つかりません' });
     }
 
+    logWithTimestamp('[syncAccountWithSalesforce] Salesforce Settings Found:', {
+      base_url: settings.base_url,
+      username: settings.username
+    });
+
     // 2. Login to Salesforce
+    logWithTimestamp('[syncAccountWithSalesforce] Logging in to Salesforce...');
     const conn = new jsforce.Connection({ loginUrl: settings.base_url });
     await conn.login(settings.username, settings.password + settings.security_token);
+    logWithTimestamp('[syncAccountWithSalesforce] ✓ Successfully logged in to Salesforce');
 
     // 3. Query Account by staffId (StaffID__c)
+    logWithTimestamp('[syncAccountWithSalesforce] Querying Salesforce for Account with StaffID__c:', staffId);
     const accounts = await conn.sobject('Account')
       .find({ StaffID__c: staffId })
       .limit(1)
       .execute();
 
     if (!accounts.length) {
+      logWithTimestamp('[syncAccountWithSalesforce] ❌ Error: Account not found for staffId:', staffId);
       return res.status(404).json({ message: '指定したStaff IDのアカウントが見つかりません' });
     }
-    
-    console.log("salesforce", type, salesforce, skillSheet, hope);
+
+    logWithTimestamp('[syncAccountWithSalesforce] ✓ Account Found:', {
+      accountId: accounts[0].Id,
+      accountName: accounts[0].Name
+    });
+
+    // Log ALL existing Salesforce field data for debugging
+    logWithTimestamp('[syncAccountWithSalesforce] EXISTING SALESFORCE ACCOUNT DATA (ALL FIELDS):', accounts[0]);
     
     // 4. Prepare the array of work contents
+    logWithTimestamp('[syncAccountWithSalesforce] Preparing work contents from type:', type);
+
     let workContents = [];
     if (type === 'skillSheet' && skillSheet) {
+      logWithTimestamp('[syncAccountWithSalesforce] Processing skillSheet data...');
       // Clean the skillSheet data by removing markdown code blocks and other symbols
       let cleanedSkillSheet = skillSheet;
-      
+
       // Remove markdown code blocks (```json, ```, etc.)
       cleanedSkillSheet = cleanedSkillSheet.replace(/```json*\n?/g, '');
       cleanedSkillSheet = cleanedSkillSheet.replace(/```/g, '');
-      
+
       // Remove extra whitespace and newlines
       cleanedSkillSheet = cleanedSkillSheet.trim();
-      
+
+      logWithTimestamp('[syncAccountWithSalesforce] Cleaned skillSheet:', {
+        originalLength: skillSheet.length,
+        cleanedLength: cleanedSkillSheet.length,
+        preview: cleanedSkillSheet.substring(0, 200)
+      });
+
       let parsed = typeof cleanedSkillSheet === 'string' ? JSON.parse(cleanedSkillSheet) : cleanedSkillSheet;
       workContents = Object.values(parsed).map(career => career['work content'] || '').filter(Boolean);
+
+      logWithTimestamp('[syncAccountWithSalesforce] Extracted work contents from skillSheet:', {
+        count: workContents.length,
+        lengths: workContents.map((c, i) => ({ index: i + 1, length: c.length }))
+      });
     } else if (type === 'salesforce') {
+      logWithTimestamp('[syncAccountWithSalesforce] Processing salesforce data...');
       let arr = salesforce;
       if (typeof arr === 'string') {
         try {
@@ -635,70 +770,188 @@ export const syncAccountWithSalesforce = async (req, res) => {
       }
       if (!Array.isArray(arr)) arr = [arr];
       workContents = arr;
+
+      logWithTimestamp('[syncAccountWithSalesforce] Salesforce work contents:', {
+        count: workContents.length,
+        lengths: workContents.map((c, i) => ({ index: i + 1, length: c?.length || 0 }))
+      });
     } else {
+      logWithTimestamp('[syncAccountWithSalesforce] ❌ Error: Invalid sync data type:', type);
       return res.status(400).json({ message: '同期データが不正です' });
     }
-    console.log("workContents", workContents);
+
+    logWithTimestamp('[syncAccountWithSalesforce] Work Contents Ready:', {
+      type,
+      count: workContents.length,
+      fullData: workContents
+    });
 
     // 5. For each work content, get the mapping and update Salesforce with merging logic
     const updateObj = { Id: accounts[0].Id };
-    
+
+    logWithTimestamp('[syncAccountWithSalesforce] ========================================');
+    logWithTimestamp('[syncAccountWithSalesforce] STARTING WORK CONTENT UPDATES');
+    logWithTimestamp('[syncAccountWithSalesforce] ========================================');
+    logWithTimestamp('[syncAccountWithSalesforce] Work Content Update Info:', {
+      accountId: accounts[0].Id,
+      workContentsCount: workContents.length,
+      type
+    });
+
     for (let i = 0; i < workContents.length; i++) {
+      logWithTimestamp(`[syncAccountWithSalesforce] --- Processing Career ${i + 1}/${workContents.length} ---`);
+
       const [mappingRows] = await pool.query(
         'SELECT job_description_field FROM career_mappings WHERE company_id = ? AND career_index = ?',
         [actualCompanyId, i + 1]
       );
       const mapping = mappingRows[0];
+
       if (!mapping || !mapping.job_description_field) {
+        logWithTimestamp(`[syncAccountWithSalesforce] ❌ Error: Mapping not found for career ${i + 1}`);
         return res.status(400).json({ message: `マッピングが見つかりません (行: ${i + 1})` });
       }
-      
+
       const fieldName = mapping.job_description_field;
       const existingContent = accounts[0][fieldName] || '';
-      
+
+      logWithTimestamp(`[syncAccountWithSalesforce] Career ${i + 1} - Field Info:`, {
+        fieldName,
+        existingContentLength: existingContent.length,
+        newContentLength: workContents[i]?.length || 0,
+        existingContentPreview: existingContent.substring(0, 200) + (existingContent.length > 200 ? '...' : ''),
+        newContentPreview: workContents[i]?.substring(0, 200) + (workContents[i]?.length > 200 ? '...' : '')
+      });
+
       // Parse existing content
+      logWithTimestamp(`[syncAccountWithSalesforce] Career ${i + 1} - Parsing existing content...`);
       const existingData = parseFieldContent(existingContent);
-      
-      // Merge with new data
+
+      // Merge with new data - THIS PRESERVES ALL EXISTING DATA
+      logWithTimestamp(`[syncAccountWithSalesforce] Career ${i + 1} - Merging data...`);
       const mergedData = mergeFieldData(existingData, workContents[i], type);
-      
+
       // Format for Salesforce storage
+      logWithTimestamp(`[syncAccountWithSalesforce] Career ${i + 1} - Formatting for Salesforce...`);
       const formattedContent = formatForSalesforce(mergedData);
-      
+
+      logWithTimestamp(`[syncAccountWithSalesforce] Career ${i + 1} - Final Result:`, {
+        fieldName,
+        formattedContentLength: formattedContent.length,
+        preserved: {
+          skillSheet: !!mergedData.skillSheet,
+          salesforce: !!mergedData.salesforce,
+          salesMemo: !!mergedData.salesMemo
+        },
+        formattedContentPreview: formattedContent.substring(0, 200) + (formattedContent.length > 200 ? '...' : ''),
+        formattedContentFull: formattedContent // Log full formatted content
+      });
+
       updateObj[fieldName] = formattedContent;
     }
 
+    logWithTimestamp('[syncAccountWithSalesforce] ✓ All work content fields processed');
+
     // Handle hope field with same merging logic
-    if (hope) { 
+    if (hope) {
+      logWithTimestamp('[syncAccountWithSalesforce] ========================================');
+      logWithTimestamp('[syncAccountWithSalesforce] PROCESSING HOPE/MEMO FIELD');
+      logWithTimestamp('[syncAccountWithSalesforce] ========================================');
+
       const [staffRows] = await pool.query(
         'SELECT staff_memo FROM career_mappings WHERE company_id = ? AND career_index = 1',
         [actualCompanyId]
       );
       const staff = staffRows[0];
-      
+
       if (staff && staff.staff_memo) {
         const fieldName = staff.staff_memo;
         const existingContent = accounts[0][fieldName] || '';
-        
+
+        logWithTimestamp('[syncAccountWithSalesforce] Hope Field Info:', {
+          fieldName,
+          existingContentLength: existingContent.length,
+          newHopeLength: hope.length,
+          existingContentPreview: existingContent.substring(0, 200) + (existingContent.length > 200 ? '...' : ''),
+          newHopePreview: hope.substring(0, 200) + (hope.length > 200 ? '...' : ''),
+          newHopeFull: hope // Log full hope data
+        });
+
         // Parse existing content
+        logWithTimestamp('[syncAccountWithSalesforce] Hope Field - Parsing existing content...');
         const existingData = parseFieldContent(existingContent);
-        
-        // Merge with new data (treat hope as skillSheet type for consistency)
-        const mergedData = mergeFieldData(existingData, hope, 'skillSheet');
-        
+
+        // CRITICAL FIX: Use 'hope' type instead of 'skillSheet' to preserve sales memo data
+        logWithTimestamp('[syncAccountWithSalesforce] Hope Field - Merging with type "hope"...');
+        const mergedData = mergeFieldData(existingData, hope, 'hope');
+
         // Format for Salesforce storage
+        logWithTimestamp('[syncAccountWithSalesforce] Hope Field - Formatting for Salesforce...');
         const formattedContent = formatForSalesforce(mergedData);
-        
+
+        logWithTimestamp('[syncAccountWithSalesforce] Hope Field - Final Result:', {
+          fieldName,
+          formattedContentLength: formattedContent.length,
+          preserved: {
+            skillSheet: !!mergedData.skillSheet,
+            salesforce: !!mergedData.salesforce,
+            salesMemo: !!mergedData.salesMemo
+          },
+          formattedContentPreview: formattedContent.substring(0, 200) + (formattedContent.length > 200 ? '...' : ''),
+          formattedContentFull: formattedContent // Log full formatted content
+        });
+
         updateObj[fieldName] = formattedContent;
+        logWithTimestamp('[syncAccountWithSalesforce] ✓ Hope field processed successfully');
+      } else {
+        logWithTimestamp('[syncAccountWithSalesforce] ⚠️ No staff_memo mapping found, hope field not updated');
       }
+    } else {
+      logWithTimestamp('[syncAccountWithSalesforce] No hope data provided, skipping hope field update');
     }
 
     // 6. Update Salesforce
+    logWithTimestamp('[syncAccountWithSalesforce] ========================================');
+    logWithTimestamp('[syncAccountWithSalesforce] PREPARING FINAL SALESFORCE UPDATE');
+    logWithTimestamp('[syncAccountWithSalesforce] ========================================');
+
+    logWithTimestamp('[syncAccountWithSalesforce] Final Update Object Summary:', {
+      accountId: updateObj.Id,
+      fieldsToUpdate: Object.keys(updateObj).filter(k => k !== 'Id'),
+      totalFields: Object.keys(updateObj).length - 1
+    });
+
+    // Log each field being updated to verify data preservation
+    logWithTimestamp('[syncAccountWithSalesforce] Detailed Field-by-Field Update Info:');
+    Object.keys(updateObj).forEach(fieldName => {
+      if (fieldName !== 'Id') {
+        const content = updateObj[fieldName];
+        logWithTimestamp(`[syncAccountWithSalesforce] Field: ${fieldName}`, {
+          length: content.length,
+          hasSkillSheetHeader: content.includes('【スキルシート情報】'),
+          hasSalesforceHeader: content.includes('【Salesforce情報】'),
+          hasSalesMemoHeader: content.includes('【営業担当メモ】'),
+          contentPreview: content.substring(0, 300) + (content.length > 300 ? '...' : ''),
+          contentFull: content // Log complete content for debugging
+        });
+      }
+    });
+
+    logWithTimestamp('[syncAccountWithSalesforce] Sending update to Salesforce...');
     await conn.sobject('Account').update(updateObj);
+
+    logWithTimestamp('[syncAccountWithSalesforce] ========================================');
+    logWithTimestamp('[syncAccountWithSalesforce] ✓✓✓ UPDATE COMPLETED SUCCESSFULLY ✓✓✓');
+    logWithTimestamp('[syncAccountWithSalesforce] ========================================');
 
     return res.json({ message: '連携が完了しました' });
   } catch (error) {
-    console.error(error);
+    logWithTimestamp('[syncAccountWithSalesforce] ❌❌❌ ERROR OCCURRED ❌❌❌');
+    logWithTimestamp('[syncAccountWithSalesforce] Error Details:', {
+      message: error.message,
+      stack: error.stack,
+      fullError: error
+    });
     return res.status(500).json({ message: 'Salesforce連携中にエラーが発生しました' });
   }
 };

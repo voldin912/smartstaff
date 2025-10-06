@@ -264,7 +264,7 @@ const uploadAudio = async (req, res) => {
       try {
         
         const tempFileId = await uploadFile(tempFilePath);
-        console.log("tempFileId", tempFileId);
+        // console.log("tempFileId", tempFileId);
         // Process chunk with Dify workflow
         const difyResponse = await axios.post(
           'https://api.dify.ai/v1/workflows/run',
@@ -286,7 +286,7 @@ const uploadAudio = async (req, res) => {
           }
         );
 
-        console.log("dify Response", difyResponse.data.data)
+        // console.log("dify Response", difyResponse.data.data)
 
         // Clean up temp file
         fs.unlinkSync(tempFilePath);
