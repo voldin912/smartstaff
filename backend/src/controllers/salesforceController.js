@@ -786,6 +786,11 @@ export const syncAccountWithSalesforce = async (req, res) => {
       fullData: workContents
     });
 
+    // 5. Get Account field metadata once for field length validation
+    logWithTimestamp('[syncAccountWithSalesforce] Getting Account field metadata...');
+    const accountDescribe = await conn.describe('Account');
+    logWithTimestamp('[syncAccountWithSalesforce] ✓ Account metadata retrieved');
+
     // 5. For each work content, get the mapping and update Salesforce with merging logic
     const updateObj = { Id: accounts[0].Id };
 
@@ -833,21 +838,26 @@ export const syncAccountWithSalesforce = async (req, res) => {
 
       // Format for Salesforce storage
       logWithTimestamp(`[syncAccountWithSalesforce] Career ${i + 1} - Formatting for Salesforce...`);
-      const formattedContent = formatForSalesforce(mergedData);
+      const formatted = formatForSalesforce(mergedData);
+
+      // Get field length constraints and auto-clamp if necessary
+      const fieldMeta = accountDescribe.fields.find(f => f.name === fieldName);
+      const maxLength = fieldMeta?.length || 32000; // fallback to 32000 chars
+      const finalContent = formatted.slice(0, maxLength);
 
       logWithTimestamp(`[syncAccountWithSalesforce] Career ${i + 1} - Final Result:`, {
         fieldName,
-        formattedContentLength: formattedContent.length,
+        finalLength: finalContent.length,
+        maxLength,
+        wasTruncated: formatted.length > maxLength,
         preserved: {
           skillSheet: !!mergedData.skillSheet,
           salesforce: !!mergedData.salesforce,
           salesMemo: !!mergedData.salesMemo
-        },
-        formattedContentPreview: formattedContent.substring(0, 200) + (formattedContent.length > 200 ? '...' : ''),
-        formattedContentFull: formattedContent // Log full formatted content
+        }
       });
 
-      updateObj[fieldName] = formattedContent;
+      updateObj[fieldName] = finalContent;
     }
 
     logWithTimestamp('[syncAccountWithSalesforce] ✓ All work content fields processed');
@@ -886,9 +896,8 @@ export const syncAccountWithSalesforce = async (req, res) => {
         logWithTimestamp('[syncAccountWithSalesforce] Hope Field - Formatting for Salesforce...');
         const formatted = formatForSalesforce(mergedData);
 
-        // Describe field to get length constraints and auto-clamp if necessary
-        const desc = await conn.describe('Account');
-        const fieldMeta = desc.fields.find(f => f.name === fieldName);
+        // Get field length constraints and auto-clamp if necessary
+        const fieldMeta = accountDescribe.fields.find(f => f.name === fieldName);
         const maxLength = fieldMeta?.length || 32000; // fallback to 32000 chars
         const finalContent = formatted.slice(0, maxLength);
 
