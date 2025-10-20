@@ -870,11 +870,8 @@ export const syncAccountWithSalesforce = async (req, res) => {
 
         logWithTimestamp('[syncAccountWithSalesforce] Hope Field Info:', {
           fieldName,
-          existingContentLength: existingContent.length,
-          newHopeLength: hope.length,
-          existingContentPreview: existingContent.substring(0, 200) + (existingContent.length > 200 ? '...' : ''),
-          newHopePreview: hope.substring(0, 200) + (hope.length > 200 ? '...' : ''),
-          newHopeFull: hope // Log full hope data
+          existingLength: existingContent.length,
+          newHopeLength: hope.length
         });
 
         // Parse existing content
@@ -887,24 +884,30 @@ export const syncAccountWithSalesforce = async (req, res) => {
 
         // Format for Salesforce storage
         logWithTimestamp('[syncAccountWithSalesforce] Hope Field - Formatting for Salesforce...');
-        const formattedContent = formatForSalesforce(mergedData);
+        const formatted = formatForSalesforce(mergedData);
+
+        // Describe field to get length constraints and auto-clamp if necessary
+        const desc = await conn.describe('Account');
+        const fieldMeta = desc.fields.find(f => f.name === fieldName);
+        const maxLength = fieldMeta?.length || 32000; // fallback to 32000 chars
+        const finalContent = formatted.slice(0, maxLength);
 
         logWithTimestamp('[syncAccountWithSalesforce] Hope Field - Final Result:', {
           fieldName,
-          formattedContentLength: formattedContent.length,
+          finalLength: finalContent.length,
+          maxLength,
+          wasTruncated: formatted.length > maxLength,
           preserved: {
             skillSheet: !!mergedData.skillSheet,
             salesforce: !!mergedData.salesforce,
             salesMemo: !!mergedData.salesMemo
-          },
-          formattedContentPreview: formattedContent.substring(0, 200) + (formattedContent.length > 200 ? '...' : ''),
-          formattedContentFull: formattedContent // Log full formatted content
+          }
         });
 
-        updateObj[fieldName] = formattedContent;
+        updateObj[fieldName] = finalContent;
         logWithTimestamp('[syncAccountWithSalesforce] ✓ Hope field processed successfully');
       } else {
-        logWithTimestamp('[syncAccountWithSalesforce] ⚠️ No staff_memo mapping found, hope field not updated');
+        logWithTimestamp('[syncAccountWithSalesforce] ⚠️ No staff_memo mapping found, hope field skipped');
       }
     } else {
       logWithTimestamp('[syncAccountWithSalesforce] No hope data provided, skipping hope field update');
