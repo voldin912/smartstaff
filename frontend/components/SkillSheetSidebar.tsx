@@ -1,0 +1,318 @@
+import React, { useState, useEffect } from 'react';
+
+interface Career {
+  from: string;
+  to: string;
+  'company name': string;
+  'employee type': string;
+  'work content': string;
+}
+
+interface SkillSheetData {
+  [key: string]: Career;
+}
+
+interface SkillSheetSidebarProps {
+  open: boolean;
+  onClose: () => void;
+  skillSheetData: any;
+  skills?: string[];
+  onSave: (data: any) => void;
+}
+
+const cleanJsonString = (str: string) => {
+  if (typeof str !== 'string') return str;
+  return str.replace(/```json\n?|\n?```/g, '').trim();
+};
+
+const SkillSheetSidebar = ({ open, onClose, skillSheetData, skills, onSave }: SkillSheetSidebarProps & { skills?: string | any }) => {
+  const [localData, setLocalData] = useState<SkillSheetData>({});
+  const [gogakuryoku, setGogakuryoku] = useState<string>('');
+  const [shikaku, setShikaku] = useState<string>('');
+  const [skillsList, setSkillsList] = useState<string>('');
+  const [hasChanges, setHasChanges] = useState(false);
+  const [initialData, setInitialData] = useState<string>('');
+
+  useEffect(() => {
+    if (skillSheetData) {
+      try {
+        const cleanedData = cleanJsonString(skillSheetData);
+        const parsedData = typeof cleanedData === 'string' ? JSON.parse(cleanedData) : cleanedData;
+        console.log("parsedData", parsedData);
+        const sanitizedData = Object.entries(parsedData).reduce((acc, [key, value]) => {
+          // If value is an object (career entry), sanitize its fields
+          if (value && typeof value === 'object' && !Array.isArray(value)) {
+            const careerValue = value as Partial<Career>;
+            return {
+              ...acc,
+              [key]: {
+                from: String(careerValue.from || ''),
+                to: String(careerValue.to || ''),
+                'company name': String(careerValue['company name'] || ''),
+                'employee type': String(careerValue['employee type'] || ''),
+                'work content': String(careerValue['work content'] || '')
+              }
+            };
+          }
+          // For non-object values, convert to string as before
+          return {
+            ...acc,
+            [key]: typeof value === 'string' ? value : String(value || '')
+          };
+        }, {});
+        console.log("sanitizedData", sanitizedData);
+        setLocalData(sanitizedData);
+        setInitialData(JSON.stringify(sanitizedData));
+        setHasChanges(false);
+      } catch (error) {
+        console.error('Error parsing skill sheet data:', error);
+        setLocalData({});
+        setInitialData('{}');
+        setHasChanges(false);
+      }
+    } else {
+      setLocalData({});
+      setInitialData('{}');
+      setHasChanges(false);
+    }
+    let parsedSkills: any = {};
+    if (skills) {
+      if (typeof skills === 'string') {
+        try {
+          const cleaned = (skills as string).replace(/```json\n?|\n?```/g, '').trim();
+          parsedSkills = JSON.parse(cleaned);
+        } catch {
+          parsedSkills = {};
+        }
+      } else if (typeof skills === 'object') {
+        parsedSkills = skills;
+      }
+    }
+    console.log("parsedSkills", parsedSkills);
+    setGogakuryoku(
+      Array.isArray(parsedSkills['語学力'])
+        ? parsedSkills['語学力']
+            .map((item: any) =>
+              item && typeof item === 'object'
+                ? [item['言語'], item['レベル']].filter(Boolean).join(':')
+                : String(item)
+            )
+            .join(', ')
+        : ''
+    );
+    setShikaku(Array.isArray(parsedSkills['資格']) ? parsedSkills['資格'].join(', ') : '');
+    setSkillsList(Array.isArray(parsedSkills['スキル']) ? parsedSkills['スキル'].join(', ') : parsedSkills['スキル']);
+  }, [skillSheetData, skills, open]);
+
+  const handleChange = (careerKey: string, field: keyof Career, value: string) => {
+    setLocalData(prev => {
+      const newData = {
+        ...prev,
+        [careerKey]: {
+          ...prev[careerKey],
+          [field]: value || '',
+        },
+      };
+      setHasChanges(JSON.stringify(newData) !== initialData);
+      return newData;
+    });
+  };
+
+  const handleAddCareer = (careerKey: string) => {
+    const careerKeys = Object.keys(localData);
+    const currentIndex = careerKeys.indexOf(careerKey);
+    const newKey = `career_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    setLocalData(prev => {
+      const newData = { ...prev };
+      const newCareer: Career = {
+        from: '',
+        to: '',
+        'company name': '',
+        'employee type': '',
+        'work content': ''
+      };
+      
+      // Insert the new career after the current one
+      const newCareerKeys = [...careerKeys];
+      newCareerKeys.splice(currentIndex + 1, 0, newKey);
+      
+      const reorderedData: SkillSheetData = {};
+      newCareerKeys.forEach(key => {
+        if (key === newKey) {
+          reorderedData[key] = newCareer;
+        } else {
+          reorderedData[key] = prev[key];
+        }
+      });
+      
+      setHasChanges(true);
+      return reorderedData;
+    });
+  };
+
+  const handleDeleteCareer = (careerKey: string) => {
+    if (Object.keys(localData).length <= 1) {
+      alert('最低1つの経歴が必要です。');
+      return;
+    }
+    
+    setLocalData(prev => {
+      const newData = { ...prev };
+      delete newData[careerKey];
+      setHasChanges(true);
+      return newData;
+    });
+  };
+
+  const handleSave = () => {
+    const gogakuArr = gogakuryoku
+      .split(',')
+      .map(s => {
+        const [lang, level] = s.split(':').map(x => x.trim());
+        if (!lang) return null;
+        return level ? { 言語: lang, レベル: level } : { 言語: lang };
+      })
+      .filter(Boolean);
+
+    const cleanedSkills = {
+      語学力: gogakuArr,
+      資格: shikaku.split(',').map(s => s.trim()).filter(Boolean),
+      スキル: skillsList.split(',').map(s => s.trim()).filter(Boolean),
+    };
+    const dataToSave = { skill_sheet: localData, skills: cleanedSkills };
+    onSave(dataToSave);
+    setInitialData(JSON.stringify(localData));
+    setHasChanges(false);
+  };
+
+  const handleClose = () => {
+    if (hasChanges) {
+      const confirmed = window.confirm('保存されていませんが画面を閉じますか？');
+      if (confirmed) {
+        onClose();
+      }
+    } else {
+      onClose();
+    }
+  };
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex">
+      {/* Overlay */}
+      <div className="fixed inset-0 bg-black opacity-30" onClick={handleClose}></div>
+      {/* Sidebar */}
+      <div className="relative ml-auto w-full max-w-[40%] min-w-[400px] h-full bg-white shadow-xl p-6 overflow-y-auto">
+        <button className="absolute top-4 right-4 text-gray-500 hover:text-gray-700" onClick={handleClose}>
+          <span className="text-2xl">&times;</span>
+        </button>
+        <h2 className="text-xl font-bold mb-6">スキルシート編集</h2>
+        {localData && typeof localData === 'object' && Object.keys(localData).length > 0 ? (
+          Object.keys(localData).map((careerKey, idx) => {
+            const career = localData[careerKey];
+            if (!career) return null;
+            return (
+              <div key={careerKey} className="mb-6 border-b pb-4">
+                <div className="flex justify-between items-center mb-2">
+                  <h3 className="font-semibold">経歴{idx + 1}</h3>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => handleAddCareer(careerKey)}
+                      className="px-3 py-1 text-xs bg-green-500 text-white rounded hover:bg-green-600 transition-colors"
+                    >
+                      追加
+                    </button>
+                    <button
+                      onClick={() => handleDeleteCareer(careerKey)}
+                      className="px-3 py-1 text-xs bg-red-500 text-white rounded hover:bg-red-600 transition-colors"
+                    >
+                      削除
+                    </button>
+                  </div>
+                </div>
+                <div className="mb-2">
+                  <label className="block text-sm font-medium">期間（from）</label>
+                  <input
+                    className="w-full border rounded px-2 py-1"
+                    value={career.from || ''}
+                    onChange={e => handleChange(careerKey, 'from', e.target.value)}
+                  />
+                </div>
+                <div className="mb-2">
+                  <label className="block text-sm font-medium">期間（to）</label>
+                  <input
+                    className="w-full border rounded px-2 py-1"
+                    value={career.to || ''}
+                    onChange={e => handleChange(careerKey, 'to', e.target.value)}
+                  />
+                </div>
+                <div className="mb-2">
+                  <label className="block text-sm font-medium">会社名</label>
+                  <input
+                    className="w-full border rounded px-2 py-1"
+                    value={career['company name'] || ''}
+                    onChange={e => handleChange(careerKey, 'company name', e.target.value)}
+                  />
+                </div>
+                <div className="mb-2">
+                  <label className="block text-sm font-medium">雇用形態</label>
+                  <input
+                    className="w-full border rounded px-2 py-1"
+                    value={career['employee type'] || ''}
+                    onChange={e => handleChange(careerKey, 'employee type', e.target.value)}
+                  />
+                </div>
+                <div className="mb-2">
+                  <label className="block text-sm font-medium">業務内容</label>
+                  <textarea
+                    className="w-full border rounded px-2 py-1"
+                    value={career['work content'] || ''}
+                    onChange={e => handleChange(careerKey, 'work content', e.target.value)}
+                  />
+                </div>
+              </div>
+            );
+          })
+        ) : (
+          <div>経歴データがありません。</div>
+        )}
+        {/* Skills Edit Fields */}
+        <div className="mb-6">
+          <label className="block text-sm font-medium">語学力（カンマ区切りで入力）</label>
+          <textarea
+            className="w-full border rounded px-2 py-1"
+            value={gogakuryoku}
+            onChange={e => setGogakuryoku(e.target.value)}
+            placeholder="例: 英語, TOEIC 750点"
+          />
+        </div>
+        <div className="mb-6">
+          <label className="block text-sm font-medium">資格（カンマ区切りで入力）</label>
+          <textarea
+            className="w-full border rounded px-2 py-1"
+            value={shikaku}
+            onChange={e => setShikaku(e.target.value)}
+            placeholder="例: 普通自動車免許, 基本情報技術者"
+          />
+        </div>
+        <div className="mb-6">
+          <label className="block text-sm font-medium">スキル（カンマ区切りで入力）</label>
+          <textarea
+            className="w-full border rounded px-2 py-1"
+            value={skillsList}
+            onChange={e => setSkillsList(e.target.value)}
+            placeholder="例: SAP, Excel, Word, Outlook, Teams"
+          />
+        </div>
+        <div className="flex justify-end gap-2 mt-4">
+          <button className="px-4 py-2 bg-gray-200 rounded" onClick={handleClose}>キャンセル</button>
+          <button className="px-4 py-2 bg-blue-600 text-white rounded" onClick={handleSave}>保存</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default SkillSheetSidebar; 
