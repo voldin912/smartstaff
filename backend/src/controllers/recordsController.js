@@ -125,24 +125,28 @@ const getRecords = async (req, res) => {
 
     const queryParams = [];
 
-    // Apply role-based filtering
+    // Apply role-based filtering and 60-day retention policy
+    // Only show records from the last 60 days
+    const dateFilter = 'r.date >= DATE_SUB(NOW(), INTERVAL 60 DAY)';
+    
     if (role === 'member') {
       // Members can only see their own records
-      query += ' WHERE r.staff_id = ?';
+      query += ` WHERE r.staff_id = ? AND ${dateFilter}`;
       queryParams.push(userId);
       console.log('Filtering for member - staff_id:', userId);
     } else if (role === 'company-manager') {
       // Company managers can see records from their company
-      query += ' WHERE u.company_id = ?';
+      query += ` WHERE u.company_id = ? AND ${dateFilter}`;
       queryParams.push(company_id);
       console.log('Filtering for company-manager - company_id:', company_id);
     } else if (role === 'admin') {
-      console.log('Admin user - no filtering applied, showing all records');
-      // For admin, we want to see all records, so no WHERE clause
+      console.log('Admin user - applying 60-day retention filter');
+      // For admin, apply 60-day retention filter
+      query += ` WHERE ${dateFilter}`;
     } else {
       console.log('Unknown role:', role);
       // Default to showing only user's own records for unknown roles
-      query += ' WHERE r.staff_id = ?';
+      query += ` WHERE r.staff_id = ? AND ${dateFilter}`;
       queryParams.push(userId);
     }
 
@@ -1079,6 +1083,71 @@ const updateLoR = async (req, res) => {
   }
 };
 
+// Delete records older than 60 days (data retention policy)
+const deleteOldRecords = async () => {
+  try {
+    console.log('[deleteOldRecords] Starting cleanup of records older than 60 days...');
+    
+    // Get records older than 60 days with their audio file paths
+    const [oldRecords] = await pool.query(
+      `SELECT id, audio_file_path FROM records 
+       WHERE date < DATE_SUB(NOW(), INTERVAL 60 DAY)`
+    );
+
+    console.log(`[deleteOldRecords] Found ${oldRecords.length} records to delete`);
+
+    let deletedCount = 0;
+    let fileDeletedCount = 0;
+    let fileErrorCount = 0;
+
+    // Delete audio files and related files
+    for (const record of oldRecords) {
+      if (record.audio_file_path) {
+        try {
+          // Delete audio file
+          if (fs.existsSync(record.audio_file_path)) {
+            fs.unlinkSync(record.audio_file_path);
+            fileDeletedCount++;
+            console.log(`[deleteOldRecords] Deleted audio file: ${record.audio_file_path}`);
+          }
+
+          // Delete associated CSV file if exists
+          const csvPath = getTxtPathFromMp3(record.audio_file_path);
+          if (fs.existsSync(csvPath)) {
+            fs.unlinkSync(csvPath);
+            console.log(`[deleteOldRecords] Deleted CSV file: ${csvPath}`);
+          }
+        } catch (fileError) {
+          fileErrorCount++;
+          console.error(`[deleteOldRecords] Error deleting file for record ${record.id}:`, fileError.message);
+          // Continue with deletion even if file deletion fails
+        }
+      }
+    }
+
+    // Delete records from database
+    const [deleteResult] = await pool.query(
+      'DELETE FROM records WHERE date < DATE_SUB(NOW(), INTERVAL 60 DAY)'
+    );
+
+    deletedCount = deleteResult.affectedRows;
+
+    console.log(`[deleteOldRecords] Cleanup completed:`);
+    console.log(`  - Records deleted: ${deletedCount}`);
+    console.log(`  - Audio files deleted: ${fileDeletedCount}`);
+    console.log(`  - File deletion errors: ${fileErrorCount}`);
+
+    return {
+      recordsDeleted: deletedCount,
+      filesDeleted: fileDeletedCount,
+      fileErrors: fileErrorCount
+    };
+  } catch (error) {
+    console.error('[deleteOldRecords] Error during cleanup:', error);
+    throw error;
+  }
+};
+
 export {
   getRecords,
   uploadAudio,
@@ -1091,5 +1160,6 @@ export {
   updateSalesforce,
   downloadSalesforce,
   downloadBulk,
-  updateLoR
+  updateLoR,
+  deleteOldRecords
 };

@@ -1,6 +1,6 @@
 import express from 'express';
 import { auth } from '../middleware/auth.js';
-import { getRecords, uploadAudio, testAPI, downloadSTT, downloadSkillSheet, updateStaffId, updateSkillSheet, getSkillSheet, updateSalesforce, downloadSalesforce, downloadBulk, updateLoR } from '../controllers/recordsController.js';
+import { getRecords, uploadAudio, testAPI, downloadSTT, downloadSkillSheet, updateStaffId, updateSkillSheet, getSkillSheet, updateSalesforce, downloadSalesforce, downloadBulk, updateLoR, deleteOldRecords } from '../controllers/recordsController.js';
 import { upload } from '../middleware/upload.js';
 
 const router = express.Router();
@@ -40,5 +40,25 @@ router.get('/test', auth, testAPI);
 
 // Update LoR
 router.put('/:recordId/lor', auth, updateLoR);
+
+// Manual cleanup of old records (admin only) - for testing or manual execution
+router.post('/cleanup/old-records', auth, async (req, res) => {
+  try {
+    // Only allow admin to manually trigger cleanup
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Access denied. Admin only.' });
+    }
+    
+    const result = await deleteOldRecords();
+    res.json({ 
+      success: true, 
+      message: 'Cleanup completed successfully',
+      ...result 
+    });
+  } catch (error) {
+    console.error('Error during manual cleanup:', error);
+    res.status(500).json({ error: 'Failed to cleanup old records' });
+  }
+});
 
 export default router;
