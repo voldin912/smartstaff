@@ -7,6 +7,7 @@ import authRoutes from './routes/auth.js';
 import userRoutes from './routes/users.js';
 import companyRoutes from './routes/companies.js';
 import recordsRoutes from './routes/records.js';
+import followRoutes from './routes/follow.js';
 import salesforceRoutes from './routes/salesforceRoutes.js';
 import { initializeDatabase } from './config/database.js';
 
@@ -31,6 +32,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/companies', companyRoutes);
 app.use('/api/records', recordsRoutes);
+app.use('/api/follow', followRoutes);
 app.use('/api/salesforce', salesforceRoutes);
 
 // Initialize database and start server
