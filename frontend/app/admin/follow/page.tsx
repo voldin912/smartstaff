@@ -55,7 +55,7 @@ interface UploadStatus {
   estimatedTime?: string;
 }
 
-type SortField = 'date' | 'fileId' | 'userName';
+type SortField = 'date' | 'fileId';
 type SortOrder = 'asc' | 'desc';
 
 const convertToArray = (data: any): string[] => {
@@ -83,7 +83,6 @@ export default function AdminFollowPage() {
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
   const [sortIconDate, setSortIconDate] = useState<'↑' | '↓'>('↓');
   const [sortIconFileId, setSortIconFileId] = useState<'↑' | '↓'>('↓');
-  const [sortIconUserName, setSortIconUserName] = useState<'↑' | '↓'>('↓');
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [alertMessage, setAlertMessage] = useState<{ type: 'success' | 'error', message: string } | null>(null);
@@ -669,7 +668,7 @@ export default function AdminFollowPage() {
 
   const formatDate = (dateString: string) => {
     const date = parseDate(dateString);
-    return `${date.year}/${String(date.month).padStart(2, '0')}/${String(date.day).padStart(2, '0')}`;
+    return `${date.year}/${String(date.month).padStart(2, '0')}/${String(date.day).padStart(2, '0')} ${String(date.hours).padStart(2, '0')}:${String(date.minutes).padStart(2, '0')}`;
   };
 
   const handleColumnSort = (field: SortField) => {
@@ -685,8 +684,6 @@ export default function AdminFollowPage() {
       setSortIconDate(sortOrder === 'asc' ? '↑' : '↓');
     } else if (field === 'fileId') {
       setSortIconFileId(sortOrder === 'asc' ? '↑' : '↓');
-    } else if (field === 'userName') {
-      setSortIconUserName(sortOrder === 'asc' ? '↑' : '↓');
     }
   };
 
@@ -749,10 +746,6 @@ export default function AdminFollowPage() {
         case 'fileId':
           aValue = a.fileId;
           bValue = b.fileId;
-          break;
-        case 'userName':
-          aValue = a.userName || '';
-          bValue = b.userName || '';
           break;
         default:
           return 0;
@@ -953,12 +946,6 @@ export default function AdminFollowPage() {
                       </th>
                       <th 
                         className="py-3 px-4 font-medium text-center min-w-[100px] max-w-[300px] rounded-[5px] cursor-pointer hover:bg-gray-50"
-                        onClick={() => handleColumnSort('userName')}
-                      >
-                        User Name <span className="ml-1">{sortIconUserName}</span>
-                      </th>
-                      <th 
-                        className="py-3 px-4 font-medium text-center min-w-[100px] max-w-[300px] rounded-[5px] cursor-pointer hover:bg-gray-50"
                         onClick={() => handleColumnSort('fileId')}
                       >
                         File ID <span className="ml-1">{sortIconFileId}</span>
@@ -973,14 +960,13 @@ export default function AdminFollowPage() {
                   </thead>
                   <tbody>
                     {loading ? (
-                      <tr><td colSpan={9} className="text-center py-8">Loading...</td></tr>
+                      <tr><td colSpan={8} className="text-center py-8">Loading...</td></tr>
                     ) : paginatedRecords.length === 0 ? (
-                      <tr><td colSpan={9} className="text-center py-8">No records found</td></tr>
+                      <tr><td colSpan={8} className="text-center py-8">No records found</td></tr>
                     ) : (
                       paginatedRecords.map((rec) => (
                         <tr key={rec.id} className="border-b border-gray-100 hover:bg-gray-50 transition text-left align-middle rounded-[5px]">
                           <td className="py-5 px-4 whitespace-nowrap align-middle min-w-[100px] max-w-[300px] rounded-[5px] truncate">{formatDate(rec.date)}</td>
-                          <td className="py-5 px-4 whitespace-nowrap align-middle min-w-[100px] max-w-[300px] rounded-[5px] truncate">{rec.userName}</td>
                           <td className="py-5 px-4 whitespace-nowrap align-middle min-w-[100px] max-w-[300px] rounded-[5px] truncate">{rec.fileId}</td>
                           <td className="py-5 px-4 whitespace-nowrap align-middle min-w-[100px] max-w-[300px] rounded-[5px]">
                             <div className="flex items-center gap-x-2 rounded-[5px] truncate">

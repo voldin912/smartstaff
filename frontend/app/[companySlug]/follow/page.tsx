@@ -55,7 +55,7 @@ interface UploadStatus {
   estimatedTime?: string;
 }
 
-type SortField = 'date' | 'fileId' | 'userName';
+type SortField = 'date' | 'fileId';
 type SortOrder = 'asc' | 'desc';
 
 const convertToArray = (data: any): string[] => {
@@ -83,7 +83,6 @@ export default function FollowPage() {
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
   const [sortIconDate, setSortIconDate] = useState<'↑' | '↓'>('↓');
   const [sortIconFileId, setSortIconFileId] = useState<'↑' | '↓'>('↓');
-  const [sortIconUserName, setSortIconUserName] = useState<'↑' | '↓'>('↓');
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [alertMessage, setAlertMessage] = useState<{ type: 'success' | 'error', message: string } | null>(null);
@@ -690,15 +689,14 @@ export default function FollowPage() {
         return dateString;
       }
 
-      // Format the date in YYYY-MM-DD HH:mm:ss format
+      // Format the date in YYYY/MM/DD hh:mm format
       const year = date.getFullYear();
       const month = String(date.getMonth() + 1).padStart(2, '0');
       const day = String(date.getDate()).padStart(2, '0');
       const hours = String(date.getHours()).padStart(2, '0');
       const minutes = String(date.getMinutes()).padStart(2, '0');
-      const seconds = String(date.getSeconds()).padStart(2, '0');
 
-      return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+      return `${year}/${month}/${day} ${hours}:${minutes}`;
     } catch (error) {
       console.error('Error formatting date:', error);
       return dateString;
@@ -708,8 +706,7 @@ export default function FollowPage() {
   const filteredRecords = records.filter(rec =>
     (rec.date || '').includes(searchTerm) ||
     (rec.fileId || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (rec.staffId || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (rec.userName || '').toLowerCase().includes(searchTerm.toLowerCase())
+    (rec.staffId || '').toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   const sortedRecords = useMemo(() => {
@@ -755,15 +752,9 @@ export default function FollowPage() {
     if (field === 'date') {
       setSortIconDate(newOrder === 'asc' ? '↑' : '↓');
       setSortIconFileId('↓');
-      setSortIconUserName('↓');
     } else if (field === 'fileId') {
       setSortIconDate('↓');
       setSortIconFileId(newOrder === 'asc' ? '↑' : '↓');
-      setSortIconUserName('↓');
-    } else if (field === 'userName') {
-      setSortIconDate('↓');
-      setSortIconFileId('↓');
-      setSortIconUserName(newOrder === 'asc' ? '↑' : '↓');
     }
   };
 
@@ -981,12 +972,6 @@ export default function FollowPage() {
                       </th>
                       <th 
                         className="py-3 px-4 font-medium text-center min-w-[100px] max-w-[300px] rounded-[5px] cursor-pointer hover:bg-gray-50"
-                        onClick={() => handleColumnSort('userName')}
-                      >
-                        User Name <span className="ml-1">{sortIconUserName}</span>
-                      </th>
-                      <th 
-                        className="py-3 px-4 font-medium text-center min-w-[100px] max-w-[300px] rounded-[5px] cursor-pointer hover:bg-gray-50"
                         onClick={() => handleColumnSort('fileId')}
                       >
                         File ID <span className="ml-1">{sortIconFileId}</span>
@@ -1001,14 +986,14 @@ export default function FollowPage() {
                   </thead>
                   <tbody>
                     {loading ? (
-                      <tr><td colSpan={8} className="text-center py-8">Loading...</td></tr>
+                      <tr><td colSpan={7} className="text-center py-8">Loading...</td></tr>
                     ) : paginatedRecords.length === 0 ? (
-                      <tr><td colSpan={8} className="text-center py-8">No records found</td></tr>
+                      <tr><td colSpan={7} className="text-center py-8">No records found</td></tr>
                     ) : (
                       paginatedRecords.map((rec) => (
+                        console.log("Rendering record:", rec),
                         <tr key={rec.id} className="border-b border-gray-100 hover:bg-gray-50 transition text-left align-middle rounded-[5px]">
                           <td className="py-5 px-4 whitespace-nowrap align-middle min-w-[100px] max-w-[300px] rounded-[5px] truncate">{formatDate(rec.date)}</td>
-                          <td className="py-5 px-4 whitespace-nowrap align-middle min-w-[100px] max-w-[300px] rounded-[5px] truncate">{rec.userName}</td>
                           <td className="py-5 px-4 whitespace-nowrap align-middle min-w-[100px] max-w-[300px] rounded-[5px] truncate">{rec.fileId}</td>
                           <td className="py-5 px-4 whitespace-nowrap align-middle min-w-[100px] max-w-[300px] rounded-[5px]">
                             <div className="flex items-center gap-x-2 rounded-[5px] truncate">
