@@ -1079,6 +1079,53 @@ const updateLoR = async (req, res) => {
   }
 };
 
+// Delete record (users can only delete their own records)
+const deleteRecord = async (req, res) => {
+  try {
+    const { recordId } = req.params;
+    const { id: userId } = req.user;
+
+    // Check if record exists and belongs to the user
+    const [records] = await pool.query(
+      'SELECT * FROM records WHERE id = ? AND staff_id = ?',
+      [recordId, userId]
+    );
+
+    if (records.length === 0) {
+      return res.status(404).json({ error: 'Record not found or you do not have permission to delete it' });
+    }
+
+    // Delete the record (physical deletion)
+    await pool.query('DELETE FROM records WHERE id = ?', [recordId]);
+
+    res.json({ success: true, message: 'Record deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting record:', error);
+    res.status(500).json({ error: 'Failed to delete record' });
+  }
+};
+
+// Auto-delete records older than specified months (default: 4 months)
+const autoDeleteOldRecords = async () => {
+  try {
+    // Get retention period from environment variable or use default of 4 months
+    const months = parseInt(process.env.AUTO_DELETE_RETENTION_MONTHS || '4');
+    
+    // Delete records older than specified months
+    const [result] = await pool.query(
+      `DELETE FROM records 
+       WHERE date < DATE_SUB(NOW(), INTERVAL ? MONTH)`,
+      [months]
+    );
+    
+    if (result.affectedRows > 0) {
+      console.log(`Auto-deleted ${result.affectedRows} record(s) older than ${months} month(s)`);
+    }
+  } catch (error) {
+    console.error('Error in auto-delete old records:', error);
+  }
+};
+
 export {
   getRecords,
   uploadAudio,
@@ -1091,5 +1138,7 @@ export {
   updateSalesforce,
   downloadSalesforce,
   downloadBulk,
-  updateLoR
+  updateLoR,
+  deleteRecord,
+  autoDeleteOldRecords
 };

@@ -10,6 +10,7 @@ import recordsRoutes from './routes/records.js';
 import followRoutes from './routes/follow.js';
 import salesforceRoutes from './routes/salesforceRoutes.js';
 import { initializeDatabase } from './config/database.js';
+import { autoDeleteOldRecords } from './controllers/recordsController.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -39,6 +40,21 @@ app.use('/api/salesforce', salesforceRoutes);
 initializeDatabase().then(() => {
   app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
+    
+    // Start auto-delete scheduler
+    // Get retention period from environment variable (default: 4 months)
+    const retentionMonths = parseInt(process.env.AUTO_DELETE_RETENTION_MONTHS || '4');
+    
+    // Run once immediately on startup
+    autoDeleteOldRecords();
+    
+    // Then run every 24 hours (86400000 milliseconds)
+    const AUTO_DELETE_INTERVAL_HOURS = parseInt(process.env.AUTO_DELETE_INTERVAL_HOURS || '24');
+    setInterval(() => {
+      autoDeleteOldRecords();
+    }, AUTO_DELETE_INTERVAL_HOURS * 60 * 60 * 1000);
+    
+    console.log(`Auto-delete scheduler started (runs every ${AUTO_DELETE_INTERVAL_HOURS} hours, deletes records older than ${retentionMonths} months)`);
   });
 }).catch(err => {
   console.error('Failed to initialize database:', err);

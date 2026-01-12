@@ -1,6 +1,6 @@
 import express from 'express';
 import { auth } from '../middleware/auth.js';
-import { getRecords, uploadAudio, testAPI, downloadSTT, downloadSkillSheet, updateStaffId, updateSkillSheet, getSkillSheet, updateSalesforce, downloadSalesforce, downloadBulk, updateLoR } from '../controllers/recordsController.js';
+import { getRecords, uploadAudio, testAPI, downloadSTT, downloadSkillSheet, updateStaffId, updateSkillSheet, getSkillSheet, updateSalesforce, downloadSalesforce, downloadBulk, updateLoR, deleteRecord } from '../controllers/recordsController.js';
 import { upload } from '../middleware/upload.js';
 
 const router = express.Router();
@@ -40,5 +40,8 @@ router.get('/test', auth, testAPI);
 
 // Update LoR
 router.put('/:recordId/lor', auth, updateLoR);
+
+// Delete record
+router.delete('/:recordId', auth, deleteRecord);
 
 export default router;

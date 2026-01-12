@@ -110,7 +110,9 @@ export default function DashboardPage() {
   const [modalStaffId, setModalStaffId] = useState<string | null>(null);
   const [modalType, setModalType] = useState<'skillSheet' | 'salesforce' | null>(null);
   const [modalData, setModalData] = useState<any>(null);
-  const [staffMemo, setStaffMemo] = useState('')
+  const [staffMemo, setStaffMemo] = useState('');
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [recordToDelete, setRecordToDelete] = useState<Record | null>(null);
 
   useEffect(() => {
     fetchRecords();
@@ -874,6 +876,47 @@ export default function DashboardPage() {
     setShowSalesforceModal(false);
   };
 
+  const handleDeleteClick = (record: Record) => {
+    setRecordToDelete(record);
+    setShowDeleteModal(true);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!recordToDelete) return;
+    
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/records/${recordToDelete.id}`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (res.ok) {
+        setAlertMessage({
+          type: 'success',
+          message: 'レコードを削除しました。'
+        });
+        fetchRecords();
+      } else {
+        const data = await res.json();
+        setAlertMessage({
+          type: 'error',
+          message: data.error || 'レコードの削除に失敗しました。'
+        });
+      }
+    } catch (e) {
+      setAlertMessage({
+        type: 'error',
+        message: 'レコードの削除中にエラーが発生しました。'
+      });
+    } finally {
+      setShowDeleteModal(false);
+      setRecordToDelete(null);
+    }
+  };
+
   return (
     <Layout>
       <div className="min-h-screen bg-[#f8fafd] px-4 sm:px-6 lg:px-8 py-6 rounded-[5px]">
@@ -974,6 +1017,31 @@ export default function DashboardPage() {
           </div>
         )}
 
+        {/* Modal for Delete confirmation */}
+        {showDeleteModal && recordToDelete && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-30">
+            <div className="bg-gray-50 border border-gray-400 rounded-md p-8 min-w-[350px] max-w-[95vw] flex flex-col items-center">
+              <div className="text-center mb-6">
+                <div className="text-lg mb-2">このレコードを削除しますか？</div>
+                <div className="text-sm text-gray-600 mt-4">この操作は取り消せません。</div>
+              </div>
+              <div className="flex gap-8 mt-2">
+                <button
+                  className="border border-gray-400 rounded px-8 py-2 text-lg hover:bg-gray-200"
+                  onClick={() => {
+                    setShowDeleteModal(false);
+                    setRecordToDelete(null);
+                  }}
+                >キャンセル</button>
+                <button
+                  className="bg-red-500 text-white rounded px-8 py-2 text-lg hover:bg-red-600"
+                  onClick={handleDeleteConfirm}
+                >OK</button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Header */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8 rounded-[5px]">
           <h1 className="text-xl sm:text-2xl font-semibold text-gray-900 rounded-[5px]">
@@ -1055,13 +1123,14 @@ export default function DashboardPage() {
                       <th className="py-3 px-4 font-medium text-center min-w-[60px] max-w-[80px] rounded-[5px]">LoR</th>
                       <th className="py-3 px-4 font-medium text-center min-w-[60px] max-w-[80px] rounded-[5px]">STT</th>
                       <th className="py-3 px-4 font-medium text-center min-w-[60px] max-w-[80px] rounded-[5px]">Bulk</th>
+                      <th className="py-3 px-4 font-medium text-center min-w-[60px] max-w-[80px] rounded-[5px]"></th>
                     </tr>
                   </thead>
                   <tbody>
                     {loading ? (
-                      <tr><td colSpan={11} className="text-center py-8">Loading...</td></tr>
+                      <tr><td colSpan={12} className="text-center py-8">Loading...</td></tr>
                     ) : paginatedRecords.length === 0 ? (
-                      <tr><td colSpan={11} className="text-center py-8">No records found</td></tr>
+                      <tr><td colSpan={12} className="text-center py-8">No records found</td></tr>
                     ) : (
                       paginatedRecords.map((rec) => (
                         <tr key={rec.id} className="border-b border-gray-100 hover:bg-gray-50 transition text-left align-middle rounded-[5px]">
@@ -1230,6 +1299,20 @@ export default function DashboardPage() {
                                 onClick={() => handleBulkDownload(rec)}
                               >
                                 <Image src="/download1.svg" alt="download" width={16} height={16} className="rounded-[5px]" />
+                              </button>
+                            </div>
+                          </td>
+                          {/* Delete button */}
+                          <td className="py-5 px-2 align-middle min-w-[60px] max-w-[80px] rounded-[5px]">
+                            <div className="flex items-center justify-center rounded-[5px]">
+                              <button 
+                                className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center flex-shrink-0 text-gray-500 hover:text-gray-700" 
+                                title="Delete"
+                                onClick={() => handleDeleteClick(rec)}
+                              >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                </svg>
                               </button>
                             </div>
                           </td>
