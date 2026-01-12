@@ -1,6 +1,6 @@
 import express from 'express';
-import { auth } from '../middleware/auth.js';
-import { getRecords, uploadAudio, testAPI, downloadSTT, downloadSkillSheet, updateStaffId, updateSkillSheet, getSkillSheet, updateSalesforce, downloadSalesforce, downloadBulk, updateLoR } from '../controllers/followController.js';
+import { auth, authorize } from '../middleware/auth.js';
+import { getRecords, uploadAudio, testAPI, downloadSTT, downloadSkillSheet, updateStaffId, updateSkillSheet, getSkillSheet, updateSalesforce, downloadSalesforce, downloadBulk, updateLoR, getPrompt, updatePrompt } from '../controllers/followController.js';
 import { upload } from '../middleware/upload.js';
 
 const router = express.Router();
@@ -40,5 +40,11 @@ router.get('/test', auth, testAPI);
 
 // Update LoR
 router.put('/:recordId/lor', auth, updateLoR);
+
+// Get prompt (admin only)
+router.get('/prompt', auth, authorize('admin'), getPrompt);
+
+// Update prompt (admin only)
+router.put('/prompt', auth, authorize('admin'), updatePrompt);
 
 export default router;

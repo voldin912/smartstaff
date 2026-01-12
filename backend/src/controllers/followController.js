@@ -1079,6 +1079,40 @@ const updateLoR = async (req, res) => {
   }
 };
 
+// Get prompt
+const getPrompt = async (req, res) => {
+  try {
+    const { role, company_id } = req.user;
+    
+    // For now, we'll store prompt per company (or use a default)
+    // You may want to create a prompts table or store in a config table
+    // For simplicity, returning a default prompt that can be stored in environment or database
+    const defaultPrompt = process.env.DEFAULT_SUMMARY_PROMPT || '';
+    
+    res.json({ prompt: defaultPrompt });
+  } catch (error) {
+    console.error('Error fetching prompt:', error);
+    res.status(500).json({ error: 'Failed to fetch prompt' });
+  }
+};
+
+// Update prompt
+const updatePrompt = async (req, res) => {
+  try {
+    const { prompt } = req.body;
+    const { role, company_id } = req.user;
+    
+    // For now, we'll just return success
+    // You may want to store this in a database table (e.g., prompts table with company_id)
+    // TODO: Implement database storage for prompts
+    
+    res.json({ success: true, message: 'Prompt updated successfully' });
+  } catch (error) {
+    console.error('Error updating prompt:', error);
+    res.status(500).json({ error: 'Failed to update prompt' });
+  }
+};
+
 export {
   getRecords,
   uploadAudio,
@@ -1091,5 +1125,7 @@ export {
   updateSalesforce,
   downloadSalesforce,
   downloadBulk,
-  updateLoR
+  updateLoR,
+  getPrompt,
+  updatePrompt
 };

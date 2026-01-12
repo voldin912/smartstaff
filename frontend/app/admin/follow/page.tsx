@@ -103,7 +103,10 @@ export default function AdminFollowPage() {
   const [modalStaffId, setModalStaffId] = useState<string | null>(null);
   const [modalType, setModalType] = useState<'skillSheet' | 'salesforce' | null>(null);
   const [modalData, setModalData] = useState<any>(null);
-  const [staffMemo, setStaffMemo] = useState('')
+  const [staffMemo, setStaffMemo] = useState('');
+  const [showPromptModal, setShowPromptModal] = useState(false);
+  const [isEditingPrompt, setIsEditingPrompt] = useState(false);
+  const [promptText, setPromptText] = useState('');
 
   useEffect(() => {
     fetchRecords();
@@ -671,6 +674,75 @@ export default function AdminFollowPage() {
     return `${date.year}/${String(date.month).padStart(2, '0')}/${String(date.day).padStart(2, '0')} ${String(date.hours).padStart(2, '0')}:${String(date.minutes).padStart(2, '0')}`;
   };
 
+  const handlePromptButtonClick = async () => {
+    if (!showPromptModal) {
+      // Open modal and fetch prompt
+      try {
+        const token = localStorage.getItem("token");
+        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow/prompt`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setPromptText(data.prompt || '');
+          setShowPromptModal(true);
+          setIsEditingPrompt(true);
+        } else {
+          setAlertMessage({
+            type: 'error',
+            message: 'プロンプトの取得に失敗しました。'
+          });
+        }
+      } catch (e) {
+        setAlertMessage({
+          type: 'error',
+          message: 'プロンプトの取得中にエラーが発生しました。'
+        });
+      }
+    } else {
+      // Close modal
+      setShowPromptModal(false);
+      setIsEditingPrompt(false);
+      setPromptText('');
+    }
+  };
+
+  const handlePromptSave = async () => {
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow/prompt`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ prompt: promptText }),
+      });
+
+      if (res.ok) {
+        setAlertMessage({
+          type: 'success',
+          message: 'プロンプトを保存しました。'
+        });
+        setShowPromptModal(false);
+        setIsEditingPrompt(false);
+      } else {
+        const data = await res.json();
+        setAlertMessage({
+          type: 'error',
+          message: data.error || 'プロンプトの保存に失敗しました。'
+        });
+      }
+    } catch (e) {
+      setAlertMessage({
+        type: 'error',
+        message: 'プロンプトの保存中にエラーが発生しました。'
+      });
+    }
+  };
+
   const handleColumnSort = (field: SortField) => {
     if (sortField === field) {
       setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
@@ -873,13 +945,71 @@ export default function AdminFollowPage() {
           </div>
         )}
 
+        {/* Modal for Prompt (Summary Prompt) */}
+        {showPromptModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-30">
+            <div className="bg-gray-50 border border-gray-400 rounded-md w-[80%] max-w-[800px] max-h-[90vh] flex flex-col">
+              {/* Header */}
+              <div className="p-4 border-b border-gray-300 flex justify-between items-center bg-gray-100">
+                <h3 className="text-lg font-semibold text-gray-700">要約プロンプト</h3>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handlePromptSave}
+                    className="p-2 hover:bg-gray-200 rounded"
+                    title="保存"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+                    </svg>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowPromptModal(false);
+                      setIsEditingPrompt(false);
+                      setPromptText('');
+                    }}
+                    className="text-gray-500 hover:text-gray-700"
+                  >
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              {/* Content */}
+              <div className="p-4 flex-1 overflow-y-auto">
+                <textarea
+                  value={promptText}
+                  onChange={(e) => setPromptText(e.target.value)}
+                  className="w-full h-full min-h-[400px] p-4 border border-gray-300 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                  placeholder="プロンプトを入力してください"
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Header */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8 rounded-[5px]">
           <h1 className="text-xl sm:text-2xl font-semibold text-gray-900 rounded-[5px]">
             Hello {user?.name || 'User'} <span role="img" aria-label="wave">👋</span>,
           </h1>
           <div className="flex items-center gap-4 rounded-[5px] w-full sm:w-auto">
-            <div className="relative rounded-[5px] flex flex-col items-end gap-2 w-full sm:w-auto">
+            <div className="relative rounded-[5px] flex flex-row items-center gap-2 w-full sm:w-auto">
+              {/* Prompt Button */}
+              <button
+                onClick={handlePromptButtonClick}
+                className={`bg-white rounded-full shadow border border-gray-200 p-2 hover:bg-gray-50 ${
+                  showPromptModal ? 'bg-gray-100' : ''
+                }`}
+                title="プロンプト"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+              </button>
+              {/* Upload Button */}
+              <div className="relative rounded-[5px] flex flex-col items-end gap-2">
               <input
                 type="file"
                 ref={fileInputRef}
@@ -890,7 +1020,7 @@ export default function AdminFollowPage() {
               <button
                 onClick={handleUploadClick}
                 disabled={isUploading}
-                className={`bg-white rounded-full shadow border border-gray-200 mt-2 ${
+                className={`mb-2 bg-white rounded-full shadow border border-gray-200 mt-2 ${
                   isUploading ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-50'
                 }`}
               >
@@ -902,7 +1032,8 @@ export default function AdminFollowPage() {
                   <Image src="/plus.svg" alt="Upload" width={32} height={32} className="rounded-[5px]" />
                 )}
               </button>
-            </div>            
+            </div>
+          </div>            
           </div>
         </div>
 
