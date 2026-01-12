@@ -1092,7 +1092,7 @@ const deleteRecord = async (req, res) => {
     );
 
     if (records.length === 0) {
-      return res.status(404).json({ error: 'Record not found or you do not have permission to delete it' });
+      return res.status(404).json({ error: 'レコードが見つからないか、削除する権限がありません。' });
     }
 
     // Delete the record (physical deletion)
