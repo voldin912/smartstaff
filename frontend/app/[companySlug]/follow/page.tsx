@@ -55,7 +55,7 @@ interface UploadStatus {
   estimatedTime?: string;
 }
 
-type SortField = 'date' | 'fileId' | 'userName';
+type SortField = 'date' | 'fileId';
 type SortOrder = 'asc' | 'desc';
 
 const convertToArray = (data: any): string[] => {
@@ -71,26 +71,19 @@ const convertToArray = (data: any): string[] => {
   return [];
 };
 
-export default function DashboardPage() {
+export default function FollowPage() {
   const { user } = useAuth();
   const [records, setRecords] = useState<Record[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingStaffId, setEditingStaffId] = useState<number | null>(null);
   const [staffIdInput, setStaffIdInput] = useState("");
-  const [editingStaffName, setEditingStaffName] = useState<number | null>(null);
-  const [staffNameInput, setStaffNameInput] = useState("");
-  const [editingMemo, setEditingMemo] = useState<number | null>(null);
-  const [memoInput, setMemoInput] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [sortField, setSortField] = useState<SortField>('date');
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
   const [sortIconDate, setSortIconDate] = useState<'↑' | '↓'>('↓');
   const [sortIconFileId, setSortIconFileId] = useState<'↑' | '↓'>('↓');
-  const [sortIconUserName, setSortIconUserName] = useState<'↑' | '↓'>('↓');
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const staffNameInputRef = useRef<HTMLInputElement | null>(null);
-  const memoInputRef = useRef<HTMLInputElement | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [alertMessage, setAlertMessage] = useState<{ type: 'success' | 'error', message: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -110,9 +103,7 @@ export default function DashboardPage() {
   const [modalStaffId, setModalStaffId] = useState<string | null>(null);
   const [modalType, setModalType] = useState<'skillSheet' | 'salesforce' | null>(null);
   const [modalData, setModalData] = useState<any>(null);
-  const [staffMemo, setStaffMemo] = useState('');
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [recordToDelete, setRecordToDelete] = useState<Record | null>(null);
+  const [staffMemo, setStaffMemo] = useState('')
 
   useEffect(() => {
     fetchRecords();
@@ -122,7 +113,7 @@ export default function DashboardPage() {
     setLoading(true);
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/records`, {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) {
@@ -148,7 +139,7 @@ export default function DashboardPage() {
     if (!trimmedInput) return;
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/records/${id}/staff-id`, {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow/${id}/staff-id`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -163,55 +154,6 @@ export default function DashboardPage() {
       // handle error
     }
   };
-
-  const handleEditStaffName = (id: number, currentStaffName: string) => {
-    setEditingStaffName(id);
-    setStaffNameInput(currentStaffName || '');
-    setTimeout(() => staffNameInputRef.current?.focus(), 0);
-  };
-
-  const handleStaffNameBlur = async (id: number, record: Record) => {
-    setEditingStaffName(null);
-    const trimmedInput = staffNameInput?.trim() || '';
-    // Note: Updating Staff Name would require updating the user's name via /api/users/:userId
-    // For now, we'll just close the edit mode
-    // TODO: Implement backend endpoint or use existing users endpoint if staff_id is available
-  };
-
-  const handleEditMemo = (id: number, currentMemo: string | null) => {
-    setEditingMemo(id);
-    setMemoInput(currentMemo || '');
-    setTimeout(() => memoInputRef.current?.focus(), 0);
-  };
-
-  const handleMemoBlur = async (id: number) => {
-    setEditingMemo(null);
-    const trimmedInput = memoInput?.trim() || '';
-    try {
-      const token = localStorage.getItem("token");
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/records/${id}/lor`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ lor: trimmedInput }),
-      });
-      if (res.ok) {
-        fetchRecords();
-        setAlertMessage({
-          type: 'success',
-          message: 'メモを更新しました。'
-        });
-      }
-    } catch (e) {
-      setAlertMessage({
-        type: 'error',
-        message: 'メモの更新に失敗しました。'
-      });
-    }
-  };
-
 
   const handlePageChange = (page: number) => {
     setCurrentPage(page);
@@ -284,7 +226,7 @@ export default function DashboardPage() {
         message: `音声ファイルの文字起こしを開始しました。\n完了までお待ちください。`
       }));
 
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/records/upload`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow/upload`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -347,7 +289,7 @@ export default function DashboardPage() {
     console.log("data", data);
     try {
       const token = localStorage.getItem("token");
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/records/${selectedRecord.id}/skill-sheet`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow/${selectedRecord.id}/skill-sheet`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -380,7 +322,7 @@ export default function DashboardPage() {
   const handleSkillSheetDownload = async (record: Record) => {
     try {
       const token = localStorage.getItem("token");
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/records/${record.id}/skill-sheet`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow/${record.id}/skill-sheet`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -437,7 +379,7 @@ export default function DashboardPage() {
 
     try {
       const token = localStorage.getItem("token");
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/records/${selectedSalesforceRecord.id}/salesforce`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow/${selectedSalesforceRecord.id}/salesforce`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -470,7 +412,7 @@ export default function DashboardPage() {
   const handleSalesforceDownload = async (record: Record) => {
     try {
       const token = localStorage.getItem("token");
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/records/${record.id}/salesforce-pdf`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow/${record.id}/salesforce-pdf`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -577,7 +519,7 @@ export default function DashboardPage() {
   const handleSTTDownload = async (record: Record) => {
     try {
       const token = localStorage.getItem("token");
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/records/${record.id}/stt`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow/${record.id}/stt`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -626,7 +568,7 @@ export default function DashboardPage() {
   const handleBulkDownload = async (record: Record) => {
     try {
       const token = localStorage.getItem("token");
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/records/${record.id}/bulk`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow/${record.id}/bulk`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -682,7 +624,7 @@ export default function DashboardPage() {
 
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/records/${selectedLoRRecord.id}/lor`, {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow/${selectedLoRRecord.id}/lor`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -747,37 +689,24 @@ export default function DashboardPage() {
         return dateString;
       }
 
-      // Format the date in MM/DD HH:mm format
-      const month = String(date.getMonth() + 1);
-      const day = String(date.getDate());
+      // Format the date in YYYY/MM/DD hh:mm format
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
       const hours = String(date.getHours()).padStart(2, '0');
       const minutes = String(date.getMinutes()).padStart(2, '0');
 
-      return `${month}/${day} ${hours}:${minutes}`;
+      return `${year}/${month}/${day} ${hours}:${minutes}`;
     } catch (error) {
       console.error('Error formatting date:', error);
       return dateString;
     }
   };
 
-  // Helper function to truncate Memo (first 5 characters)
-  const truncateMemo = (text: string | null) => {
-    if (!text) return '';
-    return text.length > 5 ? text.substring(0, 5) + '...' : text;
-  };
-
-  // Helper function to truncate File ID (first 17 lowercase characters)
-  const truncateFileId = (fileId: string) => {
-    if (!fileId) return '';
-    const lowerCase = fileId.toLowerCase();
-    return lowerCase.length > 17 ? lowerCase.substring(0, 17) + '...' : lowerCase;
-  };
-
   const filteredRecords = records.filter(rec =>
     (rec.date || '').includes(searchTerm) ||
     (rec.fileId || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (rec.staffId || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (rec.userName || '').toLowerCase().includes(searchTerm.toLowerCase())
+    (rec.staffId || '').toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   const sortedRecords = useMemo(() => {
@@ -823,15 +752,9 @@ export default function DashboardPage() {
     if (field === 'date') {
       setSortIconDate(newOrder === 'asc' ? '↑' : '↓');
       setSortIconFileId('↓');
-      setSortIconUserName('↓');
     } else if (field === 'fileId') {
       setSortIconDate('↓');
       setSortIconFileId(newOrder === 'asc' ? '↑' : '↓');
-      setSortIconUserName('↓');
-    } else if (field === 'userName') {
-      setSortIconDate('↓');
-      setSortIconFileId('↓');
-      setSortIconUserName(newOrder === 'asc' ? '↑' : '↓');
     }
   };
 
@@ -874,47 +797,6 @@ export default function DashboardPage() {
       toast.error('サーバーエラーが発生しました');
     }
     setShowSalesforceModal(false);
-  };
-
-  const handleDeleteClick = (record: Record) => {
-    setRecordToDelete(record);
-    setShowDeleteModal(true);
-  };
-
-  const handleDeleteConfirm = async () => {
-    if (!recordToDelete) return;
-    
-    try {
-      const token = localStorage.getItem("token");
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/records/${recordToDelete.id}`, {
-        method: "DELETE",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-
-      if (res.ok) {
-        setAlertMessage({
-          type: 'success',
-          message: 'レコードを削除しました。'
-        });
-        fetchRecords();
-      } else {
-        const data = await res.json();
-        setAlertMessage({
-          type: 'error',
-          message: data.error || 'レコードの削除に失敗しました。'
-        });
-      }
-    } catch (e) {
-      setAlertMessage({
-        type: 'error',
-        message: 'レコードの削除中にエラーが発生しました。'
-      });
-    } finally {
-      setShowDeleteModal(false);
-      setRecordToDelete(null);
-    }
   };
 
   return (
@@ -1017,31 +899,6 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* Modal for Delete confirmation */}
-        {showDeleteModal && recordToDelete && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-30">
-            <div className="bg-gray-50 border border-gray-400 rounded-md p-8 min-w-[350px] max-w-[95vw] flex flex-col items-center">
-              <div className="text-center mb-6">
-                <div className="text-lg mb-2">このレコードを削除しますか？</div>
-                <div className="text-sm text-gray-600 mt-4">この操作は取り消せません。</div>
-              </div>
-              <div className="flex gap-8 mt-2">
-                <button
-                  className="border border-gray-400 rounded px-8 py-2 text-lg hover:bg-gray-200"
-                  onClick={() => {
-                    setShowDeleteModal(false);
-                    setRecordToDelete(null);
-                  }}
-                >キャンセル</button>
-                <button
-                  className="bg-red-500 text-white rounded px-8 py-2 text-lg hover:bg-red-600"
-                  onClick={handleDeleteConfirm}
-                >OK</button>
-              </div>
-            </div>
-          </div>
-        )}
-
         {/* Header */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8 rounded-[5px]">
           <h1 className="text-xl sm:text-2xl font-semibold text-gray-900 rounded-[5px]">
@@ -1075,11 +932,11 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Records Section */}
+        {/* Follow Section */}
         <div className="bg-white rounded-[5px] shadow">
           <div className="p-4 sm:p-6 lg:p-8">
             <div className="flex justify-between items-center mb-6">
-              <h2 className="text-lg sm:text-xl font-semibold rounded-[5px]">Records</h2>
+              <h2 className="text-lg sm:text-xl font-semibold rounded-[5px]">Follow</h2>
               <div className="flex items-center gap-4">
                 <div className="text-green-500 text-sm rounded-[5px]">過去30日間のデータ</div>
                 <div className="relative w-56">
@@ -1094,7 +951,7 @@ export default function DashboardPage() {
                   </div>
                   <input
                     type="text"
-                    placeholder="Search"
+                    placeholder="日付またはFile IDで検索"
                     className="pl-10 pr-4 py-2 rounded-[5px] border border-gray-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-100 text-gray-700 w-full shadow-sm"
                     value={searchTerm}
                     onChange={e => setSearchTerm(e.target.value)}
@@ -1107,34 +964,37 @@ export default function DashboardPage() {
                 <table className="min-w-full text-left text-gray-700 rounded-[5px]">
                   <thead>
                     <tr className="border-b border-gray-200 text-xs text-gray-400 rounded-[5px]">
-                      <th className="py-3 px-4 font-medium text-center min-w-[100px] max-w-[300px] rounded-[5px]">Staff ID</th>
-                      <th className="py-3 px-4 font-medium text-center min-w-[100px] max-w-[300px] rounded-[5px]">Staff Name</th>
                       <th 
                         className="py-3 px-4 font-medium text-center min-w-[100px] max-w-[300px] rounded-[5px] cursor-pointer hover:bg-gray-50"
                         onClick={() => handleColumnSort('date')}
                       >
                         Date <span className="ml-1">{sortIconDate}</span>
                       </th>
-                      <th className="py-3 px-4 font-medium text-center min-w-[100px] max-w-[300px] rounded-[5px]">User</th>
-                      <th className="py-3 px-4 font-medium text-center min-w-[100px] max-w-[300px] rounded-[5px]">Memo</th>
-                      <th className="py-3 px-4 font-medium text-center min-w-[100px] max-w-[300px] rounded-[5px]">File</th>
+                      <th 
+                        className="py-3 px-4 font-medium text-center min-w-[100px] max-w-[300px] rounded-[5px] cursor-pointer hover:bg-gray-50"
+                        onClick={() => handleColumnSort('fileId')}
+                      >
+                        File ID <span className="ml-1">{sortIconFileId}</span>
+                      </th>
+                      <th className="py-3 px-4 font-medium text-center min-w-[100px] max-w-[300px] rounded-[5px]">Staff ID</th>
                       <th className="py-3 px-4 font-medium text-center min-w-[120px] max-w-[300px] rounded-[5px]">Skill Sheet</th>
                       <th className="py-3 px-4 font-medium text-center min-w-[120px] max-w-[300px] rounded-[5px]">Salesforce</th>
-                      <th className="py-3 px-4 font-medium text-center min-w-[60px] max-w-[80px] rounded-[5px]">LoR</th>
-                      <th className="py-3 px-4 font-medium text-center min-w-[60px] max-w-[80px] rounded-[5px]">STT</th>
-                      <th className="py-3 px-4 font-medium text-center min-w-[60px] max-w-[80px] rounded-[5px]">Bulk</th>
-                      <th className="py-3 px-4 font-medium text-center min-w-[60px] max-w-[80px] rounded-[5px]"></th>
+                      <th className="py-3 px-4 font-medium text-center min-w-[100px] max-w-[300px] rounded-[5px]">LoR</th>
+                      <th className="py-3 px-4 font-medium text-center min-w-[100px] max-w-[300px] rounded-[5px]">STT</th>
+                      <th className="py-3 px-4 font-medium text-center min-w-[100px] max-w-[300px] rounded-[5px]">Bulk</th>
                     </tr>
                   </thead>
                   <tbody>
                     {loading ? (
-                      <tr><td colSpan={12} className="text-center py-8">Loading...</td></tr>
+                      <tr><td colSpan={7} className="text-center py-8">Loading...</td></tr>
                     ) : paginatedRecords.length === 0 ? (
-                      <tr><td colSpan={12} className="text-center py-8">No records found</td></tr>
+                      <tr><td colSpan={7} className="text-center py-8">No records found</td></tr>
                     ) : (
                       paginatedRecords.map((rec) => (
+                        console.log("Rendering record:", rec),
                         <tr key={rec.id} className="border-b border-gray-100 hover:bg-gray-50 transition text-left align-middle rounded-[5px]">
-                          {/* Staff ID */}
+                          <td className="py-5 px-4 whitespace-nowrap align-middle min-w-[100px] max-w-[300px] rounded-[5px] truncate">{formatDate(rec.date)}</td>
+                          <td className="py-5 px-4 whitespace-nowrap align-middle min-w-[100px] max-w-[300px] rounded-[5px] truncate">{rec.fileId}</td>
                           <td className="py-5 px-4 whitespace-nowrap align-middle min-w-[100px] max-w-[300px] rounded-[5px]">
                             <div className="flex items-center gap-x-2 rounded-[5px] truncate">
                               {editingStaffId === rec.id ? (
@@ -1154,59 +1014,6 @@ export default function DashboardPage() {
                                 </>
                               )}
                             </div>
-                          </td>
-                          {/* Staff Name */}
-                          <td className="py-5 px-4 whitespace-nowrap align-middle min-w-[100px] max-w-[300px] rounded-[5px]">
-                            <div className="flex items-center gap-x-2 rounded-[5px] truncate">
-                              {editingStaffName === rec.id ? (
-                                <input
-                                  ref={staffNameInputRef}
-                                  value={staffNameInput}
-                                  onChange={e => setStaffNameInput(e.target.value)}
-                                  onBlur={() => handleStaffNameBlur(rec.id, rec)}
-                                  className="border border-gray-300 rounded-[5px] px-2 py-1 text-center"
-                                />
-                              ) : (
-                                <>
-                                  <button className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center flex-shrink-0" title="Edit Staff Name" onClick={() => handleEditStaffName(rec.id, rec.userName || '')}>
-                                    <Image src="/edit1.svg" alt="Edit Staff Name" width={20} height={20} className="rounded-[5px]" />
-                                  </button>
-                                  <span className="truncate">{rec.userName || ''}</span>
-                                </>
-                              )}
-                            </div>
-                          </td>
-                          {/* Date */}
-                          <td className="py-5 px-4 whitespace-nowrap align-middle min-w-[100px] max-w-[300px] rounded-[5px] truncate">{formatDate(rec.date)}</td>
-                          {/* User */}
-                          <td className="py-5 px-4 whitespace-nowrap align-middle min-w-[100px] max-w-[300px] rounded-[5px] truncate">{rec.userName || ''}</td>
-                          {/* Memo */}
-                          <td className="py-5 px-4 whitespace-nowrap align-middle min-w-[100px] max-w-[300px] rounded-[5px]">
-                            {editingMemo === rec.id ? (
-                              <input
-                                ref={memoInputRef}
-                                value={memoInput}
-                                onChange={e => setMemoInput(e.target.value)}
-                                onBlur={() => handleMemoBlur(rec.id)}
-                                className="border border-gray-300 rounded-[5px] px-2 py-1 w-full"
-                              />
-                            ) : (
-                              <div className="flex items-center gap-x-2">
-                                <button className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center flex-shrink-0" title="Edit Memo" onClick={() => handleEditMemo(rec.id, rec.lor)}>
-                                  <Image src="/edit1.svg" alt="Edit Memo" width={20} height={20} className="rounded-[5px]" />
-                                </button>
-                                <span 
-                                  className="truncate" 
-                                  title={rec.lor || ''}
-                                >
-                                  {truncateMemo(rec.lor)}
-                                </span>
-                              </div>
-                            )}
-                          </td>
-                          {/* File ID */}
-                          <td className="py-5 px-4 whitespace-nowrap align-middle min-w-[100px] max-w-[300px] rounded-[5px] truncate" title={rec.fileId}>
-                            {truncateFileId(rec.fileId)}
                           </td>
                           {/* Skill Sheet icons */}
                           <td className="py-5 px-4 align-middle min-w-[120px] max-w-[300px] rounded-[5px]">
@@ -1260,59 +1067,44 @@ export default function DashboardPage() {
                               </button>
                             </div>
                           </td>
-                          {/* LoR icons - narrow width */}
-                          <td className="py-5 px-2 align-middle min-w-[60px] max-w-[80px] rounded-[5px]">
-                            <div className="flex items-center justify-center rounded-[5px] gap-x-2">
+                          {/* LoR icons */}
+                          <td className="py-5 px-4 align-middle min-w-[100px] max-w-[300px] rounded-[5px]">
+                            <div className="flex items-center justify-center rounded-[5px] gap-x-3">
                               <button
                                 onClick={() => handleLoREdit(rec)}
                                 className="text-blue-600 hover:text-blue-800 transition-colors"
                                 title="編集"
                               >
-                                <Image src="/edit1.svg" alt="Edit" width={16} height={16} className="rounded-[5px]" />
+                                <Image src="/edit1.svg" alt="Edit" width={20} height={20} className="rounded-[5px]" />
                               </button>
                               <button
                                 onClick={() => handleLoRCopy(rec)}
-                                title="Copy"
                               >
-                                <Image src="/copy1.svg" alt="copy" width={16} height={16} className="rounded-[5px]" />
+                                <Image src="/copy1.svg" alt="copy" width={20} height={20} className="rounded-[5px]" />
                               </button>
                             </div>
                           </td>
-                          {/* STT icons - narrow width */}
-                          <td className="py-5 px-2 align-middle min-w-[60px] max-w-[80px] rounded-[5px]">
+                          {/* STT icons */}
+                          <td className="py-5 px-4 align-middle min-w-[100px] max-w-[300px] rounded-[5px]">
                             <div className="flex items-center justify-center rounded-[5px]">
                               <button 
                                 className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center flex-shrink-0" 
                                 title="Download"
                                 onClick={() => handleSTTDownload(rec)}
                               >
-                                <Image src="/download1.svg" alt="download" width={16} height={16} className="rounded-[5px]" />
+                                <Image src="/download1.svg" alt="download" width={20} height={20} className="rounded-[5px]" />
                               </button>
                             </div>
                           </td>
-                          {/* Bulk icons - narrow width */}
-                          <td className="py-5 px-2 align-middle min-w-[60px] max-w-[80px] rounded-[5px]">
+                          {/* Bulk icons */}
+                          <td className="py-5 px-4 align-middle min-w-[100px] max-w-[300px] rounded-[5px]">
                             <div className="flex items-center justify-center rounded-[5px]">
                               <button 
                                 className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center flex-shrink-0" 
                                 title="Download"
                                 onClick={() => handleBulkDownload(rec)}
                               >
-                                <Image src="/download1.svg" alt="download" width={16} height={16} className="rounded-[5px]" />
-                              </button>
-                            </div>
-                          </td>
-                          {/* Delete button */}
-                          <td className="py-5 px-2 align-middle min-w-[60px] max-w-[80px] rounded-[5px]">
-                            <div className="flex items-center justify-center rounded-[5px]">
-                              <button 
-                                className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center flex-shrink-0 text-gray-500 hover:text-gray-700" 
-                                title="Delete"
-                                onClick={() => handleDeleteClick(rec)}
-                              >
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                </svg>
+                                <Image src="/download1.svg" alt="download" width={20} height={20} className="rounded-[5px]" />
                               </button>
                             </div>
                           </td>

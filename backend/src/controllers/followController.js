@@ -119,7 +119,7 @@ const getRecords = async (req, res) => {
         u.company_id as userCompanyId,
         u.name as userName,
         r.hope as hope
-      FROM records r
+      FROM follows r
       LEFT JOIN users u ON r.staff_id = u.id
     `;
 
@@ -394,7 +394,7 @@ const uploadAudio = async (req, res) => {
 
         // Insert record into database
         const query = `
-        INSERT INTO records (file_id, staff_id, employee_id, audio_file_path, stt, skill_sheet, lor, salesforce, skills, hope, date)
+        INSERT INTO follows (file_id, staff_id, employee_id, audio_file_path, stt, skill_sheet, lor, salesforce, skills, hope, date)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
       `;
 
@@ -423,7 +423,7 @@ const uploadAudio = async (req, res) => {
             skill_sheet as skillSheet,
             lor,
             salesforce as salesforce
-          FROM records 
+          FROM follows 
           WHERE id = ?`,
           [result.insertId]
         );
@@ -467,7 +467,7 @@ const downloadSTT = async (req, res) => {
     const { recordId } = req.params;
     // Get STT data and file_id from database
     const [records] = await pool.query(
-      'SELECT stt, file_id FROM records WHERE id = ?',
+      'SELECT stt, file_id FROM follows WHERE id = ?',
       [recordId]
     );
     if (records.length === 0) {
@@ -532,7 +532,7 @@ const downloadSkillSheet = async (req, res) => {
   try {
     const { recordId } = req.params;
     const [records] = await pool.query(
-      'SELECT skill_sheet, file_id, employee_id, skills FROM records WHERE id = ?',
+      'SELECT skill_sheet, file_id, employee_id, skills FROM follows WHERE id = ?',
       [recordId]
     );
     if (records.length === 0) {
@@ -694,7 +694,7 @@ const updateStaffId = async (req, res) => {
       return res.status(400).json({ error: 'staffId is required' });
     }
     const [result] = await pool.query(
-      'UPDATE records SET employee_id = ? WHERE id = ?',
+      'UPDATE follows SET employee_id = ? WHERE id = ?',
       [staffId, recordId]
     );
     if (result.affectedRows === 0) {
@@ -717,7 +717,7 @@ const updateSkillSheet = async (req, res) => {
       return res.status(400).json({ error: 'Invalid skill sheet data' });
     }
     const [result] = await pool.query(
-      'UPDATE records SET skill_sheet = ?, skills = ? WHERE id = ?',
+      'UPDATE follows SET skill_sheet = ?, skills = ? WHERE id = ?',
       [JSON.stringify(skill_sheet), JSON.stringify(skills), recordId]
     );
     if (result.affectedRows === 0) {
@@ -733,7 +733,7 @@ const updateSkillSheet = async (req, res) => {
 const getSkillSheet = async (req, res) => {
   try {
     const { recordId } = req.params;
-    const [records] = await pool.query('SELECT skill_sheet FROM records WHERE id = ?', [recordId]);
+    const [records] = await pool.query('SELECT skill_sheet FROM follows WHERE id = ?', [recordId]);
     res.json(records[0].skill_sheet);
   } catch (error) {
     console.error('Error getting skill sheet:', error);
@@ -750,7 +750,7 @@ const updateSalesforce = async (req, res) => {
       return res.status(400).json({ error: 'Invalid salesforce data' });
     }
     const [result] = await pool.query(
-      'UPDATE records SET salesforce = ?, hope = ? WHERE id = ?',
+      'UPDATE follows SET salesforce = ?, hope = ? WHERE id = ?',
       [JSON.stringify(salesforceData), hope, recordId]
     );
     if (result.affectedRows === 0) {
@@ -768,7 +768,7 @@ const downloadSalesforce = async (req, res) => {
     const { recordId } = req.params;
     // Get salesforce data and file_id from database
     const [records] = await pool.query(
-      'SELECT salesforce, file_id, hope FROM records WHERE id = ?',
+      'SELECT salesforce, file_id, hope FROM follows WHERE id = ?',
       [recordId]
     );
     if (records.length === 0) {
@@ -822,7 +822,7 @@ const downloadBulk = async (req, res) => {
     const { recordId } = req.params;
     // Get record info
     const [records] = await pool.query(
-      'SELECT file_id, audio_file_path, skill_sheet, salesforce, employee_id, skills, stt, hope FROM records WHERE id = ?',
+      'SELECT file_id, audio_file_path, skill_sheet, salesforce, employee_id, skills, stt, hope FROM follows WHERE id = ?',
       [recordId]
     );
     if (records.length === 0) {
@@ -1064,7 +1064,7 @@ const updateLoR = async (req, res) => {
     }
 
     const [result] = await pool.query(
-      'UPDATE records SET lor = ? WHERE id = ?',
+      'UPDATE follows SET lor = ? WHERE id = ?',
       [lor, recordId]
     );
 
@@ -1079,50 +1079,37 @@ const updateLoR = async (req, res) => {
   }
 };
 
-// Delete record (users can only delete their own records)
-const deleteRecord = async (req, res) => {
+// Get prompt
+const getPrompt = async (req, res) => {
   try {
-    const { recordId } = req.params;
-    const { id: userId } = req.user;
-
-    // Check if record exists and belongs to the user
-    const [records] = await pool.query(
-      'SELECT * FROM records WHERE id = ? AND staff_id = ?',
-      [recordId, userId]
-    );
-
-    if (records.length === 0) {
-      return res.status(404).json({ error: 'レコードが見つからないか、削除する権限がありません。' });
-    }
-
-    // Delete the record (physical deletion)
-    await pool.query('DELETE FROM records WHERE id = ?', [recordId]);
-
-    res.json({ success: true, message: 'Record deleted successfully' });
+    const { role, company_id } = req.user;
+    
+    // For now, we'll store prompt per company (or use a default)
+    // You may want to create a prompts table or store in a config table
+    // For simplicity, returning a default prompt that can be stored in environment or database
+    const defaultPrompt = process.env.DEFAULT_SUMMARY_PROMPT || '';
+    
+    res.json({ prompt: defaultPrompt });
   } catch (error) {
-    console.error('Error deleting record:', error);
-    res.status(500).json({ error: 'Failed to delete record' });
+    console.error('Error fetching prompt:', error);
+    res.status(500).json({ error: 'Failed to fetch prompt' });
   }
 };
 
-// Auto-delete records older than specified months (default: 4 months)
-const autoDeleteOldRecords = async () => {
+// Update prompt
+const updatePrompt = async (req, res) => {
   try {
-    // Get retention period from environment variable or use default of 4 months
-    const months = parseInt(process.env.AUTO_DELETE_RETENTION_MONTHS || '4');
+    const { prompt } = req.body;
+    const { role, company_id } = req.user;
     
-    // Delete records older than specified months
-    const [result] = await pool.query(
-      `DELETE FROM records 
-       WHERE date < DATE_SUB(NOW(), INTERVAL ? MONTH)`,
-      [months]
-    );
+    // For now, we'll just return success
+    // You may want to store this in a database table (e.g., prompts table with company_id)
+    // TODO: Implement database storage for prompts
     
-    if (result.affectedRows > 0) {
-      console.log(`Auto-deleted ${result.affectedRows} record(s) older than ${months} month(s)`);
-    }
+    res.json({ success: true, message: 'Prompt updated successfully' });
   } catch (error) {
-    console.error('Error in auto-delete old records:', error);
+    console.error('Error updating prompt:', error);
+    res.status(500).json({ error: 'Failed to update prompt' });
   }
 };
 
@@ -1139,6 +1126,6 @@ export {
   downloadSalesforce,
   downloadBulk,
   updateLoR,
-  deleteRecord,
-  autoDeleteOldRecords
+  getPrompt,
+  updatePrompt
 };

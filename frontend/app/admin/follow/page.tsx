@@ -55,7 +55,7 @@ interface UploadStatus {
   estimatedTime?: string;
 }
 
-type SortField = 'date' | 'fileId' | 'userName';
+type SortField = 'date' | 'fileId';
 type SortOrder = 'asc' | 'desc';
 
 const convertToArray = (data: any): string[] => {
@@ -71,26 +71,19 @@ const convertToArray = (data: any): string[] => {
   return [];
 };
 
-export default function DashboardPage() {
+export default function AdminFollowPage() {
   const { user } = useAuth();
   const [records, setRecords] = useState<Record[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingStaffId, setEditingStaffId] = useState<number | null>(null);
   const [staffIdInput, setStaffIdInput] = useState("");
-  const [editingStaffName, setEditingStaffName] = useState<number | null>(null);
-  const [staffNameInput, setStaffNameInput] = useState("");
-  const [editingMemo, setEditingMemo] = useState<number | null>(null);
-  const [memoInput, setMemoInput] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [sortField, setSortField] = useState<SortField>('date');
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
   const [sortIconDate, setSortIconDate] = useState<'↑' | '↓'>('↓');
   const [sortIconFileId, setSortIconFileId] = useState<'↑' | '↓'>('↓');
-  const [sortIconUserName, setSortIconUserName] = useState<'↑' | '↓'>('↓');
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const staffNameInputRef = useRef<HTMLInputElement | null>(null);
-  const memoInputRef = useRef<HTMLInputElement | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [alertMessage, setAlertMessage] = useState<{ type: 'success' | 'error', message: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -111,8 +104,9 @@ export default function DashboardPage() {
   const [modalType, setModalType] = useState<'skillSheet' | 'salesforce' | null>(null);
   const [modalData, setModalData] = useState<any>(null);
   const [staffMemo, setStaffMemo] = useState('');
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [recordToDelete, setRecordToDelete] = useState<Record | null>(null);
+  const [showPromptModal, setShowPromptModal] = useState(false);
+  const [isEditingPrompt, setIsEditingPrompt] = useState(false);
+  const [promptText, setPromptText] = useState('');
 
   useEffect(() => {
     fetchRecords();
@@ -122,11 +116,12 @@ export default function DashboardPage() {
     setLoading(true);
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/records`, {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) {
         const data = await res.json();
+        console.log("data",data)
         setRecords(data);
       }
     } catch (e) {
@@ -148,7 +143,7 @@ export default function DashboardPage() {
     if (!trimmedInput) return;
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/records/${id}/staff-id`, {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow/${id}/staff-id`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -163,55 +158,6 @@ export default function DashboardPage() {
       // handle error
     }
   };
-
-  const handleEditStaffName = (id: number, currentStaffName: string) => {
-    setEditingStaffName(id);
-    setStaffNameInput(currentStaffName || '');
-    setTimeout(() => staffNameInputRef.current?.focus(), 0);
-  };
-
-  const handleStaffNameBlur = async (id: number, record: Record) => {
-    setEditingStaffName(null);
-    const trimmedInput = staffNameInput?.trim() || '';
-    // Note: Updating Staff Name would require updating the user's name via /api/users/:userId
-    // For now, we'll just close the edit mode
-    // TODO: Implement backend endpoint or use existing users endpoint if staff_id is available
-  };
-
-  const handleEditMemo = (id: number, currentMemo: string | null) => {
-    setEditingMemo(id);
-    setMemoInput(currentMemo || '');
-    setTimeout(() => memoInputRef.current?.focus(), 0);
-  };
-
-  const handleMemoBlur = async (id: number) => {
-    setEditingMemo(null);
-    const trimmedInput = memoInput?.trim() || '';
-    try {
-      const token = localStorage.getItem("token");
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/records/${id}/lor`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ lor: trimmedInput }),
-      });
-      if (res.ok) {
-        fetchRecords();
-        setAlertMessage({
-          type: 'success',
-          message: 'メモを更新しました。'
-        });
-      }
-    } catch (e) {
-      setAlertMessage({
-        type: 'error',
-        message: 'メモの更新に失敗しました。'
-      });
-    }
-  };
-
 
   const handlePageChange = (page: number) => {
     setCurrentPage(page);
@@ -284,7 +230,7 @@ export default function DashboardPage() {
         message: `音声ファイルの文字起こしを開始しました。\n完了までお待ちください。`
       }));
 
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/records/upload`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow/upload`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -347,7 +293,7 @@ export default function DashboardPage() {
     console.log("data", data);
     try {
       const token = localStorage.getItem("token");
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/records/${selectedRecord.id}/skill-sheet`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow/${selectedRecord.id}/skill-sheet`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -380,7 +326,7 @@ export default function DashboardPage() {
   const handleSkillSheetDownload = async (record: Record) => {
     try {
       const token = localStorage.getItem("token");
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/records/${record.id}/skill-sheet`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow/${record.id}/skill-sheet`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -427,7 +373,6 @@ export default function DashboardPage() {
   };
 
   const handleSalesforceEdit = (record: Record) => {
-    // console.log("handleSalesforceEdit", record);
     setSelectedSalesforceRecord(record);
     setIsSalesforceOpen(true);
   };
@@ -437,7 +382,7 @@ export default function DashboardPage() {
 
     try {
       const token = localStorage.getItem("token");
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/records/${selectedSalesforceRecord.id}/salesforce`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow/${selectedSalesforceRecord.id}/salesforce`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -470,7 +415,7 @@ export default function DashboardPage() {
   const handleSalesforceDownload = async (record: Record) => {
     try {
       const token = localStorage.getItem("token");
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/records/${record.id}/salesforce-pdf`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow/${record.id}/salesforce-pdf`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -574,10 +519,50 @@ export default function DashboardPage() {
     }
   };
 
+  const handleLoREdit = (record: Record) => {
+    setSelectedLoRRecord(record);
+    setIsLoROpen(true);
+  };
+
+  const handleLoRSave = async (data: string) => {
+    if (!selectedLoRRecord) return;
+
+    try {
+      const token = localStorage.getItem("token");
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow/${selectedLoRRecord.id}/lor`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ lor: data }),
+      });
+
+      if (response.ok) {
+        setAlertMessage({
+          type: 'success',
+          message: '推薦文を更新しました。'
+        });
+        fetchRecords();
+        setIsLoROpen(false);
+      } else {
+        setAlertMessage({
+          type: 'error',
+          message: '推薦文の更新に失敗しました。'
+        });
+      }
+    } catch (error) {
+      setAlertMessage({
+        type: 'error',
+        message: '推薦文の更新中にエラーが発生しました。'
+      });
+    }
+  };
+
   const handleSTTDownload = async (record: Record) => {
     try {
       const token = localStorage.getItem("token");
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/records/${record.id}/stt`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow/${record.id}/stt`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -607,18 +592,18 @@ export default function DashboardPage() {
 
         setAlertMessage({
           type: 'success',
-          message: 'STTデータのダウンロードが完了しました。'
+          message: 'STTのダウンロードが完了しました。'
         });
       } else {
         setAlertMessage({
           type: 'error',
-          message: 'STTデータのダウンロードに失敗しました。'
+          message: 'STTのダウンロードに失敗しました。'
         });
       }
     } catch (error) {
       setAlertMessage({
         type: 'error',
-        message: 'STTデータのダウンロード中にエラーが発生しました。'
+        message: 'STTのダウンロード中にエラーが発生しました。'
       });
     }
   };
@@ -626,7 +611,7 @@ export default function DashboardPage() {
   const handleBulkDownload = async (record: Record) => {
     try {
       const token = localStorage.getItem("token");
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/records/${record.id}/bulk`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow/${record.id}/bulk`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -656,187 +641,125 @@ export default function DashboardPage() {
 
         setAlertMessage({
           type: 'success',
-          message: '一括データのダウンロードが完了しました。'
+          message: 'Bulkのダウンロードが完了しました。'
         });
       } else {
         setAlertMessage({
           type: 'error',
-          message: '一括データのダウンロードに失敗しました。'
+          message: 'Bulkのダウンロードに失敗しました。'
         });
       }
     } catch (error) {
       setAlertMessage({
         type: 'error',
-        message: '一括データのダウンロード中にエラーが発生しました。'
-      });
-    }
-  };
-
-  const handleLoREdit = (record: Record) => {
-    setSelectedLoRRecord(record);
-    setIsLoROpen(true);
-  };
-
-  const handleLoRSave = async (data: string) => {
-    if (!selectedLoRRecord) return;
-
-    try {
-      const token = localStorage.getItem("token");
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/records/${selectedLoRRecord.id}/lor`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ lor: data }),
-      });
-
-      if (res.ok) {
-        fetchRecords();
-        setIsLoROpen(false);
-        setSelectedLoRRecord(null);
-        setAlertMessage({
-          type: 'success',
-          message: 'スタッフ対応メモを更新しました。'
-        });
-      } else {
-        throw new Error('Failed to update LoR');
-      }
-    } catch (error) {
-      console.error('Error updating LoR:', error);
-      setAlertMessage({
-        type: 'error',
-        message: 'スタッフ対応メモの更新に失敗しました。'
+        message: 'Bulkのダウンロード中にエラーが発生しました。'
       });
     }
   };
 
   const parseDate = (dateString: string) => {
-    try {
-      // Handle DD/MM/YY format
-      if (dateString.includes('/')) {
-        const [day, month, year] = dateString.split(' ')[0].split('/');
-        const time = dateString.split(' ')[1];
-        // Convert 2-digit year to 4-digit year
-        const fullYear = parseInt(year) < 50 ? 2000 + parseInt(year) : 1900 + parseInt(year);
-        dateString = `${fullYear}-${month.padStart(2, '0')}-${day.padStart(2, '0')} ${time}`;
-      }
-      return new Date(dateString).getTime();
-    } catch (error) {
-      console.error('Error parsing date for sorting:', error);
-      return 0; // Return 0 for invalid dates to sort them to the end
-    }
+    const date = new Date(dateString);
+    return {
+      year: date.getFullYear(),
+      month: date.getMonth() + 1,
+      day: date.getDate(),
+      hours: date.getHours(),
+      minutes: date.getMinutes(),
+      seconds: date.getSeconds()
+    };
   };
 
   const formatDate = (dateString: string) => {
+    const date = parseDate(dateString);
+    return `${date.year}/${String(date.month).padStart(2, '0')}/${String(date.day).padStart(2, '0')} ${String(date.hours).padStart(2, '0')}:${String(date.minutes).padStart(2, '0')}`;
+  };
+
+  const handlePromptButtonClick = async () => {
+    if (!showPromptModal) {
+      // Open modal and fetch prompt
+      try {
+        const token = localStorage.getItem("token");
+        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow/prompt`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setPromptText(data.prompt || '');
+          setShowPromptModal(true);
+          setIsEditingPrompt(true);
+        } else {
+          setAlertMessage({
+            type: 'error',
+            message: 'プロンプトの取得に失敗しました。'
+          });
+        }
+      } catch (e) {
+        setAlertMessage({
+          type: 'error',
+          message: 'プロンプトの取得中にエラーが発生しました。'
+        });
+      }
+    } else {
+      // Close modal
+      setShowPromptModal(false);
+      setIsEditingPrompt(false);
+      setPromptText('');
+    }
+  };
+
+  const handlePromptSave = async () => {
     try {
-      // Handle DD/MM/YY format
-      if (dateString.includes('/')) {
-        const [day, month, year] = dateString.split(' ')[0].split('/');
-        const time = dateString.split(' ')[1];
-        // Convert 2-digit year to 4-digit year
-        const fullYear = parseInt(year) < 50 ? 2000 + parseInt(year) : 1900 + parseInt(year);
-        dateString = `${fullYear}-${month.padStart(2, '0')}-${day.padStart(2, '0')} ${time}`;
-      }
+      const token = localStorage.getItem("token");
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow/prompt`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ prompt: promptText }),
+      });
 
-      const date = new Date(dateString);
-      
-      // If the date is invalid, return the original string
-      if (isNaN(date.getTime())) {
-        console.warn('Invalid date string:', dateString);
-        return dateString;
-      }
-
-      // Format the date in MM/DD HH:mm format
-      const month = String(date.getMonth() + 1);
-      const day = String(date.getDate());
-      const hours = String(date.getHours()).padStart(2, '0');
-      const minutes = String(date.getMinutes()).padStart(2, '0');
-
-      return `${month}/${day} ${hours}:${minutes}`;
-    } catch (error) {
-      console.error('Error formatting date:', error);
-      return dateString;
-    }
-  };
-
-  // Helper function to truncate Memo (first 5 characters)
-  const truncateMemo = (text: string | null) => {
-    if (!text) return '';
-    return text.length > 5 ? text.substring(0, 5) + '...' : text;
-  };
-
-  // Helper function to truncate File ID (first 17 lowercase characters)
-  const truncateFileId = (fileId: string) => {
-    if (!fileId) return '';
-    const lowerCase = fileId.toLowerCase();
-    return lowerCase.length > 17 ? lowerCase.substring(0, 17) + '...' : lowerCase;
-  };
-
-  const filteredRecords = records.filter(rec =>
-    (rec.date || '').includes(searchTerm) ||
-    (rec.fileId || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (rec.staffId || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (rec.userName || '').toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
-  const sortedRecords = useMemo(() => {
-    return [...filteredRecords].sort((a, b) => {
-      if (sortField === 'date') {
-        const dateA = parseDate(a.date);
-        const dateB = parseDate(b.date);
-        return sortOrder === 'desc' ? dateB - dateA : dateA - dateB;
+      if (res.ok) {
+        setAlertMessage({
+          type: 'success',
+          message: 'プロンプトを保存しました。'
+        });
+        setShowPromptModal(false);
+        setIsEditingPrompt(false);
       } else {
-        // Sort by fileId
-        const fileIdA = a.fileId.toLowerCase();
-        const fileIdB = b.fileId.toLowerCase();
-        return sortOrder === 'desc' 
-          ? fileIdB.localeCompare(fileIdA)
-          : fileIdA.localeCompare(fileIdB);
+        const data = await res.json();
+        setAlertMessage({
+          type: 'error',
+          message: data.error || 'プロンプトの保存に失敗しました。'
+        });
       }
-    });
-  }, [filteredRecords, sortField, sortOrder]);
-
-  // Calculate pagination on the filtered and sorted records
-  const paginatedRecords = useMemo(() => {
-    const indexOfLastRecord = currentPage * rowsPerPage;
-    const indexOfFirstRecord = indexOfLastRecord - rowsPerPage;
-    return sortedRecords.slice(indexOfFirstRecord, indexOfLastRecord);
-  }, [sortedRecords, currentPage, rowsPerPage]);
-
-  // Auto-hide alert after 5 seconds
-  useEffect(() => {
-    if (alertMessage) {
-      const timer = setTimeout(() => {
-        setAlertMessage(null);
-      }, 5000);
-      return () => clearTimeout(timer);
-    }
-  }, [alertMessage]);
-
-  // Add function to handle column header click
-  const handleColumnSort = (field: SortField) => {
-    const newOrder = field === sortField && sortOrder === 'desc' ? 'asc' : 'desc';
-    setSortField(field);
-    setSortOrder(newOrder);
-
-    if (field === 'date') {
-      setSortIconDate(newOrder === 'asc' ? '↑' : '↓');
-      setSortIconFileId('↓');
-      setSortIconUserName('↓');
-    } else if (field === 'fileId') {
-      setSortIconDate('↓');
-      setSortIconFileId(newOrder === 'asc' ? '↑' : '↓');
-      setSortIconUserName('↓');
-    } else if (field === 'userName') {
-      setSortIconDate('↓');
-      setSortIconFileId('↓');
-      setSortIconUserName(newOrder === 'asc' ? '↑' : '↓');
+    } catch (e) {
+      setAlertMessage({
+        type: 'error',
+        message: 'プロンプトの保存中にエラーが発生しました。'
+      });
     }
   };
 
-  // Handler for salesforce icon click (Skill Sheet or Salesforce column)
-  const handleSalesforceIconClick = (staffId: string, type: 'skillSheet' | 'salesforce', data: any, hope:any) => {
+  const handleColumnSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortOrder('asc');
+    }
+
+    // Update sort icons
+    if (field === 'date') {
+      setSortIconDate(sortOrder === 'asc' ? '↑' : '↓');
+    } else if (field === 'fileId') {
+      setSortIconFileId(sortOrder === 'asc' ? '↑' : '↓');
+    }
+  };
+
+  const handleSalesforceIconClick = (staffId: string, type: 'skillSheet' | 'salesforce', data: any, hope: any) => {
     setModalStaffId(staffId);
     setModalType(type);
     setModalData(data);
@@ -876,46 +799,51 @@ export default function DashboardPage() {
     setShowSalesforceModal(false);
   };
 
-  const handleDeleteClick = (record: Record) => {
-    setRecordToDelete(record);
-    setShowDeleteModal(true);
-  };
-
-  const handleDeleteConfirm = async () => {
-    if (!recordToDelete) return;
-    
-    try {
-      const token = localStorage.getItem("token");
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/records/${recordToDelete.id}`, {
-        method: "DELETE",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-
-      if (res.ok) {
-        setAlertMessage({
-          type: 'success',
-          message: 'レコードを削除しました。'
-        });
-        fetchRecords();
-      } else {
-        const data = await res.json();
-        setAlertMessage({
-          type: 'error',
-          message: data.error || 'レコードの削除に失敗しました。'
-        });
+  // Computed values for filtering and pagination
+  const filteredRecords = useMemo(() => {
+    return records.filter(record => {
+      const searchLower = searchTerm.toLowerCase();
+      return (
+        formatDate(record.date).toLowerCase().includes(searchLower) ||
+        record.fileId.toLowerCase().includes(searchLower)
+      );
+    }).sort((a, b) => {
+      let aValue: any, bValue: any;
+      
+      switch (sortField) {
+        case 'date':
+          aValue = new Date(a.date);
+          bValue = new Date(b.date);
+          break;
+        case 'fileId':
+          aValue = a.fileId;
+          bValue = b.fileId;
+          break;
+        default:
+          return 0;
       }
-    } catch (e) {
-      setAlertMessage({
-        type: 'error',
-        message: 'レコードの削除中にエラーが発生しました。'
-      });
-    } finally {
-      setShowDeleteModal(false);
-      setRecordToDelete(null);
-    }
-  };
+      
+      if (sortOrder === 'asc') {
+        return aValue > bValue ? 1 : -1;
+      } else {
+        return aValue < bValue ? 1 : -1;
+      }
+    });
+  }, [records, searchTerm, sortField, sortOrder]);
+
+  const paginatedRecords = useMemo(() => {
+    const startIndex = (currentPage - 1) * rowsPerPage;
+    const endIndex = startIndex + rowsPerPage;
+    return filteredRecords.slice(startIndex, endIndex);
+  }, [filteredRecords, currentPage, rowsPerPage]);
+
+  // Redirect if not admin
+  if (user && user.role !== 'admin') {
+    // Redirect to appropriate company dashboard
+    const companySlug = user.company?.slug || 'default';
+    window.location.href = `/${companySlug}/dashboard`;
+    return null;
+  }
 
   return (
     <Layout>
@@ -1017,26 +945,45 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* Modal for Delete confirmation */}
-        {showDeleteModal && recordToDelete && (
+        {/* Modal for Prompt (Summary Prompt) */}
+        {showPromptModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-30">
-            <div className="bg-gray-50 border border-gray-400 rounded-md p-8 min-w-[350px] max-w-[95vw] flex flex-col items-center">
-              <div className="text-center mb-6">
-                <div className="text-lg mb-2">このレコードを削除しますか？</div>
-                <div className="text-sm text-gray-600 mt-4">この操作は取り消せません。</div>
+            <div className="bg-gray-50 border border-gray-400 rounded-md w-[80%] max-w-[800px] max-h-[90vh] flex flex-col">
+              {/* Header */}
+              <div className="p-4 border-b border-gray-300 flex justify-between items-center bg-gray-100">
+                <h3 className="text-lg font-semibold text-gray-700">要約プロンプト</h3>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handlePromptSave}
+                    className="p-2 hover:bg-gray-200 rounded"
+                    title="保存"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+                    </svg>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowPromptModal(false);
+                      setIsEditingPrompt(false);
+                      setPromptText('');
+                    }}
+                    className="text-gray-500 hover:text-gray-700"
+                  >
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
               </div>
-              <div className="flex gap-8 mt-2">
-                <button
-                  className="border border-gray-400 rounded px-8 py-2 text-lg hover:bg-gray-200"
-                  onClick={() => {
-                    setShowDeleteModal(false);
-                    setRecordToDelete(null);
-                  }}
-                >キャンセル</button>
-                <button
-                  className="bg-red-500 text-white rounded px-8 py-2 text-lg hover:bg-red-600"
-                  onClick={handleDeleteConfirm}
-                >OK</button>
+              {/* Content */}
+              <div className="p-4 flex-1 overflow-y-auto">
+                <textarea
+                  value={promptText}
+                  onChange={(e) => setPromptText(e.target.value)}
+                  className="w-full h-full min-h-[400px] p-4 border border-gray-300 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                  placeholder="プロンプトを入力してください"
+                />
               </div>
             </div>
           </div>
@@ -1048,7 +995,21 @@ export default function DashboardPage() {
             Hello {user?.name || 'User'} <span role="img" aria-label="wave">👋</span>,
           </h1>
           <div className="flex items-center gap-4 rounded-[5px] w-full sm:w-auto">
-            <div className="relative rounded-[5px] flex flex-col items-end gap-2 w-full sm:w-auto">
+            <div className="relative rounded-[5px] flex flex-row items-center gap-2 w-full sm:w-auto">
+              {/* Prompt Button */}
+              <button
+                onClick={handlePromptButtonClick}
+                className={`bg-white rounded-full shadow border border-gray-200 p-2 hover:bg-gray-50 ${
+                  showPromptModal ? 'bg-gray-100' : ''
+                }`}
+                title="プロンプト"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+              </button>
+              {/* Upload Button */}
+              <div className="relative rounded-[5px] flex flex-col items-end gap-2">
               <input
                 type="file"
                 ref={fileInputRef}
@@ -1059,7 +1020,7 @@ export default function DashboardPage() {
               <button
                 onClick={handleUploadClick}
                 disabled={isUploading}
-                className={`bg-white rounded-full shadow border border-gray-200 mt-2 ${
+                className={`mb-2 bg-white rounded-full shadow border border-gray-200 mt-2 ${
                   isUploading ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-50'
                 }`}
               >
@@ -1071,15 +1032,16 @@ export default function DashboardPage() {
                   <Image src="/plus.svg" alt="Upload" width={32} height={32} className="rounded-[5px]" />
                 )}
               </button>
-            </div>            
+            </div>
+          </div>            
           </div>
         </div>
 
-        {/* Records Section */}
+        {/* Follow Section */}
         <div className="bg-white rounded-[5px] shadow">
           <div className="p-4 sm:p-6 lg:p-8">
             <div className="flex justify-between items-center mb-6">
-              <h2 className="text-lg sm:text-xl font-semibold rounded-[5px]">Records</h2>
+              <h2 className="text-lg sm:text-xl font-semibold rounded-[5px]">Follow</h2>
               <div className="flex items-center gap-4">
                 <div className="text-green-500 text-sm rounded-[5px]">過去30日間のデータ</div>
                 <div className="relative w-56">
@@ -1094,7 +1056,7 @@ export default function DashboardPage() {
                   </div>
                   <input
                     type="text"
-                    placeholder="Search"
+                    placeholder="日付またはFile IDで検索"
                     className="pl-10 pr-4 py-2 rounded-[5px] border border-gray-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-100 text-gray-700 w-full shadow-sm"
                     value={searchTerm}
                     onChange={e => setSearchTerm(e.target.value)}
@@ -1107,34 +1069,36 @@ export default function DashboardPage() {
                 <table className="min-w-full text-left text-gray-700 rounded-[5px]">
                   <thead>
                     <tr className="border-b border-gray-200 text-xs text-gray-400 rounded-[5px]">
-                      <th className="py-3 px-4 font-medium text-center min-w-[100px] max-w-[300px] rounded-[5px]">Staff ID</th>
-                      <th className="py-3 px-4 font-medium text-center min-w-[100px] max-w-[300px] rounded-[5px]">Staff Name</th>
                       <th 
                         className="py-3 px-4 font-medium text-center min-w-[100px] max-w-[300px] rounded-[5px] cursor-pointer hover:bg-gray-50"
                         onClick={() => handleColumnSort('date')}
                       >
                         Date <span className="ml-1">{sortIconDate}</span>
                       </th>
-                      <th className="py-3 px-4 font-medium text-center min-w-[100px] max-w-[300px] rounded-[5px]">User</th>
-                      <th className="py-3 px-4 font-medium text-center min-w-[100px] max-w-[300px] rounded-[5px]">Memo</th>
-                      <th className="py-3 px-4 font-medium text-center min-w-[100px] max-w-[300px] rounded-[5px]">File</th>
+                      <th 
+                        className="py-3 px-4 font-medium text-center min-w-[100px] max-w-[300px] rounded-[5px] cursor-pointer hover:bg-gray-50"
+                        onClick={() => handleColumnSort('fileId')}
+                      >
+                        File ID <span className="ml-1">{sortIconFileId}</span>
+                      </th>
+                      <th className="py-3 px-4 font-medium text-center min-w-[100px] max-w-[300px] rounded-[5px]">Staff ID</th>
                       <th className="py-3 px-4 font-medium text-center min-w-[120px] max-w-[300px] rounded-[5px]">Skill Sheet</th>
                       <th className="py-3 px-4 font-medium text-center min-w-[120px] max-w-[300px] rounded-[5px]">Salesforce</th>
-                      <th className="py-3 px-4 font-medium text-center min-w-[60px] max-w-[80px] rounded-[5px]">LoR</th>
-                      <th className="py-3 px-4 font-medium text-center min-w-[60px] max-w-[80px] rounded-[5px]">STT</th>
-                      <th className="py-3 px-4 font-medium text-center min-w-[60px] max-w-[80px] rounded-[5px]">Bulk</th>
-                      <th className="py-3 px-4 font-medium text-center min-w-[60px] max-w-[80px] rounded-[5px]"></th>
+                      <th className="py-3 px-4 font-medium text-center min-w-[100px] max-w-[300px] rounded-[5px]">LoR</th>
+                      <th className="py-3 px-4 font-medium text-center min-w-[100px] max-w-[300px] rounded-[5px]">STT</th>
+                      <th className="py-3 px-4 font-medium text-center min-w-[100px] max-w-[300px] rounded-[5px]">Bulk</th>
                     </tr>
                   </thead>
                   <tbody>
                     {loading ? (
-                      <tr><td colSpan={12} className="text-center py-8">Loading...</td></tr>
+                      <tr><td colSpan={8} className="text-center py-8">Loading...</td></tr>
                     ) : paginatedRecords.length === 0 ? (
-                      <tr><td colSpan={12} className="text-center py-8">No records found</td></tr>
+                      <tr><td colSpan={8} className="text-center py-8">No records found</td></tr>
                     ) : (
                       paginatedRecords.map((rec) => (
                         <tr key={rec.id} className="border-b border-gray-100 hover:bg-gray-50 transition text-left align-middle rounded-[5px]">
-                          {/* Staff ID */}
+                          <td className="py-5 px-4 whitespace-nowrap align-middle min-w-[100px] max-w-[300px] rounded-[5px] truncate">{formatDate(rec.date)}</td>
+                          <td className="py-5 px-4 whitespace-nowrap align-middle min-w-[100px] max-w-[300px] rounded-[5px] truncate">{rec.fileId}</td>
                           <td className="py-5 px-4 whitespace-nowrap align-middle min-w-[100px] max-w-[300px] rounded-[5px]">
                             <div className="flex items-center gap-x-2 rounded-[5px] truncate">
                               {editingStaffId === rec.id ? (
@@ -1154,59 +1118,6 @@ export default function DashboardPage() {
                                 </>
                               )}
                             </div>
-                          </td>
-                          {/* Staff Name */}
-                          <td className="py-5 px-4 whitespace-nowrap align-middle min-w-[100px] max-w-[300px] rounded-[5px]">
-                            <div className="flex items-center gap-x-2 rounded-[5px] truncate">
-                              {editingStaffName === rec.id ? (
-                                <input
-                                  ref={staffNameInputRef}
-                                  value={staffNameInput}
-                                  onChange={e => setStaffNameInput(e.target.value)}
-                                  onBlur={() => handleStaffNameBlur(rec.id, rec)}
-                                  className="border border-gray-300 rounded-[5px] px-2 py-1 text-center"
-                                />
-                              ) : (
-                                <>
-                                  <button className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center flex-shrink-0" title="Edit Staff Name" onClick={() => handleEditStaffName(rec.id, rec.userName || '')}>
-                                    <Image src="/edit1.svg" alt="Edit Staff Name" width={20} height={20} className="rounded-[5px]" />
-                                  </button>
-                                  <span className="truncate">{rec.userName || ''}</span>
-                                </>
-                              )}
-                            </div>
-                          </td>
-                          {/* Date */}
-                          <td className="py-5 px-4 whitespace-nowrap align-middle min-w-[100px] max-w-[300px] rounded-[5px] truncate">{formatDate(rec.date)}</td>
-                          {/* User */}
-                          <td className="py-5 px-4 whitespace-nowrap align-middle min-w-[100px] max-w-[300px] rounded-[5px] truncate">{rec.userName || ''}</td>
-                          {/* Memo */}
-                          <td className="py-5 px-4 whitespace-nowrap align-middle min-w-[100px] max-w-[300px] rounded-[5px]">
-                            {editingMemo === rec.id ? (
-                              <input
-                                ref={memoInputRef}
-                                value={memoInput}
-                                onChange={e => setMemoInput(e.target.value)}
-                                onBlur={() => handleMemoBlur(rec.id)}
-                                className="border border-gray-300 rounded-[5px] px-2 py-1 w-full"
-                              />
-                            ) : (
-                              <div className="flex items-center gap-x-2">
-                                <button className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center flex-shrink-0" title="Edit Memo" onClick={() => handleEditMemo(rec.id, rec.lor)}>
-                                  <Image src="/edit1.svg" alt="Edit Memo" width={20} height={20} className="rounded-[5px]" />
-                                </button>
-                                <span 
-                                  className="truncate" 
-                                  title={rec.lor || ''}
-                                >
-                                  {truncateMemo(rec.lor)}
-                                </span>
-                              </div>
-                            )}
-                          </td>
-                          {/* File ID */}
-                          <td className="py-5 px-4 whitespace-nowrap align-middle min-w-[100px] max-w-[300px] rounded-[5px] truncate" title={rec.fileId}>
-                            {truncateFileId(rec.fileId)}
                           </td>
                           {/* Skill Sheet icons */}
                           <td className="py-5 px-4 align-middle min-w-[120px] max-w-[300px] rounded-[5px]">
@@ -1260,59 +1171,44 @@ export default function DashboardPage() {
                               </button>
                             </div>
                           </td>
-                          {/* LoR icons - narrow width */}
-                          <td className="py-5 px-2 align-middle min-w-[60px] max-w-[80px] rounded-[5px]">
-                            <div className="flex items-center justify-center rounded-[5px] gap-x-2">
+                          {/* LoR icons */}
+                          <td className="py-5 px-4 align-middle min-w-[100px] max-w-[300px] rounded-[5px]">
+                            <div className="flex items-center justify-center rounded-[5px] gap-x-3">
                               <button
                                 onClick={() => handleLoREdit(rec)}
                                 className="text-blue-600 hover:text-blue-800 transition-colors"
                                 title="編集"
                               >
-                                <Image src="/edit1.svg" alt="Edit" width={16} height={16} className="rounded-[5px]" />
+                                <Image src="/edit1.svg" alt="Edit" width={20} height={20} className="rounded-[5px]" />
                               </button>
                               <button
                                 onClick={() => handleLoRCopy(rec)}
-                                title="Copy"
                               >
-                                <Image src="/copy1.svg" alt="copy" width={16} height={16} className="rounded-[5px]" />
+                                <Image src="/copy1.svg" alt="copy" width={20} height={20} className="rounded-[5px]" />
                               </button>
                             </div>
                           </td>
-                          {/* STT icons - narrow width */}
-                          <td className="py-5 px-2 align-middle min-w-[60px] max-w-[80px] rounded-[5px]">
+                          {/* STT icons */}
+                          <td className="py-5 px-4 align-middle min-w-[100px] max-w-[300px] rounded-[5px]">
                             <div className="flex items-center justify-center rounded-[5px]">
                               <button 
                                 className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center flex-shrink-0" 
                                 title="Download"
                                 onClick={() => handleSTTDownload(rec)}
                               >
-                                <Image src="/download1.svg" alt="download" width={16} height={16} className="rounded-[5px]" />
+                                <Image src="/download1.svg" alt="download" width={20} height={20} className="rounded-[5px]" />
                               </button>
                             </div>
                           </td>
-                          {/* Bulk icons - narrow width */}
-                          <td className="py-5 px-2 align-middle min-w-[60px] max-w-[80px] rounded-[5px]">
+                          {/* Bulk icons */}
+                          <td className="py-5 px-4 align-middle min-w-[100px] max-w-[300px] rounded-[5px]">
                             <div className="flex items-center justify-center rounded-[5px]">
                               <button 
                                 className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center flex-shrink-0" 
                                 title="Download"
                                 onClick={() => handleBulkDownload(rec)}
                               >
-                                <Image src="/download1.svg" alt="download" width={16} height={16} className="rounded-[5px]" />
-                              </button>
-                            </div>
-                          </td>
-                          {/* Delete button */}
-                          <td className="py-5 px-2 align-middle min-w-[60px] max-w-[80px] rounded-[5px]">
-                            <div className="flex items-center justify-center rounded-[5px]">
-                              <button 
-                                className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center flex-shrink-0 text-gray-500 hover:text-gray-700" 
-                                title="Delete"
-                                onClick={() => handleDeleteClick(rec)}
-                              >
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                </svg>
+                                <Image src="/download1.svg" alt="download" width={20} height={20} className="rounded-[5px]" />
                               </button>
                             </div>
                           </td>
