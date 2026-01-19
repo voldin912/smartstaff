@@ -110,6 +110,8 @@ const getRecords = async (req, res) => {
         DATE_FORMAT(r.date, '%Y-%m-%d %H:%i:%s') as date,
         r.file_id as fileId, 
         r.employee_id as staffId, 
+        r.staff_name as staffName,
+        r.memo,
         r.stt,
         r.skill_sheet as skillSheet,
         r.lor,
@@ -225,10 +227,21 @@ const getTxtPathFromMp3 = (mp3Path) => {
 const uploadAudio = async (req, res) => {
   try {
     if (!req.file) {
+      console.error('Upload error: No file in request');
+      console.error('Request body:', req.body);
+      console.error('Request files:', req.files);
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
     const { staffId, fileId } = req.body;
+    const userId = req.user.id; // Get the actual user ID from auth middleware
+    
+    if (!staffId || !fileId) {
+      console.error('Upload error: Missing required fields');
+      console.error('Request body:', req.body);
+      console.error('staffId:', staffId, 'fileId:', fileId);
+      return res.status(400).json({ error: 'Missing required fields: staffId and fileId are required' });
+    }
     let audioFilePath = req.file.path;
     const ext = path.extname(audioFilePath).toLowerCase();
     // If file is .m4a, convert to .wav
@@ -400,8 +413,8 @@ const uploadAudio = async (req, res) => {
 
         const [result] = await pool.query(query, [
           fileId, 
-          staffId, 
-          staffId,
+          userId,  // Use req.user.id instead of staffId for staff_id
+          staffId, // This is employee_id (string)
           audioFilePath, 
           combinedText, 
           outputs.skillsheet, 
@@ -418,11 +431,15 @@ const uploadAudio = async (req, res) => {
             DATE_FORMAT(date, '%Y-%m-%d %H:%i:%s') as date,
             file_id as fileId, 
             employee_id as staffId, 
+            staff_name as staffName,
+            memo,
             audio_file_path as audioFilePath,
             stt,
             skill_sheet as skillSheet,
             lor,
-            salesforce as salesforce
+            salesforce as salesforce,
+            skills,
+            hope
           FROM records 
           WHERE id = ?`,
           [result.insertId]
@@ -1079,17 +1096,38 @@ const updateLoR = async (req, res) => {
   }
 };
 
-// Delete record (users can only delete their own records)
+// Delete record with role-based permissions
 const deleteRecord = async (req, res) => {
   try {
     const { recordId } = req.params;
-    const { id: userId } = req.user;
+    const { role, company_id, id: userId } = req.user;
 
-    // Check if record exists and belongs to the user
-    const [records] = await pool.query(
-      'SELECT * FROM records WHERE id = ? AND staff_id = ?',
-      [recordId, userId]
-    );
+    let query = `
+      SELECT r.*, u.company_id as recordCompanyId
+      FROM records r
+      LEFT JOIN users u ON r.staff_id = u.id
+      WHERE r.id = ?
+    `;
+    const queryParams = [recordId];
+
+    // Apply role-based access control
+    if (role === 'member') {
+      // Members can only delete their own records
+      query += ' AND r.staff_id = ?';
+      queryParams.push(userId);
+    } else if (role === 'company-manager') {
+      // Company managers can delete records from their company
+      query += ' AND u.company_id = ?';
+      queryParams.push(company_id);
+    } else if (role === 'admin') {
+      // Admin can delete all records - no additional WHERE condition
+    } else {
+      // Unknown role - default to member behavior
+      query += ' AND r.staff_id = ?';
+      queryParams.push(userId);
+    }
+
+    const [records] = await pool.query(query, queryParams);
 
     if (records.length === 0) {
       return res.status(404).json({ error: 'レコードが見つからないか、削除する権限がありません。' });
@@ -1102,6 +1140,58 @@ const deleteRecord = async (req, res) => {
   } catch (error) {
     console.error('Error deleting record:', error);
     res.status(500).json({ error: 'Failed to delete record' });
+  }
+};
+
+// Update staff name
+const updateStaffName = async (req, res) => {
+  try {
+    const { recordId } = req.params;
+    const { staffName } = req.body;
+    
+    if (typeof staffName !== 'string') {
+      return res.status(400).json({ error: 'Invalid staff name data' });
+    }
+
+    const [result] = await pool.query(
+      'UPDATE records SET staff_name = ? WHERE id = ?',
+      [staffName, recordId]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Record not found' });
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error updating staff name:', error);
+    res.status(500).json({ error: 'Failed to update staff name' });
+  }
+};
+
+// Update memo
+const updateMemo = async (req, res) => {
+  try {
+    const { recordId } = req.params;
+    const { memo } = req.body;
+    
+    if (typeof memo !== 'string') {
+      return res.status(400).json({ error: 'Invalid memo data' });
+    }
+
+    const [result] = await pool.query(
+      'UPDATE records SET memo = ? WHERE id = ?',
+      [memo, recordId]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Record not found' });
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error updating memo:', error);
+    res.status(500).json({ error: 'Failed to update memo' });
   }
 };
 
@@ -1133,6 +1223,8 @@ export {
   downloadSTT,
   downloadSkillSheet,
   updateStaffId,
+  updateStaffName,
+  updateMemo,
   updateSkillSheet,
   getSkillSheet,
   updateSalesforce,

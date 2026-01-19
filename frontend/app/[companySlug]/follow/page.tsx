@@ -38,7 +38,7 @@ interface Record {
   fileId: string;
   staffId: string;
   userName?: string;
-  skillSheet: boolean;
+  skillSheet: string | { [key: string]: any } | null;
   salesforce: string[] | null;
   lor: string | null;
   stt: boolean;
