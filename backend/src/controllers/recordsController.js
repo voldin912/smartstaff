@@ -110,6 +110,8 @@ const getRecords = async (req, res) => {
         DATE_FORMAT(r.date, '%Y-%m-%d %H:%i:%s') as date,
         r.file_id as fileId, 
         r.employee_id as staffId, 
+        r.staff_name as staffName,
+        r.memo,
         r.stt,
         r.skill_sheet as skillSheet,
         r.lor,
@@ -1105,6 +1107,58 @@ const deleteRecord = async (req, res) => {
   }
 };
 
+// Update staff name
+const updateStaffName = async (req, res) => {
+  try {
+    const { recordId } = req.params;
+    const { staffName } = req.body;
+    
+    if (typeof staffName !== 'string') {
+      return res.status(400).json({ error: 'Invalid staff name data' });
+    }
+
+    const [result] = await pool.query(
+      'UPDATE records SET staff_name = ? WHERE id = ?',
+      [staffName, recordId]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Record not found' });
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error updating staff name:', error);
+    res.status(500).json({ error: 'Failed to update staff name' });
+  }
+};
+
+// Update memo
+const updateMemo = async (req, res) => {
+  try {
+    const { recordId } = req.params;
+    const { memo } = req.body;
+    
+    if (typeof memo !== 'string') {
+      return res.status(400).json({ error: 'Invalid memo data' });
+    }
+
+    const [result] = await pool.query(
+      'UPDATE records SET memo = ? WHERE id = ?',
+      [memo, recordId]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Record not found' });
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error updating memo:', error);
+    res.status(500).json({ error: 'Failed to update memo' });
+  }
+};
+
 // Auto-delete records older than specified months (default: 4 months)
 const autoDeleteOldRecords = async () => {
   try {
@@ -1133,6 +1187,8 @@ export {
   downloadSTT,
   downloadSkillSheet,
   updateStaffId,
+  updateStaffName,
+  updateMemo,
   updateSkillSheet,
   getSkillSheet,
   updateSalesforce,

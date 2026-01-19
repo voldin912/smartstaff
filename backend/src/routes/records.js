@@ -1,6 +1,6 @@
 import express from 'express';
 import { auth } from '../middleware/auth.js';
-import { getRecords, uploadAudio, testAPI, downloadSTT, downloadSkillSheet, updateStaffId, updateSkillSheet, getSkillSheet, updateSalesforce, downloadSalesforce, downloadBulk, updateLoR, deleteRecord } from '../controllers/recordsController.js';
+import { getRecords, uploadAudio, testAPI, downloadSTT, downloadSkillSheet, updateStaffId, updateStaffName, updateMemo, updateSkillSheet, getSkillSheet, updateSalesforce, downloadSalesforce, downloadBulk, updateLoR, deleteRecord } from '../controllers/recordsController.js';
 import { upload } from '../middleware/upload.js';
 
 const router = express.Router();
@@ -25,6 +25,12 @@ router.put('/:recordId/skill-sheet', auth, updateSkillSheet);
 
 // Update staffId
 router.put('/:recordId/staff-id', auth, updateStaffId);
+
+// Update staff name
+router.put('/:recordId/staff-name', auth, updateStaffName);
+
+// Update memo
+router.put('/:recordId/memo', auth, updateMemo);
 
 // Update Salesforce data
 router.put('/:recordId/salesforce', auth, updateSalesforce);

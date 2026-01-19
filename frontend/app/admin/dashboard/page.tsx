@@ -37,10 +37,12 @@ interface Record {
   date: string;
   fileId: string;
   staffId: string;
+  staffName?: string;
   userName?: string;
   skillSheet: boolean;
   salesforce: string[] | null;
   lor: string | null;
+  memo?: string | null;
   stt: boolean;
   bulk: boolean;
   skills?: string[];
@@ -170,12 +172,38 @@ export default function DashboardPage() {
     setTimeout(() => staffNameInputRef.current?.focus(), 0);
   };
 
-  const handleStaffNameBlur = async (id: number, record: Record) => {
+  const handleStaffNameBlur = async (id: number) => {
     setEditingStaffName(null);
     const trimmedInput = staffNameInput?.trim() || '';
-    // Note: Updating Staff Name would require updating the user's name via /api/users/:userId
-    // For now, we'll just close the edit mode
-    // TODO: Implement backend endpoint or use existing users endpoint if staff_id is available
+    if (!trimmedInput) return;
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/records/${id}/staff-name`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ staffName: trimmedInput }),
+      });
+      if (res.ok) {
+        fetchRecords();
+        setAlertMessage({
+          type: 'success',
+          message: 'スタッフ名を更新しました。'
+        });
+      } else {
+        setAlertMessage({
+          type: 'error',
+          message: 'スタッフ名の更新に失敗しました。'
+        });
+      }
+    } catch (e) {
+      setAlertMessage({
+        type: 'error',
+        message: 'スタッフ名の更新中にエラーが発生しました。'
+      });
+    }
   };
 
   const handleEditMemo = (id: number, currentMemo: string | null) => {
@@ -189,13 +217,13 @@ export default function DashboardPage() {
     const trimmedInput = memoInput?.trim() || '';
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/records/${id}/lor`, {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/records/${id}/memo`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ lor: trimmedInput }),
+        body: JSON.stringify({ memo: trimmedInput }),
       });
       if (res.ok) {
         fetchRecords();
@@ -203,11 +231,16 @@ export default function DashboardPage() {
           type: 'success',
           message: 'メモを更新しました。'
         });
+      } else {
+        setAlertMessage({
+          type: 'error',
+          message: 'メモの更新に失敗しました。'
+        });
       }
     } catch (e) {
       setAlertMessage({
         type: 'error',
-        message: 'メモの更新に失敗しました。'
+        message: 'メモの更新中にエラーが発生しました。'
       });
     }
   };
@@ -1162,15 +1195,15 @@ export default function DashboardPage() {
                                   ref={staffNameInputRef}
                                   value={staffNameInput}
                                   onChange={e => setStaffNameInput(e.target.value)}
-                                  onBlur={() => handleStaffNameBlur(rec.id, rec)}
+                                  onBlur={() => handleStaffNameBlur(rec.id)}
                                   className="border border-gray-300 rounded-[5px] px-2 py-1 text-center"
                                 />
                               ) : (
                                 <>
-                                  <button className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center flex-shrink-0" title="Edit Staff Name" onClick={() => handleEditStaffName(rec.id, rec.userName || '')}>
+                                  <button className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center flex-shrink-0" title="Edit Staff Name" onClick={() => handleEditStaffName(rec.id, rec.staffName || '')}>
                                     <Image src="/edit1.svg" alt="Edit Staff Name" width={20} height={20} className="rounded-[5px]" />
                                   </button>
-                                  <span className="truncate">{rec.userName || ''}</span>
+                                  <span className="truncate">{rec.staffName || ''}</span>
                                 </>
                               )}
                             </div>
@@ -1191,14 +1224,14 @@ export default function DashboardPage() {
                               />
                             ) : (
                               <div className="flex items-center gap-x-2">
-                                <button className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center flex-shrink-0" title="Edit Memo" onClick={() => handleEditMemo(rec.id, rec.lor)}>
+                                <button className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center flex-shrink-0" title="Edit Memo" onClick={() => handleEditMemo(rec.id, rec.memo || null)}>
                                   <Image src="/edit1.svg" alt="Edit Memo" width={20} height={20} className="rounded-[5px]" />
                                 </button>
                                 <span 
                                   className="truncate" 
-                                  title={rec.lor || ''}
+                                  title={rec.memo || ''}
                                 >
-                                  {truncateMemo(rec.lor)}
+                                  {truncateMemo(rec.memo)}
                                 </span>
                               </div>
                             )}
