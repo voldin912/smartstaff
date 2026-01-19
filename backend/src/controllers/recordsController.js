@@ -1081,17 +1081,38 @@ const updateLoR = async (req, res) => {
   }
 };
 
-// Delete record (users can only delete their own records)
+// Delete record with role-based permissions
 const deleteRecord = async (req, res) => {
   try {
     const { recordId } = req.params;
-    const { id: userId } = req.user;
+    const { role, company_id, id: userId } = req.user;
 
-    // Check if record exists and belongs to the user
-    const [records] = await pool.query(
-      'SELECT * FROM records WHERE id = ? AND staff_id = ?',
-      [recordId, userId]
-    );
+    let query = `
+      SELECT r.*, u.company_id as recordCompanyId
+      FROM records r
+      LEFT JOIN users u ON r.staff_id = u.id
+      WHERE r.id = ?
+    `;
+    const queryParams = [recordId];
+
+    // Apply role-based access control
+    if (role === 'member') {
+      // Members can only delete their own records
+      query += ' AND r.staff_id = ?';
+      queryParams.push(userId);
+    } else if (role === 'company-manager') {
+      // Company managers can delete records from their company
+      query += ' AND u.company_id = ?';
+      queryParams.push(company_id);
+    } else if (role === 'admin') {
+      // Admin can delete all records - no additional WHERE condition
+    } else {
+      // Unknown role - default to member behavior
+      query += ' AND r.staff_id = ?';
+      queryParams.push(userId);
+    }
+
+    const [records] = await pool.query(query, queryParams);
 
     if (records.length === 0) {
       return res.status(404).json({ error: 'レコードが見つからないか、削除する権限がありません。' });
