@@ -71,6 +71,68 @@ export const initializeDatabase = async () => {
     await pool.query(userTable);
     await pool.query(careerMappingsTable);
 
+    // Create records table
+    const recordsTable = `
+      CREATE TABLE IF NOT EXISTS records (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        file_id VARCHAR(255),
+        staff_id INT,
+        employee_id VARCHAR(255),
+        staff_name VARCHAR(255) DEFAULT '',
+        memo TEXT DEFAULT '',
+        audio_file_path VARCHAR(500),
+        stt TEXT,
+        skill_sheet LONGTEXT,
+        lor LONGTEXT,
+        salesforce LONGTEXT,
+        skills LONGTEXT,
+        hope LONGTEXT,
+        date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (staff_id) REFERENCES users(id) ON DELETE SET NULL
+      )
+    `;
+
+    // Create follows table
+    const followsTable = `
+      CREATE TABLE IF NOT EXISTS follows (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        file_id VARCHAR(255),
+        staff_id INT,
+        employee_id VARCHAR(255),
+        audio_file_path VARCHAR(500),
+        stt TEXT,
+        skill_sheet LONGTEXT,
+        lor LONGTEXT,
+        salesforce LONGTEXT,
+        skills LONGTEXT,
+        hope LONGTEXT,
+        date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (staff_id) REFERENCES users(id) ON DELETE SET NULL
+      )
+    `;
+
+    await pool.query(recordsTable);
+    await pool.query(followsTable);
+
+    // Migration: Add staff_name and memo columns to records table if they don't exist
+    try {
+      await pool.query('SELECT staff_name FROM records LIMIT 1');
+    } catch (error) {
+      // staff_name column doesn't exist, add it
+      await pool.query('ALTER TABLE records ADD COLUMN staff_name VARCHAR(255) DEFAULT "" AFTER employee_id');
+    }
+
+    try {
+      await pool.query('SELECT memo FROM records LIMIT 1');
+    } catch (error) {
+      // memo column doesn't exist, add it
+      await pool.query('ALTER TABLE records ADD COLUMN memo TEXT DEFAULT "" AFTER staff_name');
+    }
+
     // Check if staff_memo column exists, if not add it (migration for existing installations)
     try {
       await pool.query('SELECT staff_memo FROM career_mappings LIMIT 1');

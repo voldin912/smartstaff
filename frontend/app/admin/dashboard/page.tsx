@@ -212,7 +212,6 @@ export default function DashboardPage() {
     }
   };
 
-
   const handlePageChange = (page: number) => {
     setCurrentPage(page);
   };
