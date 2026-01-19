@@ -227,10 +227,21 @@ const getTxtPathFromMp3 = (mp3Path) => {
 const uploadAudio = async (req, res) => {
   try {
     if (!req.file) {
+      console.error('Upload error: No file in request');
+      console.error('Request body:', req.body);
+      console.error('Request files:', req.files);
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
     const { staffId, fileId } = req.body;
+    const userId = req.user.id; // Get the actual user ID from auth middleware
+    
+    if (!staffId || !fileId) {
+      console.error('Upload error: Missing required fields');
+      console.error('Request body:', req.body);
+      console.error('staffId:', staffId, 'fileId:', fileId);
+      return res.status(400).json({ error: 'Missing required fields: staffId and fileId are required' });
+    }
     let audioFilePath = req.file.path;
     const ext = path.extname(audioFilePath).toLowerCase();
     // If file is .m4a, convert to .wav
@@ -402,8 +413,8 @@ const uploadAudio = async (req, res) => {
 
         const [result] = await pool.query(query, [
           fileId, 
-          staffId, 
-          staffId,
+          userId,  // Use req.user.id instead of staffId for staff_id
+          staffId, // This is employee_id (string)
           audioFilePath, 
           combinedText, 
           outputs.skillsheet, 
@@ -420,11 +431,15 @@ const uploadAudio = async (req, res) => {
             DATE_FORMAT(date, '%Y-%m-%d %H:%i:%s') as date,
             file_id as fileId, 
             employee_id as staffId, 
+            staff_name as staffName,
+            memo,
             audio_file_path as audioFilePath,
             stt,
             skill_sheet as skillSheet,
             lor,
-            salesforce as salesforce
+            salesforce as salesforce,
+            skills,
+            hope
           FROM records 
           WHERE id = ?`,
           [result.insertId]

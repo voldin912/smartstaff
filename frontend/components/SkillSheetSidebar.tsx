@@ -25,6 +25,21 @@ const cleanJsonString = (str: string) => {
   return str.replace(/```json\n?|\n?```/g, '').trim();
 };
 
+const isValidJson = (str: string): boolean => {
+  if (typeof str !== 'string') return false;
+  const trimmed = str.trim();
+  // Check if it starts with { or [ (valid JSON structure)
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
+    return false;
+  }
+  try {
+    JSON.parse(trimmed);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 const SkillSheetSidebar = ({ open, onClose, skillSheetData, skills, onSave }: SkillSheetSidebarProps & { skills?: string | any }) => {
   const [localData, setLocalData] = useState<SkillSheetData>({});
   const [gogakuryoku, setGogakuryoku] = useState<string>('');
@@ -36,8 +51,44 @@ const SkillSheetSidebar = ({ open, onClose, skillSheetData, skills, onSave }: Sk
   useEffect(() => {
     if (skillSheetData) {
       try {
-        const cleanedData = cleanJsonString(skillSheetData);
-        const parsedData = typeof cleanedData === 'string' ? JSON.parse(cleanedData) : cleanedData;
+        // Handle different data types
+        let parsedData: any;
+        
+        if (typeof skillSheetData === 'string') {
+          // Check if it's valid JSON before parsing
+          const cleanedData = cleanJsonString(skillSheetData);
+          
+          // If it's not valid JSON (e.g., error message), treat as empty
+          if (!isValidJson(cleanedData)) {
+            console.warn('skillSheetData is not valid JSON, treating as empty:', cleanedData.substring(0, 100));
+            setLocalData({});
+            setInitialData('{}');
+            setHasChanges(false);
+            return;
+          }
+          
+          parsedData = JSON.parse(cleanedData);
+        } else if (typeof skillSheetData === 'object' && skillSheetData !== null) {
+          // Already an object, use directly
+          parsedData = skillSheetData;
+        } else {
+          // Invalid type, treat as empty
+          console.warn('skillSheetData has invalid type:', typeof skillSheetData);
+          setLocalData({});
+          setInitialData('{}');
+          setHasChanges(false);
+          return;
+        }
+        
+        // Validate that parsedData is an object
+        if (typeof parsedData !== 'object' || parsedData === null || Array.isArray(parsedData)) {
+          console.warn('Parsed skillSheetData is not a valid object:', parsedData);
+          setLocalData({});
+          setInitialData('{}');
+          setHasChanges(false);
+          return;
+        }
+        
         console.log("parsedData", parsedData);
         const sanitizedData = Object.entries(parsedData).reduce((acc, [key, value]) => {
           // If value is an object (career entry), sanitize its fields
