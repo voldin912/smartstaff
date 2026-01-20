@@ -20,6 +20,7 @@ export type SkillSheet = string | SkillSheetData | null;
 
 export interface Record {
   id: number;
+  ownerId?: number;
   date: string;
   fileId: string;
   staffId: string;
@@ -29,7 +30,7 @@ export interface Record {
   salesforce: string[] | null;
   lor: string | null;
   memo?: string | null;
-  stt: boolean;
+  stt: string | null;
   bulk: boolean;
   skills?: string[];
   hope?: string | null;
