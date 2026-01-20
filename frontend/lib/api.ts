@@ -42,8 +42,8 @@ export const apiRequest = async <T = any>(
     };
     
     // Only set Content-Type if it's not FormData and not already set
-    if (!isFormData && !options.headers?.['Content-Type']) {
-      headers['Content-Type'] = 'application/json';
+    if (!isFormData && !(options.headers as Record<string, string>)?.['Content-Type']) {
+      (headers as HeadersInit & Record<string, string>)['Content-Type'] = 'application/json';
     }
 
     const response = await fetch(url, {
