@@ -101,12 +101,13 @@ ffmpeg.setFfmpegPath(ffmpegPath);
 const getRecords = async (req, res) => {
   try {
     const { role, company_id, id: userId } = req.user;
-    
+
     console.log('User info:', { role, company_id, userId });
-    
+
     let query = `
       SELECT 
         r.id, 
+        r.staff_id as ownerId,
         DATE_FORMAT(r.date, '%Y-%m-%d %H:%i:%s') as date,
         r.file_id as fileId, 
         r.employee_id as staffId, 
@@ -129,10 +130,10 @@ const getRecords = async (req, res) => {
 
     // Apply role-based filtering
     if (role === 'member') {
-      // Members can only see their own records
-      query += ' WHERE r.staff_id = ?';
-      queryParams.push(userId);
-      console.log('Filtering for member - staff_id:', userId);
+      // Members can see records from all users in the same company
+      query += ' WHERE u.company_id = ?';
+      queryParams.push(company_id);
+      console.log('Filtering for member - company_id:', company_id);
     } else if (role === 'company-manager') {
       // Company managers can see records from their company
       query += ' WHERE u.company_id = ?';
@@ -149,13 +150,13 @@ const getRecords = async (req, res) => {
     }
 
     query += ' ORDER BY r.date DESC';
-    
+
     console.log('Final query:', query);
     console.log('Query params:', queryParams);
 
     const [records] = await pool.query(query, queryParams);
     console.log('Records found:', records.length);
-    
+
     res.json(records);
   } catch (error) {
     console.error('Error fetching records:', error);
@@ -209,7 +210,7 @@ const testAPI = async (req, res) => {
     }
   );
   console.log(difyResponse);
-  const {status, outputs } = difyResponse.data.data;
+  const { status, outputs } = difyResponse.data.data;
   if (status === 'succeeded') {
     console.log(outputs.response);
     res.json({ message: outputs.response });
@@ -235,7 +236,7 @@ const uploadAudio = async (req, res) => {
 
     const { staffId, fileId } = req.body;
     const userId = req.user.id; // Get the actual user ID from auth middleware
-    
+
     if (!staffId || !fileId) {
       console.error('Upload error: Missing required fields');
       console.error('Request body:', req.body);
@@ -258,7 +259,7 @@ const uploadAudio = async (req, res) => {
       fs.unlinkSync(audioFilePath);
       audioFilePath = wavPath;
     }
-    
+
     // Function to split audio into chunks
     const splitAudioIntoChunks = async (filePath, chunkSize = 4 * 1024 * 1024) => {
       const fileBuffer = fs.readFileSync(filePath);
@@ -275,7 +276,7 @@ const uploadAudio = async (req, res) => {
       fs.writeFileSync(tempFilePath, chunk);
 
       try {
-        
+
         const tempFileId = await uploadFile(tempFilePath);
         // console.log("tempFileId", tempFileId);
         // Process chunk with Dify workflow
@@ -313,19 +314,19 @@ const uploadAudio = async (req, res) => {
 
     // Split audio into chunks and process them
     const chunks = await splitAudioIntoChunks(audioFilePath);
-    
+
     // Process chunks sequentially with waiting time between each chunk
     const chunkResults = [];
     for (let i = 0; i < chunks.length; i++) {
       const result = await processChunk(chunks[i], i);
       chunkResults.push(result);
-      
+
       // Wait 0.5 seconds between each chunk processing
       if (i < chunks.length - 1) {
         await new Promise(resolve => setTimeout(resolve, 500));
       }
     }
-    
+
     // Combine all chunk results
     console.log("chunk len", chunks.length)
     const combinedText = chunkResults.join('\n');
@@ -336,12 +337,12 @@ const uploadAudio = async (req, res) => {
     // Process combined text with main Dify workflow
     try {
       const txtFileId = await uploadFile(txtFilePath);
-      
+
       // Retry logic for Dify API calls
       let difyResponse;
       let retryCount = 0;
       const maxRetries = 3;
-      
+
       while (retryCount < maxRetries) {
         try {
           difyResponse = await axios.post(
@@ -368,11 +369,11 @@ const uploadAudio = async (req, res) => {
         } catch (error) {
           retryCount++;
           console.error(`Dify API attempt ${retryCount} failed:`, error.message);
-          
+
           if (retryCount >= maxRetries) {
             throw error; // Re-throw the error if all retries failed
           }
-          
+
           // Wait before retry (exponential backoff)
           const waitTime = Math.pow(2, retryCount) * 1000; // 2s, 4s, 8s
           console.log(`Waiting ${waitTime}ms before retry ${retryCount + 1}...`);
@@ -380,26 +381,26 @@ const uploadAudio = async (req, res) => {
         }
       }
 
-      const {status, outputs } = difyResponse.data.data;
+      const { status, outputs } = difyResponse.data.data;
       console.log("outputs", outputs)
       let skillsheetData = {};
       if (status === 'succeeded') {
         // Clean and parse skillsheet if it's a string
-        const cleanSkillsheet = typeof outputs.skillsheet === 'string' 
+        const cleanSkillsheet = typeof outputs.skillsheet === 'string'
           ? outputs.skillsheet.replace(/```json\n?|\n?```/g, '').trim()
           : outputs.skillsheet;
-        
-          if (typeof cleanSkillsheet === "string") {
-            try {
-              skillsheetData = JSON.parse(cleanSkillsheet);
-            } catch (e) {
-              console.error("Invalid JSON in cleanSkillsheet:", e);
-              skillsheetData = {}; // or null / fallback value
-            }
-          } else {
-            skillsheetData = cleanSkillsheet;
+
+        if (typeof cleanSkillsheet === "string") {
+          try {
+            skillsheetData = JSON.parse(cleanSkillsheet);
+          } catch (e) {
+            console.error("Invalid JSON in cleanSkillsheet:", e);
+            skillsheetData = {}; // or null / fallback value
           }
-        
+        } else {
+          skillsheetData = cleanSkillsheet;
+        }
+
         // Extract work content array from skillsheet
         const workContentArray = Object.values(skillsheetData).map(career => career['summary']);
         console.log("workContentArray", workContentArray);
@@ -412,12 +413,12 @@ const uploadAudio = async (req, res) => {
       `;
 
         const [result] = await pool.query(query, [
-          fileId, 
+          fileId,
           userId,  // Use req.user.id instead of staffId for staff_id
           staffId, // This is employee_id (string)
-          audioFilePath, 
-          combinedText, 
-          outputs.skillsheet, 
+          audioFilePath,
+          combinedText,
+          outputs.skillsheet,
           outputs.lor,
           JSON.stringify(workContentArray),
           outputs.skills,
@@ -452,21 +453,21 @@ const uploadAudio = async (req, res) => {
       }
     } catch (difyError) {
       console.error('Error calling Dify API:', difyError);
-      
+
       if (difyError.code === 'ECONNABORTED' || difyError.response?.status === 504) {
-        res.status(504).json({ 
+        res.status(504).json({
           error: 'Dify API Timeout',
           message: 'The Dify API took too long to respond. Please try again with a smaller file or contact support.',
           details: 'Gateway timeout - the server did not respond within the expected time'
         });
       } else if (difyError.response) {
-        res.status(difyError.response.status).json({ 
+        res.status(difyError.response.status).json({
           error: 'Dify API Error',
           message: `Dify API returned error: ${difyError.response.status} ${difyError.response.statusText}`,
           details: difyError.response.data
         });
       } else {
-        res.status(500).json({ 
+        res.status(500).json({
           error: 'Failed to process audio file',
           message: 'An unexpected error occurred while processing the audio file',
           details: difyError.message
@@ -534,7 +535,7 @@ const downloadSTT = async (req, res) => {
 function drawSolidLine(doc, shouldStroke = false) {
   const { left, right } = doc.page.margins;
   const y = doc.y + 5;
-  if(shouldStroke) {
+  if (shouldStroke) {
     doc.lineWidth(1);
     doc.moveTo(left, y).lineTo(doc.page.width - right, y).stroke();
   }
@@ -556,7 +557,7 @@ const downloadSkillSheet = async (req, res) => {
       return res.status(404).json({ error: 'Record not found' });
     }
     // Clean and parse skillsheet if it's a string
-    const cleanSkillsheet = typeof records[0].skill_sheet === 'string' 
+    const cleanSkillsheet = typeof records[0].skill_sheet === 'string'
       ? records[0].skill_sheet.replace(/```json\n?|\n?```/g, '').trim()
       : records[0].skill_sheet;
 
@@ -572,7 +573,7 @@ const downloadSkillSheet = async (req, res) => {
     } else {
       skillSheet = cleanSkillsheet;
     }
-    
+
     const fileId = records[0].file_id;
     const staffId = records[0].employee_id;
     // Parse and clean skills JSON
@@ -589,9 +590,9 @@ const downloadSkillSheet = async (req, res) => {
     }
 
     // Create PDF with wider content area
-    const doc = new PDFDocument({ 
+    const doc = new PDFDocument({
       size: 'A4',
-      margins: { 
+      margins: {
         top: 100,
         bottom: 100,
         left: 40,
@@ -706,7 +707,35 @@ const downloadSkillSheet = async (req, res) => {
 const updateStaffId = async (req, res) => {
   try {
     const { recordId } = req.params;
+    const { role, company_id, id: userId } = req.user;
     const { staffId } = req.body;
+
+    // Check permission: members can edit records from same company
+    let permissionQuery = `
+      SELECT r.*, u.company_id as recordCompanyId, r.staff_id as ownerId
+      FROM records r
+      LEFT JOIN users u ON r.staff_id = u.id
+      WHERE r.id = ?
+    `;
+    const permissionParams = [recordId];
+
+    if (role === 'member') {
+      // Members can edit records from same company
+      permissionQuery += ' AND u.company_id = ?';
+      permissionParams.push(company_id);
+    } else if (role === 'company-manager') {
+      // Company managers can edit records from their company
+      permissionQuery += ' AND u.company_id = ?';
+      permissionParams.push(company_id);
+    }
+    // Admin can edit all records - no additional condition
+
+    const [records] = await pool.query(permissionQuery, permissionParams);
+
+    if (records.length === 0) {
+      return res.status(403).json({ error: 'このレコードを編集する権限がありません。' });
+    }
+
     if (!staffId) {
       return res.status(400).json({ error: 'staffId is required' });
     }
@@ -727,7 +756,35 @@ const updateStaffId = async (req, res) => {
 const updateSkillSheet = async (req, res) => {
   try {
     const { recordId } = req.params;
+    const { role, company_id, id: userId } = req.user;
     const { skill_sheet, skills } = req.body;
+
+    // Check permission: members can edit records from same company
+    let permissionQuery = `
+      SELECT r.*, u.company_id as recordCompanyId, r.staff_id as ownerId
+      FROM records r
+      LEFT JOIN users u ON r.staff_id = u.id
+      WHERE r.id = ?
+    `;
+    const permissionParams = [recordId];
+
+    if (role === 'member') {
+      // Members can edit records from same company
+      permissionQuery += ' AND u.company_id = ?';
+      permissionParams.push(company_id);
+    } else if (role === 'company-manager') {
+      // Company managers can edit records from their company
+      permissionQuery += ' AND u.company_id = ?';
+      permissionParams.push(company_id);
+    }
+    // Admin can edit all records - no additional condition
+
+    const [records] = await pool.query(permissionQuery, permissionParams);
+
+    if (records.length === 0) {
+      return res.status(403).json({ error: 'このレコードを編集する権限がありません。' });
+    }
+
     console.log("skillSheet", skill_sheet);
     console.log("skills", skills);
     if (!skill_sheet || typeof skill_sheet !== 'object') {
@@ -761,8 +818,35 @@ const getSkillSheet = async (req, res) => {
 const updateSalesforce = async (req, res) => {
   try {
     const { recordId } = req.params;
-    const {salesforceData, hope} = req.body;
-    // console.log("salesforceData", salesforceData);  
+    const { role, company_id, id: userId } = req.user;
+    const { salesforceData, hope } = req.body;
+
+    // Check permission: members can edit records from same company
+    let permissionQuery = `
+      SELECT r.*, u.company_id as recordCompanyId, r.staff_id as ownerId
+      FROM records r
+      LEFT JOIN users u ON r.staff_id = u.id
+      WHERE r.id = ?
+    `;
+    const permissionParams = [recordId];
+
+    if (role === 'member') {
+      // Members can edit records from same company
+      permissionQuery += ' AND u.company_id = ?';
+      permissionParams.push(company_id);
+    } else if (role === 'company-manager') {
+      // Company managers can edit records from their company
+      permissionQuery += ' AND u.company_id = ?';
+      permissionParams.push(company_id);
+    }
+    // Admin can edit all records - no additional condition
+
+    const [records] = await pool.query(permissionQuery, permissionParams);
+
+    if (records.length === 0) {
+      return res.status(403).json({ error: 'このレコードを編集する権限がありません。' });
+    }
+
     if (!Array.isArray(salesforceData)) {
       return res.status(400).json({ error: 'Invalid salesforce data' });
     }
@@ -846,9 +930,9 @@ const downloadBulk = async (req, res) => {
       return res.status(404).json({ error: 'Record not found' });
     }
     const { file_id, audio_file_path, skill_sheet, salesforce, employee_id, skills, stt, hope } = records[0];
-    
+
     // Clean and parse skillsheet if it's a string
-    const cleanSkillsheet = typeof skill_sheet === 'string' 
+    const cleanSkillsheet = typeof skill_sheet === 'string'
       ? skill_sheet.replace(/```json\n?|\n?```/g, '').trim()
       : skill_sheet;
 
@@ -884,9 +968,9 @@ const downloadBulk = async (req, res) => {
     // Encode the filename to handle special characters
     const encodedFilename = encodeURIComponent(`一括データ-${file_id}.zip`);
     res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodedFilename}`);
-    
+
     const archive = archiver('zip', { zlib: { level: 9 } });
-    
+
     // Handle archive errors
     archive.on('error', (err) => {
       console.error('Archive error:', err);
@@ -933,9 +1017,9 @@ const downloadBulk = async (req, res) => {
     archive.append(sttPDF, { name: `STT-${file_id}.pdf` });
 
     // 3. Add skillsheet PDF
-    const skillSheetPDF = new PDFDocument({ 
+    const skillSheetPDF = new PDFDocument({
       size: 'A4',
-      margins: { 
+      margins: {
         top: 100,
         bottom: 100,
         left: 40,
@@ -1012,7 +1096,7 @@ const downloadBulk = async (req, res) => {
         // Split the skills string by newlines and add each skill on a new line
         const skills = typeof skillsData['スキル'] === 'string' && skillsData['スキル'].includes('\n')
           ? skillsData['スキル'].split('\n')
-          : Array.isArray(skillsData['スキル']) 
+          : Array.isArray(skillsData['スキル'])
             ? skillsData['スキル']
             : [];
         skills.forEach(skill => {
@@ -1074,7 +1158,34 @@ const downloadBulk = async (req, res) => {
 const updateLoR = async (req, res) => {
   try {
     const { recordId } = req.params;
+    const { role, company_id, id: userId } = req.user;
     const { lor } = req.body;
+
+    // Check permission: members can edit records from same company
+    let permissionQuery = `
+      SELECT r.*, u.company_id as recordCompanyId, r.staff_id as ownerId
+      FROM records r
+      LEFT JOIN users u ON r.staff_id = u.id
+      WHERE r.id = ?
+    `;
+    const permissionParams = [recordId];
+
+    if (role === 'member') {
+      // Members can edit records from same company
+      permissionQuery += ' AND u.company_id = ?';
+      permissionParams.push(company_id);
+    } else if (role === 'company-manager') {
+      // Company managers can edit records from their company
+      permissionQuery += ' AND u.company_id = ?';
+      permissionParams.push(company_id);
+    }
+    // Admin can edit all records - no additional condition
+
+    const [records] = await pool.query(permissionQuery, permissionParams);
+
+    if (records.length === 0) {
+      return res.status(403).json({ error: 'このレコードを編集する権限がありません。' });
+    }
 
     if (typeof lor !== 'string') {
       return res.status(400).json({ error: 'Invalid LoR data' });
@@ -1147,22 +1258,57 @@ const deleteRecord = async (req, res) => {
 const updateStaffName = async (req, res) => {
   try {
     const { recordId } = req.params;
+    const { role, company_id, id: userId } = req.user;
     const { staffName } = req.body;
-    
-    if (typeof staffName !== 'string') {
-      return res.status(400).json({ error: 'Invalid staff name data' });
+
+    // Check permission: members can edit records from same company
+    let permissionQuery = `
+      SELECT r.*, u.company_id as recordCompanyId, r.staff_id as ownerId
+      FROM records r
+      LEFT JOIN users u ON r.staff_id = u.id
+      WHERE r.id = ?
+    `;
+    const permissionParams = [recordId];
+
+    if (role === 'member') {
+      // Members can edit records from same company
+      permissionQuery += ' AND u.company_id = ?';
+      permissionParams.push(company_id);
+    } else if (role === 'company-manager') {
+      // Company managers can edit records from their company
+      permissionQuery += ' AND u.company_id = ?';
+      permissionParams.push(company_id);
+    }
+    // Admin can edit all records - no additional condition
+
+    const [records] = await pool.query(permissionQuery, permissionParams);
+
+    if (records.length === 0) {
+      return res.status(403).json({ error: 'このレコードを編集する権限がありません。' });
     }
 
-    const [result] = await pool.query(
-      'UPDATE records SET staff_name = ? WHERE id = ?',
-      [staffName, recordId]
-    );
+    try {
+      const { recordId } = req.params;
+      const { staffName } = req.body;
 
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ error: 'Record not found' });
+      if (typeof staffName !== 'string') {
+        return res.status(400).json({ error: 'Invalid staff name data' });
+      }
+
+      const [result] = await pool.query(
+        'UPDATE records SET staff_name = ? WHERE id = ?',
+        [staffName, recordId]
+      );
+
+      if (result.affectedRows === 0) {
+        return res.status(404).json({ error: 'Record not found' });
+      }
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error('Error updating staff name:', error);
+      res.status(500).json({ error: 'Failed to update staff name' });
     }
-
-    res.json({ success: true });
   } catch (error) {
     console.error('Error updating staff name:', error);
     res.status(500).json({ error: 'Failed to update staff name' });
@@ -1174,7 +1320,7 @@ const updateMemo = async (req, res) => {
   try {
     const { recordId } = req.params;
     const { memo } = req.body;
-    
+
     if (typeof memo !== 'string') {
       return res.status(400).json({ error: 'Invalid memo data' });
     }
@@ -1200,14 +1346,14 @@ const autoDeleteOldRecords = async () => {
   try {
     // Get retention period from environment variable or use default of 4 months
     const months = parseInt(process.env.AUTO_DELETE_RETENTION_MONTHS || '4');
-    
+
     // Delete records older than specified months
     const [result] = await pool.query(
       `DELETE FROM records 
        WHERE date < DATE_SUB(NOW(), INTERVAL ? MONTH)`,
       [months]
     );
-    
+
     if (result.affectedRows > 0) {
       console.log(`Auto-deleted ${result.affectedRows} record(s) older than ${months} month(s)`);
     }

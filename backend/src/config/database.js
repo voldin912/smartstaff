@@ -71,6 +71,22 @@ export const initializeDatabase = async () => {
     await pool.query(userTable);
     await pool.query(careerMappingsTable);
 
+    // Create salesforce settings table
+    const salesforceTable = `
+      CREATE TABLE IF NOT EXISTS salesforce (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        company_id VARCHAR(255) NOT NULL UNIQUE,
+        base_url VARCHAR(500),
+        username VARCHAR(255),
+        password VARCHAR(255),
+        security_token VARCHAR(255),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      )
+    `;
+
+    await pool.query(salesforceTable);
+
     // Create records table
     const recordsTable = `
       CREATE TABLE IF NOT EXISTS records (
@@ -171,6 +187,26 @@ export const initializeDatabase = async () => {
         
         await pool.query('UPDATE companies SET slug = ? WHERE id = ?', [uniqueSlug, company.id]);
       }
+    }
+
+    // Check if salesforce table exists, if not create it (migration for existing installations)
+    try {
+      await pool.query('SELECT * FROM salesforce LIMIT 1');
+    } catch (error) {
+      // salesforce table doesn't exist, create it
+      const salesforceTable = `
+        CREATE TABLE IF NOT EXISTS salesforce (
+          id INT PRIMARY KEY AUTO_INCREMENT,
+          company_id VARCHAR(255) NOT NULL UNIQUE,
+          base_url VARCHAR(500),
+          username VARCHAR(255),
+          password VARCHAR(255),
+          security_token VARCHAR(255),
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        )
+      `;
+      await pool.query(salesforceTable);
     }
 
     // Create admin user if it doesn't exist

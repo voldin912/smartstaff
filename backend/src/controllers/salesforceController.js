@@ -513,8 +513,24 @@ function mergeFieldData(existingData, newData, newType) {
     result.lastUpdated.salesforce = now;
   } else if (newType === 'hope' || newType === 'salesMemo') {
     // Treat hope as salesMemo for consistency
-    logWithTimestamp('[mergeFieldData] ✓ Updating salesMemo data, PRESERVING skillSheet and salesforce');
-    result.salesMemo = newData;
+    // CRITICAL: Append new data to existing data instead of replacing (差分取り込み機能)
+    logWithTimestamp('[mergeFieldData] ✓ Updating salesMemo data with differential import (append mode)');
+    
+    if (existingData.salesMemo && existingData.salesMemo.trim()) {
+      // If existing salesMemo exists, append new data with separator
+      const separator = '\n\n---\n\n';
+      const timestamp = new Date().toLocaleString('ja-JP');
+      result.salesMemo = existingData.salesMemo + separator + `[追加日時: ${timestamp}]\n\n` + newData;
+      logWithTimestamp('[mergeFieldData] ✓ Appended new salesMemo to existing data', {
+        existingLength: existingData.salesMemo.length,
+        newLength: newData.length,
+        totalLength: result.salesMemo.length
+      });
+    } else {
+      // If no existing data, just use new data
+      result.salesMemo = newData;
+      logWithTimestamp('[mergeFieldData] ✓ No existing salesMemo, using new data only');
+    }
     result.lastUpdated.salesMemo = now;
   } else {
     logWithTimestamp('[mergeFieldData] ⚠️ Unknown type: ' + newType + ', preserving all existing data');
