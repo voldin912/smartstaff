@@ -97,13 +97,34 @@ const transcriptionQueue = new TranscriptionQueue();
 
 ffmpeg.setFfmpegPath(ffmpegPath);
 
-// Get all records
+// Get all records with pagination
 const getRecords = async (req, res) => {
   try {
     const { role, company_id, id: userId } = req.user;
+    
+    // Get pagination parameters from query string
+    const limit = parseInt(req.query.limit) || 50; // Default 50 records per page
+    const offset = parseInt(req.query.offset) || 0; // Default start from 0
+    
+    // Validate pagination parameters
+    if (limit < 1 || limit > 200) {
+      return res.status(400).json({ error: 'Limit must be between 1 and 200' });
+    }
+    if (offset < 0) {
+      return res.status(400).json({ error: 'Offset must be 0 or greater' });
+    }
 
     console.log('User info:', { role, company_id, userId });
+    console.log('Pagination params:', { limit, offset });
 
+    // Build base query for counting total records
+    let countQuery = `
+      SELECT COUNT(*) as total
+      FROM records r
+      LEFT JOIN users u ON r.staff_id = u.id
+    `;
+    
+    // Build main query for fetching records
     let query = `
       SELECT 
         r.id, 
@@ -127,17 +148,22 @@ const getRecords = async (req, res) => {
     `;
 
     const queryParams = [];
+    const countParams = [];
 
     // Apply role-based filtering
     if (role === 'member') {
       // Members can see records from all users in the same company
       query += ' WHERE u.company_id = ?';
+      countQuery += ' WHERE u.company_id = ?';
       queryParams.push(company_id);
+      countParams.push(company_id);
       console.log('Filtering for member - company_id:', company_id);
     } else if (role === 'company-manager') {
       // Company managers can see records from their company
       query += ' WHERE u.company_id = ?';
+      countQuery += ' WHERE u.company_id = ?';
       queryParams.push(company_id);
+      countParams.push(company_id);
       console.log('Filtering for company-manager - company_id:', company_id);
     } else if (role === 'admin') {
       console.log('Admin user - no filtering applied, showing all records');
@@ -146,18 +172,39 @@ const getRecords = async (req, res) => {
       console.log('Unknown role:', role);
       // Default to showing only user's own records for unknown roles
       query += ' WHERE r.staff_id = ?';
+      countQuery += ' WHERE r.staff_id = ?';
       queryParams.push(userId);
+      countParams.push(userId);
     }
 
     query += ' ORDER BY r.date DESC';
+    query += ' LIMIT ? OFFSET ?';
+    queryParams.push(limit, offset);
 
     console.log('Final query:', query);
     console.log('Query params:', queryParams);
 
+    // Execute both queries in parallel
     const [records] = await pool.query(query, queryParams);
-    console.log('Records found:', records.length);
+    const [countResult] = await pool.query(countQuery, countParams);
+    
+    const total = countResult[0].total;
+    const hasMore = offset + records.length < total;
 
-    res.json(records);
+    console.log('Records found:', records.length, 'Total:', total);
+
+    // Return paginated response
+    res.json({
+      records: records,
+      pagination: {
+        total: total,
+        limit: limit,
+        offset: offset,
+        hasMore: hasMore,
+        currentPage: Math.floor(offset / limit) + 1,
+        totalPages: Math.ceil(total / limit)
+      }
+    });
   } catch (error) {
     console.error('Error fetching records:', error);
     res.status(500).json({ error: 'Failed to fetch records' });

@@ -50,3 +50,17 @@ export interface AlertMessage {
   type: 'success' | 'error';
   message: string;
 }
+
+export interface PaginationInfo {
+  total: number;
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+  currentPage: number;
+  totalPages: number;
+}
+
+export interface PaginatedResponse<T> {
+  records: T[];
+  pagination: PaginationInfo;
+}
