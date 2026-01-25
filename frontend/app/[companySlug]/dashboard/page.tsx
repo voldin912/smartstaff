@@ -22,7 +22,9 @@ import RecordsTable from "@/components/dashboard/RecordsTable";
 
 export default function DashboardPage() {
   const { user } = useAuth();
-  const { records, loading, refetch } = useRecords();
+  const [currentPage, setCurrentPage] = useState(1);
+  const [rowsPerPage, setRowsPerPage] = useState(10);
+  const { records, pagination, loading, refetch } = useRecords(currentPage, rowsPerPage);
   
   const [alertMessage, setAlertMessage] = useState<AlertMessage | null>(null);
   const [isSkillSheetOpen, setIsSkillSheetOpen] = useState(false);
@@ -339,7 +341,12 @@ export default function DashboardPage() {
         <div className="bg-white rounded-[5px] shadow">
           <RecordsTable
             records={records}
+            pagination={pagination}
             loading={loading}
+            currentPage={currentPage}
+            rowsPerPage={rowsPerPage}
+            onPageChange={setCurrentPage}
+            onRowsPerPageChange={setRowsPerPage}
             onSkillSheetEdit={handleSkillSheetEdit}
             onSkillSheetDownload={handleSkillSheetDownload}
             onSalesforceEdit={handleSalesforceEdit}
