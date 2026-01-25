@@ -170,7 +170,7 @@ const getRecords = async (req, res) => {
       countParams.push(userId);
     }
 
-    query += ' ORDER BY r.date DESC';
+    query += ' ORDER BY r.created_at DESC';
     query += ' LIMIT ? OFFSET ?';
     queryParams.push(limit, offset);
 

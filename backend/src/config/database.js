@@ -105,15 +105,15 @@ export const initializeDatabase = async () => {
         salesforce LONGTEXT,
         skills LONGTEXT,
         hope LONGTEXT,
-        date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
         FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE SET NULL,
         INDEX idx_company_id (company_id),
-        INDEX idx_company_date (company_id, date DESC),
-        INDEX idx_user_date (user_id, date DESC),
-        INDEX idx_date (date DESC),
+        INDEX idx_company_created (company_id, created_at DESC),
+        INDEX idx_user_created (user_id, created_at DESC),
+        INDEX idx_created_at (created_at DESC),
         INDEX idx_user_id (user_id)
       )
     `;
@@ -132,11 +132,11 @@ export const initializeDatabase = async () => {
         salesforce LONGTEXT,
         skills LONGTEXT,
         hope LONGTEXT,
-        date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
-        INDEX idx_follows_user_date (user_id, date DESC)
+        INDEX idx_follows_user_created (user_id, created_at DESC)
       )
     `;
 
@@ -230,6 +230,9 @@ export const initializeDatabase = async () => {
     
     // Migration: Add performance indexes
     await addPerformanceIndexes();
+    
+    // Migration: Optimize sort columns (add NOT NULL, backfill NULLs, update indexes)
+    await optimizeSortColumns();
     await renameFollowsColumns();
 
     // Create admin user if it doesn't exist
@@ -523,21 +526,160 @@ const addPerformanceIndexes = async () => {
       }
     };
     
-    // Records table indexes
-    await createIndexIfNotExists('records', 'idx_company_date', '(company_id, date DESC)');
-    await createIndexIfNotExists('records', 'idx_user_date', '(user_id, date DESC)');
-    await createIndexIfNotExists('records', 'idx_date', '(date DESC)');
+    // Records table indexes (using created_at for sorting)
+    await createIndexIfNotExists('records', 'idx_company_created', '(company_id, created_at DESC)');
+    await createIndexIfNotExists('records', 'idx_user_created', '(user_id, created_at DESC)');
+    await createIndexIfNotExists('records', 'idx_created_at', '(created_at DESC)');
     await createIndexIfNotExists('records', 'idx_user_id', '(user_id)');
     
     // Users table indexes
     await createIndexIfNotExists('users', 'idx_company_user', '(company_id, id)');
     
-    // Follows table indexes (optional but recommended)
-    await createIndexIfNotExists('follows', 'idx_follows_user_date', '(user_id, date DESC)');
+    // Follows table indexes (using created_at for sorting)
+    await createIndexIfNotExists('follows', 'idx_follows_user_created', '(user_id, created_at DESC)');
     
     console.log('Performance indexes migration completed');
   } catch (error) {
     console.error('Error adding performance indexes:', error);
+    // Don't throw - allow initialization to continue
+  }
+};
+
+// Migration function: Optimize sort columns (add NOT NULL, backfill NULLs, update indexes)
+const optimizeSortColumns = async () => {
+  try {
+    const dbName = process.env.DB_NAME || 'company_management';
+    
+    // Step 1: Backfill NULL dates with created_at
+    try {
+      const [dateResult] = await pool.query(`
+        UPDATE records 
+        SET date = created_at 
+        WHERE date IS NULL AND created_at IS NOT NULL
+      `);
+      console.log(`Backfilled ${dateResult.affectedRows} NULL dates in records table`);
+    } catch (error) {
+      console.error('Error backfilling NULL dates in records:', error.message);
+    }
+    
+    try {
+      const [followsResult] = await pool.query(`
+        UPDATE follows 
+        SET date = created_at 
+        WHERE date IS NULL AND created_at IS NOT NULL
+      `);
+      console.log(`Backfilled ${followsResult.affectedRows} NULL dates in follows table`);
+    } catch (error) {
+      console.error('Error backfilling NULL dates in follows:', error.message);
+    }
+    
+    // Step 2: Add NOT NULL constraint to date and created_at columns
+    // Check if columns allow NULL
+    try {
+      const [recordsColumns] = await pool.query(`
+        SELECT COLUMN_NAME, IS_NULLABLE 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = ? 
+        AND TABLE_NAME = 'records' 
+        AND COLUMN_NAME IN ('date', 'created_at')
+      `, [dbName]);
+      
+      for (const col of recordsColumns) {
+        if (col.IS_NULLABLE === 'YES') {
+          try {
+            await pool.query(`ALTER TABLE records MODIFY COLUMN ${col.COLUMN_NAME} TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP`);
+            console.log(`Added NOT NULL constraint to records.${col.COLUMN_NAME}`);
+          } catch (error) {
+            console.error(`Error adding NOT NULL to records.${col.COLUMN_NAME}:`, error.message);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error checking records columns:', error.message);
+    }
+    
+    try {
+      const [followsColumns] = await pool.query(`
+        SELECT COLUMN_NAME, IS_NULLABLE 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = ? 
+        AND TABLE_NAME = 'follows' 
+        AND COLUMN_NAME IN ('date', 'created_at')
+      `, [dbName]);
+      
+      for (const col of followsColumns) {
+        if (col.IS_NULLABLE === 'YES') {
+          try {
+            await pool.query(`ALTER TABLE follows MODIFY COLUMN ${col.COLUMN_NAME} TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP`);
+            console.log(`Added NOT NULL constraint to follows.${col.COLUMN_NAME}`);
+          } catch (error) {
+            console.error(`Error adding NOT NULL to follows.${col.COLUMN_NAME}:`, error.message);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error checking follows columns:', error.message);
+    }
+    
+    // Step 3: Update indexes to use created_at instead of date
+    // Drop old indexes that use date
+    const dropIndexIfExists = async (tableName, indexName) => {
+      try {
+        const [indexes] = await pool.query(`
+          SELECT INDEX_NAME 
+          FROM INFORMATION_SCHEMA.STATISTICS 
+          WHERE TABLE_SCHEMA = ? 
+          AND TABLE_NAME = ? 
+          AND INDEX_NAME = ?
+        `, [dbName, tableName, indexName]);
+        
+        if (indexes.length > 0) {
+          await pool.query(`DROP INDEX ${indexName} ON ${tableName}`);
+          console.log(`Dropped index ${indexName} on ${tableName}`);
+        }
+      } catch (error) {
+        // Index might not exist, that's okay
+      }
+    };
+    
+    // Create new indexes with created_at
+    const createIndexIfNotExists = async (tableName, indexName, indexDefinition) => {
+      try {
+        const [indexes] = await pool.query(`
+          SELECT INDEX_NAME 
+          FROM INFORMATION_SCHEMA.STATISTICS 
+          WHERE TABLE_SCHEMA = ? 
+          AND TABLE_NAME = ? 
+          AND INDEX_NAME = ?
+        `, [dbName, tableName, indexName]);
+        
+        if (indexes.length === 0) {
+          await pool.query(`CREATE INDEX ${indexName} ON ${tableName} ${indexDefinition}`);
+          console.log(`Created index ${indexName} on ${tableName}`);
+        } else {
+          console.log(`Index ${indexName} on ${tableName} already exists`);
+        }
+      } catch (error) {
+        console.error(`Error creating index ${indexName} on ${tableName}:`, error.message);
+      }
+    };
+    
+    // Records table: Drop old date indexes, create new created_at indexes
+    await dropIndexIfExists('records', 'idx_company_date');
+    await dropIndexIfExists('records', 'idx_user_date');
+    await dropIndexIfExists('records', 'idx_date');
+    
+    await createIndexIfNotExists('records', 'idx_company_created', '(company_id, created_at DESC)');
+    await createIndexIfNotExists('records', 'idx_user_created', '(user_id, created_at DESC)');
+    await createIndexIfNotExists('records', 'idx_created_at', '(created_at DESC)');
+    
+    // Follows table: Drop old date index, create new created_at index
+    await dropIndexIfExists('follows', 'idx_follows_user_date');
+    await createIndexIfNotExists('follows', 'idx_follows_user_created', '(user_id, created_at DESC)');
+    
+    console.log('Sort column optimization completed');
+  } catch (error) {
+    console.error('Error optimizing sort columns:', error);
     // Don't throw - allow initialization to continue
   }
 };

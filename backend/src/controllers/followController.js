@@ -147,7 +147,7 @@ const getRecords = async (req, res) => {
       queryParams.push(userId);
     }
 
-    query += ' ORDER BY r.date DESC';
+    query += ' ORDER BY r.created_at DESC';
     
     console.log('Final query:', query);
     console.log('Query params:', queryParams);
