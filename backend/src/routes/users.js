@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import { body, validationResult } from 'express-validator';
 import { pool } from '../config/database.js';
 import { auth, authorize } from '../middleware/auth.js';
+import logger from '../utils/logger.js';
 
 const router = express.Router();
 
@@ -60,7 +61,7 @@ router.get('/', auth, async (req, res) => {
     
     res.json(users);
   } catch (error) {
-    console.error(error);
+    logger.error('Error in route handler', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -82,7 +83,7 @@ router.post(
     try {
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
-        console.error('Validation errors:', errors.array());
+        logger.warn('Validation errors', { errors: errors.array() });
         return res.status(400).json({ 
           message: 'Validation failed',
           errors: errors.array() 
@@ -127,7 +128,7 @@ router.post(
       delete newUser[0].password;
       res.status(201).json(newUser[0]);
     } catch (error) {
-      console.error('Error creating user:', error);
+      logger.error('Error creating user', error);
       res.status(500).json({ 
         message: 'Server error',
         error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
@@ -206,7 +207,7 @@ router.put(
       delete updatedUser[0].password;
       res.json(updatedUser[0]);
     } catch (error) {
-      console.error(error);
+      logger.error('Error in route handler', error);
       res.status(500).json({ message: 'Server error' });
     }
   }
@@ -239,7 +240,7 @@ router.delete('/:id', auth, async (req, res) => {
     await pool.query('DELETE FROM users WHERE id = ?', [id]);
     res.json({ message: 'User deleted successfully' });
   } catch (error) {
-    console.error(error);
+    logger.error('Error in route handler', error);
     res.status(500).json({ message: 'Server error' });
   }
 });

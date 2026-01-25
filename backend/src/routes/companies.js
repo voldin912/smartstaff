@@ -44,7 +44,7 @@ router.get('/', auth, authorize('admin'), async (req, res) => {
     const [companies] = await pool.query('SELECT * FROM companies ORDER BY name');
     res.json(companies);
   } catch (error) {
-    console.error(error);
+    logger.error('Error in route handler', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -90,7 +90,7 @@ router.post(
       const [newCompany] = await pool.query('SELECT * FROM companies WHERE id = ?', [result.insertId]);
       res.status(201).json(newCompany[0]);
     } catch (error) {
-      console.error(error);
+      logger.error('Error in route handler', error);
       res.status(500).json({ message: 'Server error' });
     }
   }
@@ -154,7 +154,7 @@ router.put(
       const [updatedCompany] = await pool.query('SELECT * FROM companies WHERE id = ?', [id]);
       res.json(updatedCompany[0]);
     } catch (error) {
-      console.error(error);
+      logger.error('Error in route handler', error);
       res.status(500).json({ message: 'Server error' });
     }
   }
@@ -175,7 +175,7 @@ router.delete('/:id', auth, authorize('admin'), async (req, res) => {
     await pool.query('DELETE FROM companies WHERE id = ?', [id]);
     res.json({ message: 'Company deleted successfully' });
   } catch (error) {
-    console.error(error);
+    logger.error('Error in route handler', error);
     res.status(500).json({ message: 'Server error' });
   }
 });

@@ -4,6 +4,7 @@ import jwt from 'jsonwebtoken';
 import { body, validationResult } from 'express-validator';
 import { pool } from '../config/database.js';
 import { auth } from '../middleware/auth.js';
+import logger from '../utils/logger.js';
 
 const router = express.Router();
 
@@ -49,7 +50,7 @@ router.post(
 
       res.status(201).json({ token });
     } catch (error) {
-      console.error(error);
+      logger.error('Error in route handler', error);
       res.status(500).json({ message: 'Server error' });
     }
   }
@@ -93,7 +94,7 @@ router.post(
 
       res.json({ token });
     } catch (error) {
-      console.error(error);
+      logger.error('Error in route handler', error);
       res.status(500).json({ message: 'Server error' });
     }
   }
@@ -127,7 +128,7 @@ router.get('/me', auth, async (req, res) => {
     
     res.json(user);
   } catch (error) {
-    console.error(error);
+    logger.error('Error in route handler', error);
     res.status(500).json({ message: 'Server error' });
   }
 });

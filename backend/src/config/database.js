@@ -1,5 +1,6 @@
 import mysql from 'mysql2/promise';
 import bcrypt from 'bcryptjs';
+import logger from '../utils/logger.js';
 
 const dbConfig = {
   host: process.env.DB_HOST || 'localhost',
@@ -245,9 +246,9 @@ export const initializeDatabase = async () => {
       );
     }
 
-    console.log('Database initialized successfully');
+    logger.info('Database initialized successfully');
   } catch (error) {
-    console.error('Error initializing database:', error);
+    logger.error('Error initializing database', error);
     throw error;
   }
 };
@@ -285,12 +286,12 @@ const addCompanyIdToRecords = async () => {
         FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE SET NULL
       `);
       
-      console.log('Added company_id column to records table');
+      logger.info('Added company_id column to records table');
     } else {
-      console.log('company_id column already exists in records table');
+      logger.debug('company_id column already exists in records table');
     }
   } catch (error) {
-    console.error('Error adding company_id to records:', error);
+    logger.error('Error adding company_id to records', error);
     // Don't throw - allow initialization to continue
   }
 };
@@ -322,7 +323,7 @@ const backfillCompanyId = async () => {
       WHERE r.company_id IS NULL AND u.company_id IS NOT NULL
     `);
     
-    console.log(`Backfilled company_id for ${result.affectedRows} existing records`);
+    logger.info(`Backfilled company_id for ${result.affectedRows} existing records`);
     
     // Check for records that couldn't be backfilled
     const [nullRecords] = await pool.query(`
@@ -332,10 +333,10 @@ const backfillCompanyId = async () => {
     `);
     
     if (nullRecords[0].count > 0) {
-      console.warn(`Warning: ${nullRecords[0].count} records have NULL company_id (${joinColumn} exists but user not found or user has no company_id)`);
+      logger.warn(`Warning: ${nullRecords[0].count} records have NULL company_id (${joinColumn} exists but user not found or user has no company_id)`);
     }
   } catch (error) {
-    console.error('Error backfilling company_id:', error);
+    logger.error('Error backfilling company_id', error);
     // Don't throw - allow initialization to continue
   }
 };
@@ -396,13 +397,13 @@ const renameRecordsColumns = async () => {
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
       `);
       
-      console.log('Renamed staff_id to user_id in records table');
+      logger.info('Renamed staff_id to user_id in records table');
     }
     
     // Step 2: Rename employee_id to staff_id (if it exists)
     if (hasOldEmployeeId && !hasNewStaffId) {
       await pool.query(`ALTER TABLE records CHANGE COLUMN employee_id staff_id VARCHAR(255)`);
-      console.log('Renamed employee_id to staff_id in records table');
+      logger.info('Renamed employee_id to staff_id in records table');
     }
     
     // Update staff_name column position if needed (should be after staff_id)
@@ -411,11 +412,11 @@ const renameRecordsColumns = async () => {
         await pool.query(`ALTER TABLE records MODIFY COLUMN staff_name VARCHAR(255) DEFAULT '' AFTER staff_id`);
       } catch (error) {
         // Column position update might fail, but that's okay
-        console.log('Note: Could not update staff_name column position');
+        logger.debug('Note: Could not update staff_name column position');
       }
     }
   } catch (error) {
-      console.error('Error renaming columns in records table:', error);
+      logger.error('Error renaming columns in records table', error);
     // Don't throw - allow initialization to continue
   }
 };
@@ -476,16 +477,16 @@ const renameFollowsColumns = async () => {
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
       `);
       
-      console.log('Renamed staff_id to user_id in follows table');
+      logger.info('Renamed staff_id to user_id in follows table');
     }
     
     // Step 2: Rename employee_id to staff_id (if it exists)
     if (hasOldEmployeeId && !hasNewStaffId) {
       await pool.query(`ALTER TABLE follows CHANGE COLUMN employee_id staff_id VARCHAR(255)`);
-      console.log('Renamed employee_id to staff_id in follows table');
+      logger.info('Renamed employee_id to staff_id in follows table');
     }
   } catch (error) {
-    console.error('Error renaming columns in follows table:', error);
+    logger.error('Error renaming columns in follows table', error);
     // Don't throw - allow initialization to continue
   }
 };
@@ -517,12 +518,12 @@ const addPerformanceIndexes = async () => {
       if (!exists) {
         try {
           await pool.query(`CREATE INDEX ${indexName} ON ${tableName} ${indexDefinition}`);
-          console.log(`Created index ${indexName} on ${tableName}`);
+          logger.info(`Created index ${indexName} on ${tableName}`);
         } catch (error) {
-          console.error(`Error creating index ${indexName} on ${tableName}:`, error.message);
+          logger.error(`Error creating index ${indexName} on ${tableName}`, error);
         }
       } else {
-        console.log(`Index ${indexName} on ${tableName} already exists`);
+        logger.debug(`Index ${indexName} on ${tableName} already exists`);
       }
     };
     
@@ -538,9 +539,9 @@ const addPerformanceIndexes = async () => {
     // Follows table indexes (using created_at for sorting)
     await createIndexIfNotExists('follows', 'idx_follows_user_created', '(user_id, created_at DESC)');
     
-    console.log('Performance indexes migration completed');
+    logger.info('Performance indexes migration completed');
   } catch (error) {
-    console.error('Error adding performance indexes:', error);
+    logger.error('Error adding performance indexes', error);
     // Don't throw - allow initialization to continue
   }
 };
@@ -557,9 +558,9 @@ const optimizeSortColumns = async () => {
         SET date = created_at 
         WHERE date IS NULL AND created_at IS NOT NULL
       `);
-      console.log(`Backfilled ${dateResult.affectedRows} NULL dates in records table`);
+      logger.info(`Backfilled ${dateResult.affectedRows} NULL dates in records table`);
     } catch (error) {
-      console.error('Error backfilling NULL dates in records:', error.message);
+      logger.error('Error backfilling NULL dates in records', error);
     }
     
     try {
@@ -568,9 +569,9 @@ const optimizeSortColumns = async () => {
         SET date = created_at 
         WHERE date IS NULL AND created_at IS NOT NULL
       `);
-      console.log(`Backfilled ${followsResult.affectedRows} NULL dates in follows table`);
+      logger.info(`Backfilled ${followsResult.affectedRows} NULL dates in follows table`);
     } catch (error) {
-      console.error('Error backfilling NULL dates in follows:', error.message);
+      logger.error('Error backfilling NULL dates in follows', error);
     }
     
     // Step 2: Add NOT NULL constraint to date and created_at columns
@@ -588,14 +589,14 @@ const optimizeSortColumns = async () => {
         if (col.IS_NULLABLE === 'YES') {
           try {
             await pool.query(`ALTER TABLE records MODIFY COLUMN ${col.COLUMN_NAME} TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP`);
-            console.log(`Added NOT NULL constraint to records.${col.COLUMN_NAME}`);
+            logger.info(`Added NOT NULL constraint to records.${col.COLUMN_NAME}`);
           } catch (error) {
-            console.error(`Error adding NOT NULL to records.${col.COLUMN_NAME}:`, error.message);
+            logger.error(`Error adding NOT NULL to records.${col.COLUMN_NAME}`, error);
           }
         }
       }
     } catch (error) {
-      console.error('Error checking records columns:', error.message);
+      logger.error('Error checking records columns', error);
     }
     
     try {
@@ -611,14 +612,14 @@ const optimizeSortColumns = async () => {
         if (col.IS_NULLABLE === 'YES') {
           try {
             await pool.query(`ALTER TABLE follows MODIFY COLUMN ${col.COLUMN_NAME} TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP`);
-            console.log(`Added NOT NULL constraint to follows.${col.COLUMN_NAME}`);
+            logger.info(`Added NOT NULL constraint to follows.${col.COLUMN_NAME}`);
           } catch (error) {
-            console.error(`Error adding NOT NULL to follows.${col.COLUMN_NAME}:`, error.message);
+            logger.error(`Error adding NOT NULL to follows.${col.COLUMN_NAME}`, error);
           }
         }
       }
     } catch (error) {
-      console.error('Error checking follows columns:', error.message);
+      logger.error('Error checking follows columns', error);
     }
     
     // Step 3: Update indexes to use created_at instead of date
@@ -635,7 +636,7 @@ const optimizeSortColumns = async () => {
         
         if (indexes.length > 0) {
           await pool.query(`DROP INDEX ${indexName} ON ${tableName}`);
-          console.log(`Dropped index ${indexName} on ${tableName}`);
+          logger.debug(`Dropped index ${indexName} on ${tableName}`);
         }
       } catch (error) {
         // Index might not exist, that's okay
@@ -655,12 +656,12 @@ const optimizeSortColumns = async () => {
         
         if (indexes.length === 0) {
           await pool.query(`CREATE INDEX ${indexName} ON ${tableName} ${indexDefinition}`);
-          console.log(`Created index ${indexName} on ${tableName}`);
+          logger.info(`Created index ${indexName} on ${tableName}`);
         } else {
-          console.log(`Index ${indexName} on ${tableName} already exists`);
+          logger.debug(`Index ${indexName} on ${tableName} already exists`);
         }
       } catch (error) {
-        console.error(`Error creating index ${indexName} on ${tableName}:`, error.message);
+        logger.error(`Error creating index ${indexName} on ${tableName}`, error);
       }
     };
     
@@ -677,9 +678,9 @@ const optimizeSortColumns = async () => {
     await dropIndexIfExists('follows', 'idx_follows_user_date');
     await createIndexIfNotExists('follows', 'idx_follows_user_created', '(user_id, created_at DESC)');
     
-    console.log('Sort column optimization completed');
+    logger.info('Sort column optimization completed');
   } catch (error) {
-    console.error('Error optimizing sort columns:', error);
+    logger.error('Error optimizing sort columns', error);
     // Don't throw - allow initialization to continue
   }
 };

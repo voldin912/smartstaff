@@ -1,6 +1,7 @@
 const express = require('express');
 const { pool } = require('../config/database');
 const { auth } = require('../middleware/auth');
+const logger = require('../utils/logger.js').default;
 const router = express.Router();
 
 router.get('/stats', auth, async (req, res) => {
@@ -56,7 +57,7 @@ router.get('/stats', auth, async (req, res) => {
       recentUsers
     });
   } catch (error) {
-    console.error(error);
+    logger.error('Error in route handler', error);
     res.status(500).json({ message: 'Server error' });
   }
 });

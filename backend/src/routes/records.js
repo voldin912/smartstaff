@@ -3,6 +3,7 @@ import multer from 'multer';
 import { auth } from '../middleware/auth.js';
 import { getRecords, getRecordDetail, uploadAudio, testAPI, downloadSTT, downloadSkillSheet, updateStaffId, updateStaffName, updateMemo, updateSkillSheet, getSkillSheet, updateSalesforce, downloadSalesforce, downloadBulk, updateLoR, deleteRecord } from '../controllers/recordsController.js';
 import { upload } from '../middleware/upload.js';
+import logger from '../utils/logger.js';
 
 const router = express.Router();
 
@@ -16,7 +17,7 @@ router.get('/:recordId', auth, getRecordDetail);
 router.post('/upload', auth, (req, res, next) => {
   upload.single('audio')(req, res, (err) => {
     if (err) {
-      console.error('Multer error:', err);
+      logger.error('Multer error', err);
       if (err instanceof multer.MulterError) {
         if (err.code === 'LIMIT_FILE_SIZE') {
           return res.status(400).json({ error: 'ファイルサイズが大きすぎます。100MB以下にしてください。' });
