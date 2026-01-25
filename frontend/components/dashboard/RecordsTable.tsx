@@ -13,6 +13,7 @@ import {
 } from '@/lib/utils';
 import { recordsService } from '@/services/recordsService';
 import { useAuth } from '@/contexts/AuthContext';
+import RecordSkeletonRow from './RecordSkeletonRow';
 
 type SortField = 'date' | 'fileId' | 'userName';
 type SortOrder = 'asc' | 'desc';
@@ -252,7 +253,9 @@ export default function RecordsTable({
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan={12} className="text-center py-8">Loading...</td></tr>
+                  Array.from({ length: rowsPerPage || 10 }).map((_, index) => (
+                    <RecordSkeletonRow key={`skeleton-${index}`} />
+                  ))
                 ) : sortedRecords.length === 0 ? (
                   <tr><td colSpan={12} className="text-center py-8">No records found</td></tr>
                 ) : (
