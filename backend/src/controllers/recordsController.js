@@ -10,6 +10,7 @@ import path from 'path';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegPath from 'ffmpeg-static';
 import logger from '../utils/logger.js';
+import cache from '../utils/cache.js';
 
 
 // import path from 'path'
@@ -605,6 +606,13 @@ const uploadAudio = async (req, res) => {
           outputs.hope
         ]);
 
+        // Invalidate cache after creating record
+        if (companyId) {
+          cache.invalidatePattern(`records:company:${companyId}:*`);
+          cache.invalidatePattern(`dashboard:stats:company:${companyId}`);
+        }
+        logger.debug('Cache invalidated after record creation', { companyId });
+
         // Return the created record with formatted date
         const [newRecord] = await pool.query(
           `SELECT 
@@ -925,6 +933,14 @@ const updateStaffId = async (req, res) => {
     if (result.affectedRows === 0) {
       return res.status(404).json({ error: 'Record not found' });
     }
+
+    // Invalidate cache after update
+    if (company_id) {
+      cache.invalidatePattern(`records:company:${company_id}:*`);
+      cache.invalidatePattern(`records:detail:${recordId}:*`);
+    }
+    logger.debug('Cache invalidated after staff ID update', { recordId, company_id });
+
     res.json({ success: true });
   } catch (error) {
     logger.error('Error updating staffId', error);
@@ -974,6 +990,14 @@ const updateSkillSheet = async (req, res) => {
     if (result.affectedRows === 0) {
       return res.status(404).json({ error: 'Record not found' });
     }
+
+    // Invalidate cache after update
+    if (company_id) {
+      cache.invalidatePattern(`records:company:${company_id}:*`);
+      cache.invalidatePattern(`records:detail:${recordId}:*`);
+    }
+    logger.debug('Cache invalidated after skill sheet update', { recordId, company_id });
+
     res.json({ success: true });
   } catch (error) {
     logger.error('Error updating skill sheet', error);
@@ -1033,6 +1057,14 @@ const updateSalesforce = async (req, res) => {
     if (result.affectedRows === 0) {
       return res.status(404).json({ error: 'Record not found' });
     }
+
+    // Invalidate cache after update
+    if (company_id) {
+      cache.invalidatePattern(`records:company:${company_id}:*`);
+      cache.invalidatePattern(`records:detail:${recordId}:*`);
+    }
+    logger.debug('Cache invalidated after salesforce update', { recordId, company_id });
+
     res.json({ success: true });
   } catch (error) {
     logger.error('Error updating salesforce data', error);
@@ -1375,6 +1407,13 @@ const updateLoR = async (req, res) => {
       return res.status(404).json({ error: 'Record not found' });
     }
 
+    // Invalidate cache after update
+    if (company_id) {
+      cache.invalidatePattern(`records:company:${company_id}:*`);
+      cache.invalidatePattern(`records:detail:${recordId}:*`);
+    }
+    logger.debug('Cache invalidated after LoR update', { recordId, company_id });
+
     res.json({ success: true });
   } catch (error) {
     logger.error('Error updating LoR', error);
@@ -1418,8 +1457,19 @@ const deleteRecord = async (req, res) => {
       return res.status(404).json({ error: 'レコードが見つからないか、削除する権限がありません。' });
     }
 
+    // Get company_id before deletion for cache invalidation
+    const recordCompanyId = records[0].recordCompanyId || records[0].company_id;
+
     // Delete the record (physical deletion)
     await pool.query('DELETE FROM records WHERE id = ?', [recordId]);
+
+    // Invalidate cache after deletion
+    if (recordCompanyId) {
+      cache.invalidatePattern(`records:company:${recordCompanyId}:*`);
+      cache.invalidatePattern(`records:detail:${recordId}:*`);
+      cache.invalidatePattern(`dashboard:stats:company:${recordCompanyId}`);
+    }
+    logger.debug('Cache invalidated after record deletion', { recordId, company_id: recordCompanyId });
 
     res.json({ success: true, message: 'Record deleted successfully' });
   } catch (error) {
@@ -1477,6 +1527,13 @@ const updateStaffName = async (req, res) => {
         return res.status(404).json({ error: 'Record not found' });
       }
 
+      // Invalidate cache after update
+      if (company_id) {
+        cache.invalidatePattern(`records:company:${company_id}:*`);
+        cache.invalidatePattern(`records:detail:${recordId}:*`);
+      }
+      logger.debug('Cache invalidated after staff name update', { recordId, company_id });
+
       res.json({ success: true });
     } catch (error) {
       logger.error('Error updating staff name', error);
@@ -1506,6 +1563,17 @@ const updateMemo = async (req, res) => {
     if (result.affectedRows === 0) {
       return res.status(404).json({ error: 'Record not found' });
     }
+
+    // Get company_id for cache invalidation
+    const [recordCheck] = await pool.query('SELECT company_id FROM records WHERE id = ?', [recordId]);
+    const recordCompanyId = recordCheck[0]?.company_id;
+
+    // Invalidate cache after update
+    if (recordCompanyId) {
+      cache.invalidatePattern(`records:company:${recordCompanyId}:*`);
+      cache.invalidatePattern(`records:detail:${recordId}:*`);
+    }
+    logger.debug('Cache invalidated after memo update', { recordId, company_id: recordCompanyId });
 
     res.json({ success: true });
   } catch (error) {

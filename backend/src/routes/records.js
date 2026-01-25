@@ -4,14 +4,30 @@ import { auth } from '../middleware/auth.js';
 import { getRecords, getRecordDetail, uploadAudio, testAPI, downloadSTT, downloadSkillSheet, updateStaffId, updateStaffName, updateMemo, updateSkillSheet, getSkillSheet, updateSalesforce, downloadSalesforce, downloadBulk, updateLoR, deleteRecord } from '../controllers/recordsController.js';
 import { upload } from '../middleware/upload.js';
 import logger from '../utils/logger.js';
+import cacheMiddleware, { getCacheKey } from '../middleware/cache.js';
 
 const router = express.Router();
 
-// Get all records
-router.get('/', auth, getRecords);
+// Get all records (with caching)
+router.get('/', auth, cacheMiddleware({
+  prefix: 'records',
+  includeQuery: true,
+  ttl: 30
+}), getRecords);
 
-// Get single record detail (must be before other /:recordId routes)
-router.get('/:recordId', auth, getRecordDetail);
+// Get single record detail (must be before other /:recordId routes) (with caching)
+router.get('/:recordId', auth, cacheMiddleware({
+  keyGenerator: (req) => {
+    const recordId = req.params.recordId;
+    const { role, company_id } = req.user;
+    if (role === 'admin') {
+      return `records:detail:${recordId}:admin`;
+    }
+    return `records:detail:${recordId}:company:${company_id}`;
+  },
+  includeParams: true,
+  ttl: 30
+}), getRecordDetail);
 
 // Upload audio file with multer error handling
 router.post('/upload', auth, (req, res, next) => {

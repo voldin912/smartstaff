@@ -1,10 +1,21 @@
-const express = require('express');
-const { pool } = require('../config/database');
-const { auth } = require('../middleware/auth');
-const logger = require('../utils/logger.js').default;
+import express from 'express';
+import { pool } from '../config/database.js';
+import { auth } from '../middleware/auth.js';
+import logger from '../utils/logger.js';
+import cacheMiddleware from '../middleware/cache.js';
+
 const router = express.Router();
 
-router.get('/stats', auth, async (req, res) => {
+router.get('/stats', auth, cacheMiddleware({
+  keyGenerator: (req) => {
+    const { role, company_id } = req.user;
+    if (role === 'admin') {
+      return 'dashboard:stats:admin';
+    }
+    return `dashboard:stats:company:${company_id}`;
+  },
+  ttl: 30
+}), async (req, res) => {
   try {
     let totalUsers = 0;
     let totalCompanies = 0;

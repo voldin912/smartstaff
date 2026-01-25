@@ -7,6 +7,7 @@ import { body, validationResult } from 'express-validator';
 import { pool } from '../config/database.js';
 import { auth, authorize } from '../middleware/auth.js';
 import logger from '../utils/logger.js';
+import cacheMiddleware from '../middleware/cache.js';
 
 const router = express.Router();
 
@@ -40,8 +41,17 @@ const upload = multer({
   }
 });
 
-// Get users based on role
-router.get('/', auth, async (req, res) => {
+// Get users based on role (with caching)
+router.get('/', auth, cacheMiddleware({
+  keyGenerator: (req) => {
+    const { role, company_id } = req.user;
+    if (role === 'admin') {
+      return 'users:all';
+    }
+    return `users:company:${company_id}`;
+  },
+  ttl: 30
+}), async (req, res) => {
   try {
     let query = 'SELECT u.*, c.name as company_name FROM users u LEFT JOIN companies c ON u.company_id = c.id';
     const params = [];
