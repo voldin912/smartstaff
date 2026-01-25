@@ -50,7 +50,8 @@ export const initializeDatabase = async () => {
         avatar VARCHAR(255),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE SET NULL
+        FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE SET NULL,
+        INDEX idx_company_user (company_id, id)
       )
     `;
 
@@ -109,7 +110,11 @@ export const initializeDatabase = async () => {
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
         FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE SET NULL,
-        INDEX idx_company_id (company_id)
+        INDEX idx_company_id (company_id),
+        INDEX idx_company_date (company_id, date DESC),
+        INDEX idx_user_date (user_id, date DESC),
+        INDEX idx_date (date DESC),
+        INDEX idx_user_id (user_id)
       )
     `;
 
@@ -130,7 +135,8 @@ export const initializeDatabase = async () => {
         date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+        INDEX idx_follows_user_date (user_id, date DESC)
       )
     `;
 
@@ -221,6 +227,9 @@ export const initializeDatabase = async () => {
     // Migration: Rename columns (staff_id -> user_id, employee_id -> staff_id)
     await renameRecordsColumns();
     await renameFollowsColumns();
+    
+    // Migration: Add performance indexes
+    await addPerformanceIndexes();
     await renameFollowsColumns();
 
     // Create admin user if it doesn't exist
@@ -474,6 +483,61 @@ const renameFollowsColumns = async () => {
     }
   } catch (error) {
     console.error('Error renaming columns in follows table:', error);
+    // Don't throw - allow initialization to continue
+  }
+};
+
+// Migration function: Add performance indexes
+const addPerformanceIndexes = async () => {
+  try {
+    const dbName = process.env.DB_NAME || 'company_management';
+    
+    // Helper function to check if index exists
+    const indexExists = async (tableName, indexName) => {
+      try {
+        const [indexes] = await pool.query(`
+          SELECT INDEX_NAME 
+          FROM INFORMATION_SCHEMA.STATISTICS 
+          WHERE TABLE_SCHEMA = ? 
+          AND TABLE_NAME = ? 
+          AND INDEX_NAME = ?
+        `, [dbName, tableName, indexName]);
+        return indexes.length > 0;
+      } catch (error) {
+        return false;
+      }
+    };
+    
+    // Helper function to create index if not exists
+    const createIndexIfNotExists = async (tableName, indexName, indexDefinition) => {
+      const exists = await indexExists(tableName, indexName);
+      if (!exists) {
+        try {
+          await pool.query(`CREATE INDEX ${indexName} ON ${tableName} ${indexDefinition}`);
+          console.log(`Created index ${indexName} on ${tableName}`);
+        } catch (error) {
+          console.error(`Error creating index ${indexName} on ${tableName}:`, error.message);
+        }
+      } else {
+        console.log(`Index ${indexName} on ${tableName} already exists`);
+      }
+    };
+    
+    // Records table indexes
+    await createIndexIfNotExists('records', 'idx_company_date', '(company_id, date DESC)');
+    await createIndexIfNotExists('records', 'idx_user_date', '(user_id, date DESC)');
+    await createIndexIfNotExists('records', 'idx_date', '(date DESC)');
+    await createIndexIfNotExists('records', 'idx_user_id', '(user_id)');
+    
+    // Users table indexes
+    await createIndexIfNotExists('users', 'idx_company_user', '(company_id, id)');
+    
+    // Follows table indexes (optional but recommended)
+    await createIndexIfNotExists('follows', 'idx_follows_user_date', '(user_id, date DESC)');
+    
+    console.log('Performance indexes migration completed');
+  } catch (error) {
+    console.error('Error adding performance indexes:', error);
     // Don't throw - allow initialization to continue
   }
 };
