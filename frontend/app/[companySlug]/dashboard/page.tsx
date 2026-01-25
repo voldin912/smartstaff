@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Layout from "@/components/Layout";
 import { useAuth } from "@/contexts/AuthContext";
 import SkillSheetSidebar from "@/components/SkillSheetSidebar";
@@ -9,9 +9,10 @@ import LoRSidebar from "@/components/LoRSidebar";
 import { toast } from 'sonner';
 
 import { useRecords } from "@/hooks/useRecords";
+import { useRecordDetail } from "@/hooks/useRecordDetail";
 import { generateFileId } from "@/lib/utils";
 import { convertToArray } from "@/lib/utils";
-import { UploadStatus, Record as RecordType, AlertMessage } from "@/lib/types";
+import { UploadStatus, Record as RecordType, RecordSummary, AlertMessage } from "@/lib/types";
 import { recordsService } from "@/services/recordsService";
 import DashboardHeader from "@/components/dashboard/DashboardHeader";
 import AlertMessageComp from "@/components/dashboard/AlertMessage";
@@ -45,10 +46,27 @@ export default function DashboardPage() {
   const [staffMemo, setStaffMemo] = useState('');
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [recordToDelete, setRecordToDelete] = useState<RecordType | null>(null);
+  const [detailRecordId, setDetailRecordId] = useState<number | null>(null);
+  const { record: detailRecord, loading: detailLoading } = useRecordDetail(detailRecordId);
 
   const notify = (type: 'success' | 'error', message: string) => {
     setAlertMessage({ type, message });
   };
+
+  // Update selected record when detail loads - always update to ensure fresh data
+  useEffect(() => {
+    if (detailRecord && detailRecordId === detailRecord.id && !detailLoading) {
+      if (isSkillSheetOpen) {
+        setSelectedRecord(detailRecord);
+      }
+      if (isSalesforceOpen) {
+        setSelectedSalesforceRecord(detailRecord);
+      }
+      if (isLoROpen) {
+        setSelectedLoRRecord(detailRecord);
+      }
+    }
+  }, [detailRecord, detailRecordId, detailLoading, isSkillSheetOpen, isSalesforceOpen, isLoROpen]);
 
   // File upload handler
 
@@ -114,8 +132,11 @@ export default function DashboardPage() {
     }
   };
 
-  const handleSkillSheetEdit = (record: RecordType) => {
-    setSelectedRecord(record);
+  const handleSkillSheetEdit = async (record: RecordSummary) => {
+    setDetailRecordId(null); // Clear first to force refetch
+    setTimeout(() => {
+      setDetailRecordId(record.id);
+    }, 0);
     setIsSkillSheetOpen(true);
   };
 
@@ -130,12 +151,13 @@ export default function DashboardPage() {
       notify('success', 'スキルシートを更新しました。');
       refetch();
       setIsSkillSheetOpen(false);
+      setSelectedRecord(null); // Clear selected record to force refetch on next open
     } catch (error) {
       notify('error', (error as Error).message || 'スキルシートの更新に失敗しました。');
     }
   };
 
-  const handleSkillSheetDownload = async (record: RecordType) => {
+  const handleSkillSheetDownload = async (record: RecordSummary) => {
     try {
       await recordsService.downloadSkillSheet(record.id, record.fileId);
       notify('success', 'スキルシートのダウンロードが完了しました。');
@@ -144,9 +166,11 @@ export default function DashboardPage() {
     }
   };
 
-  const handleSalesforceEdit = (record: RecordType) => {
-    // console.log("handleSalesforceEdit", record);
-    setSelectedSalesforceRecord(record);
+  const handleSalesforceEdit = async (record: RecordSummary) => {
+    setDetailRecordId(null); // Clear first to force refetch
+    setTimeout(() => {
+      setDetailRecordId(record.id);
+    }, 0);
     setIsSalesforceOpen(true);
   };
 
@@ -162,7 +186,7 @@ export default function DashboardPage() {
     }
   };
 
-  const handleSalesforceDownload = async (record: RecordType) => {
+  const handleSalesforceDownload = async (record: RecordSummary) => {
     try {
       await recordsService.downloadSalesforce(record.id, record.fileId);
       notify('success', 'Salesforceデータのダウンロードが完了しました。');
@@ -171,8 +195,11 @@ export default function DashboardPage() {
     }
   };
 
-  const handleLoREdit = (record: RecordType) => {
-    setSelectedLoRRecord(record);
+  const handleLoREdit = async (record: RecordSummary) => {
+    setDetailRecordId(null); // Clear first to force refetch
+    setTimeout(() => {
+      setDetailRecordId(record.id);
+    }, 0);
     setIsLoROpen(true);
   };
 
@@ -189,20 +216,22 @@ export default function DashboardPage() {
     }
   };
 
-  const handleLoRCopy = async (record: RecordType) => {
+  const handleLoRCopy = async (record: RecordSummary) => {
     try {
-      if (!record.lor) {
+      // Need to fetch detail for LoR
+      const detail = await recordsService.getRecordDetail(record.id);
+      if (!detail.lor) {
         notify('error', '推薦文がありません。');
         return;
       }
-      await navigator.clipboard.writeText(record.lor ?? '');
+      await navigator.clipboard.writeText(detail.lor ?? '');
       notify('success', '推薦文をクリップボードにコピーしました。');
     } catch (error) {
       notify('error', '推薦文のコピーに失敗しました。ブラウザの設定を確認してください。');
     }
   };
 
-  const handleSTTDownload = async (record: RecordType) => {
+  const handleSTTDownload = async (record: RecordSummary) => {
     try {
       await recordsService.downloadSTT(record.id, record.fileId);
       notify('success', 'STTのダウンロードが完了しました。');
@@ -211,7 +240,7 @@ export default function DashboardPage() {
     }
   };
 
-  const handleBulkDownload = async (record: RecordType) => {
+  const handleBulkDownload = async (record: RecordSummary) => {
     try {
       await recordsService.downloadBulk(record.id, record.fileId);
       notify('success', '一括データのダウンロードが完了しました。');
@@ -220,13 +249,27 @@ export default function DashboardPage() {
     }
   };
 
-  const handleSalesforceIconClick = (record: RecordType, type: 'skillSheet' | 'salesforce') => {
-    setModalStaffId(record.staffId);
-    setModalType(type);
-    setModalData(type === 'skillSheet' ? record.skillSheet : record.salesforce);
-    setStaffMemo(record.hope || '');
-    setShowSalesforceModal(true);
+  const handleSalesforceIconClick = async (record: RecordSummary, type: 'skillSheet' | 'salesforce') => {
+    setDetailRecordId(record.id);
+    // Wait for detail to load, then set modal data
+    if (detailRecord && detailRecord.id === record.id) {
+      setModalStaffId(record.staffId);
+      setModalType(type);
+      setModalData(type === 'skillSheet' ? detailRecord.skillSheet : detailRecord.salesforce);
+      setStaffMemo(detailRecord.hope || '');
+      setShowSalesforceModal(true);
+    }
   };
+
+  // Update Salesforce modal when detail loads
+  useEffect(() => {
+    if (detailRecord && detailRecordId === detailRecord.id && modalType && !showSalesforceModal) {
+      setModalStaffId(detailRecord.staffId);
+      setModalData(modalType === 'skillSheet' ? detailRecord.skillSheet : detailRecord.salesforce);
+      setStaffMemo(detailRecord.hope || '');
+      setShowSalesforceModal(true);
+    }
+  }, [detailRecord, detailRecordId, modalType, showSalesforceModal]);
 
   const handleSalesforceSync = async () => {
     if (!modalStaffId || !modalType) return;
@@ -260,8 +303,9 @@ export default function DashboardPage() {
     setShowSalesforceModal(false);
   };
 
-  const handleDeleteClick = (record: RecordType) => {
-    setRecordToDelete(record);
+  const handleDeleteClick = (record: RecordSummary) => {
+    // Convert RecordSummary to RecordType for delete (only needs id)
+    setRecordToDelete({ ...record, skillSheet: null, salesforce: null, lor: null, stt: null, bulk: false } as RecordType);
     setShowDeleteModal(true);
   };
 
@@ -288,7 +332,11 @@ export default function DashboardPage() {
         {/* Skill Sheet Sidebar */}
         <SkillSheetSidebar
           open={isSkillSheetOpen}
-          onClose={() => setIsSkillSheetOpen(false)}
+          onClose={() => {
+            setIsSkillSheetOpen(false);
+            setSelectedRecord(null);
+            setDetailRecordId(null);
+          }}
           skillSheetData={selectedRecord?.skillSheet}
           skills={selectedRecord?.skills}
           onSave={handleSkillSheetSave}
@@ -297,7 +345,11 @@ export default function DashboardPage() {
         {/* Salesforce Sidebar */}
         <SalesforceSidebar
           open={isSalesforceOpen}
-          onClose={() => setIsSalesforceOpen(false)}
+          onClose={() => {
+            setIsSalesforceOpen(false);
+            setSelectedSalesforceRecord(null);
+            setDetailRecordId(null);
+          }}
           salesforceData={selectedSalesforceRecord ? convertToArray(selectedSalesforceRecord.salesforce) : null}
           initialLor={selectedSalesforceRecord?.hope}
           onSave={handleSalesforceSave}
@@ -310,6 +362,7 @@ export default function DashboardPage() {
           onClose={() => {
             setIsLoROpen(false);
             setSelectedLoRRecord(null);
+            setDetailRecordId(null);
           }}
           lorData={selectedLoRRecord?.lor || null}
           onSave={handleLoRSave}

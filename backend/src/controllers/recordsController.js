@@ -124,7 +124,7 @@ const getRecords = async (req, res) => {
       LEFT JOIN users u ON r.staff_id = u.id
     `;
     
-    // Build main query for fetching records
+    // Build main query for fetching records (lightweight fields only)
     let query = `
       SELECT 
         r.id, 
@@ -134,15 +134,8 @@ const getRecords = async (req, res) => {
         r.employee_id as staffId, 
         r.staff_name as staffName,
         r.memo,
-        r.stt,
-        r.skill_sheet as skillSheet,
-        r.lor,
-        r.salesforce as salesforce,
-        r.skills,
-        r.audio_file_path as audioFilePath,
         u.company_id as userCompanyId,
-        u.name as userName,
-        r.hope as hope
+        u.name as userName
       FROM records r
       LEFT JOIN users u ON r.staff_id = u.id
     `;
@@ -208,6 +201,81 @@ const getRecords = async (req, res) => {
   } catch (error) {
     console.error('Error fetching records:', error);
     res.status(500).json({ error: 'Failed to fetch records' });
+  }
+};
+
+// Get single record detail with all fields
+const getRecordDetail = async (req, res) => {
+  try {
+    const { role, company_id, id: userId } = req.user;
+    const recordId = parseInt(req.params.recordId);
+
+    if (!recordId || isNaN(recordId)) {
+      return res.status(400).json({ error: 'Invalid record ID' });
+    }
+
+    console.log('Fetching record detail:', { recordId, role, company_id, userId });
+
+    // Build query for fetching full record detail
+    let query = `
+      SELECT 
+        r.id, 
+        r.staff_id as ownerId,
+        DATE_FORMAT(r.date, '%Y-%m-%d %H:%i:%s') as date,
+        r.file_id as fileId, 
+        r.employee_id as staffId, 
+        r.staff_name as staffName,
+        r.memo,
+        r.stt,
+        r.skill_sheet as skillSheet,
+        r.lor,
+        r.salesforce as salesforce,
+        r.skills,
+        r.audio_file_path as audioFilePath,
+        u.company_id as userCompanyId,
+        u.name as userName,
+        r.hope as hope
+      FROM records r
+      LEFT JOIN users u ON r.staff_id = u.id
+      WHERE r.id = ?
+    `;
+
+    const queryParams = [recordId];
+
+    // Apply role-based filtering
+    if (role === 'member') {
+      query += ' AND u.company_id = ?';
+      queryParams.push(company_id);
+      console.log('Filtering for member - company_id:', company_id);
+    } else if (role === 'company-manager') {
+      query += ' AND u.company_id = ?';
+      queryParams.push(company_id);
+      console.log('Filtering for company-manager - company_id:', company_id);
+    } else if (role === 'admin') {
+      console.log('Admin user - no additional filtering applied');
+      // For admin, we want to see all records, so no additional WHERE clause
+    } else {
+      console.log('Unknown role:', role);
+      // Default to showing only user's own records for unknown roles
+      query += ' AND r.staff_id = ?';
+      queryParams.push(userId);
+    }
+
+    console.log('Detail query:', query);
+    console.log('Query params:', queryParams);
+
+    const [records] = await pool.query(query, queryParams);
+
+    if (records.length === 0) {
+      return res.status(404).json({ error: 'Record not found or access denied' });
+    }
+
+    console.log('Record detail found:', records[0].id);
+
+    res.json(records[0]);
+  } catch (error) {
+    console.error('Error fetching record detail:', error);
+    res.status(500).json({ error: 'Failed to fetch record detail' });
   }
 };
 
@@ -1477,6 +1545,7 @@ const autoDeleteOldRecords = async () => {
 
 export {
   getRecords,
+  getRecordDetail,
   uploadAudio,
   testAPI,
   downloadSTT,

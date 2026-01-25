@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { recordsService } from '@/services/recordsService';
-import { Record, PaginationInfo } from '@/lib/types';
+import { RecordSummary, PaginationInfo } from '@/lib/types';
 
 export const useRecords = (currentPage: number = 1, rowsPerPage: number = 10) => {
-  const [records, setRecords] = useState<Record[]>([]);
+  const [records, setRecords] = useState<RecordSummary[]>([]);
   const [pagination, setPagination] = useState<PaginationInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

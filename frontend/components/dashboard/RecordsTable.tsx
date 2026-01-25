@@ -3,7 +3,7 @@
 import { useMemo, useRef, useState } from 'react';
 import Image from 'next/image';
 import Pagination from '@/components/molecules/pagination';
-import { Record, PaginationInfo } from '@/lib/types';
+import { RecordSummary, PaginationInfo } from '@/lib/types';
 import {
   convertToArray,
   formatDate,
@@ -18,23 +18,23 @@ type SortField = 'date' | 'fileId' | 'userName';
 type SortOrder = 'asc' | 'desc';
 
 interface RecordsTableProps {
-  records: Record[];
+  records: RecordSummary[];
   pagination: PaginationInfo | null;
   loading: boolean;
   currentPage: number;
   rowsPerPage: number;
   onPageChange: (page: number) => void;
   onRowsPerPageChange: (rowsPerPage: number) => void;
-  onSkillSheetEdit: (record: Record) => void;
-  onSkillSheetDownload: (record: Record) => Promise<void>;
-  onSalesforceEdit: (record: Record) => void;
-  onSalesforceDownload: (record: Record) => Promise<void>;
-  onSalesforceIconClick: (record: Record, type: 'skillSheet' | 'salesforce') => void;
-  onLoREdit: (record: Record) => void;
-  onLoRCopy: (record: Record) => Promise<void>;
-  onSTTDownload: (record: Record) => Promise<void>;
-  onBulkDownload: (record: Record) => Promise<void>;
-  onDeleteClick: (record: Record) => void;
+  onSkillSheetEdit: (record: RecordSummary) => void;
+  onSkillSheetDownload: (record: RecordSummary) => Promise<void>;
+  onSalesforceEdit: (record: RecordSummary) => void;
+  onSalesforceDownload: (record: RecordSummary) => Promise<void>;
+  onSalesforceIconClick: (record: RecordSummary, type: 'skillSheet' | 'salesforce') => void;
+  onLoREdit: (record: RecordSummary) => void;
+  onLoRCopy: (record: RecordSummary) => Promise<void>;
+  onSTTDownload: (record: RecordSummary) => Promise<void>;
+  onBulkDownload: (record: RecordSummary) => Promise<void>;
+  onDeleteClick: (record: RecordSummary) => void;
   onNotify?: (type: 'success' | 'error', message: string) => void;
   onRefetch?: () => void;
 }

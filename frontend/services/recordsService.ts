@@ -1,5 +1,5 @@
 import { apiRequest, handleApiError } from '@/lib/api';
-import { Record, PaginatedResponse } from '@/lib/types';
+import { Record, RecordSummary, PaginatedResponse } from '@/lib/types';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || '';
 
@@ -11,18 +11,31 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || '';
 export const recordsService = {
   /**
    * Fetch records with pagination (filtered by role on backend)
+   * Returns lightweight RecordSummary[] for list display
    * @param limit - Number of records per page (default: 50, max: 200)
    * @param offset - Number of records to skip (default: 0)
    */
-  async getRecords(limit: number = 50, offset: number = 0): Promise<PaginatedResponse<Record>> {
+  async getRecords(limit: number = 50, offset: number = 0): Promise<PaginatedResponse<RecordSummary>> {
     try {
       const params = new URLSearchParams({
         limit: limit.toString(),
         offset: offset.toString(),
       });
-      return await apiRequest<PaginatedResponse<Record>>(`${API_URL}/api/records?${params.toString()}`);
+      return await apiRequest<PaginatedResponse<RecordSummary>>(`${API_URL}/api/records?${params.toString()}`);
     } catch (error) {
       throw new Error(handleApiError(error, 'レコードの取得に失敗しました。'));
+    }
+  },
+
+  /**
+   * Fetch full record detail including heavy fields (stt, skillSheet, salesforce, lor, etc.)
+   * @param recordId - ID of the record to fetch
+   */
+  async getRecordDetail(recordId: number): Promise<Record> {
+    try {
+      return await apiRequest<Record>(`${API_URL}/api/records/${recordId}`);
+    } catch (error) {
+      throw new Error(handleApiError(error, 'レコード詳細の取得に失敗しました。'));
     }
   },
 

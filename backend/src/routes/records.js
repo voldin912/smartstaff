@@ -1,13 +1,16 @@
 import express from 'express';
 import multer from 'multer';
 import { auth } from '../middleware/auth.js';
-import { getRecords, uploadAudio, testAPI, downloadSTT, downloadSkillSheet, updateStaffId, updateStaffName, updateMemo, updateSkillSheet, getSkillSheet, updateSalesforce, downloadSalesforce, downloadBulk, updateLoR, deleteRecord } from '../controllers/recordsController.js';
+import { getRecords, getRecordDetail, uploadAudio, testAPI, downloadSTT, downloadSkillSheet, updateStaffId, updateStaffName, updateMemo, updateSkillSheet, getSkillSheet, updateSalesforce, downloadSalesforce, downloadBulk, updateLoR, deleteRecord } from '../controllers/recordsController.js';
 import { upload } from '../middleware/upload.js';
 
 const router = express.Router();
 
 // Get all records
 router.get('/', auth, getRecords);
+
+// Get single record detail (must be before other /:recordId routes)
+router.get('/:recordId', auth, getRecordDetail);
 
 // Upload audio file with multer error handling
 router.post('/upload', auth, (req, res, next) => {
