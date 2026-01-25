@@ -117,14 +117,14 @@ const getRecords = async (req, res) => {
     console.log('User info:', { role, company_id, userId });
     console.log('Pagination params:', { limit, offset });
 
-    // Build base query for counting total records
+    // Build base query for counting total records (no JOIN needed for counting)
     let countQuery = `
       SELECT COUNT(*) as total
       FROM records r
-      LEFT JOIN users u ON r.staff_id = u.id
     `;
     
     // Build main query for fetching records (lightweight fields only)
+    // JOIN only needed for userName field
     let query = `
       SELECT 
         r.id, 
@@ -134,7 +134,7 @@ const getRecords = async (req, res) => {
         r.employee_id as staffId, 
         r.staff_name as staffName,
         r.memo,
-        u.company_id as userCompanyId,
+        r.company_id as companyId,
         u.name as userName
       FROM records r
       LEFT JOIN users u ON r.staff_id = u.id
@@ -143,18 +143,18 @@ const getRecords = async (req, res) => {
     const queryParams = [];
     const countParams = [];
 
-    // Apply role-based filtering
+    // Apply role-based filtering using r.company_id (no JOIN needed)
     if (role === 'member') {
       // Members can see records from all users in the same company
-      query += ' WHERE u.company_id = ?';
-      countQuery += ' WHERE u.company_id = ?';
+      query += ' WHERE r.company_id = ?';
+      countQuery += ' WHERE r.company_id = ?';
       queryParams.push(company_id);
       countParams.push(company_id);
       console.log('Filtering for member - company_id:', company_id);
     } else if (role === 'company-manager') {
       // Company managers can see records from their company
-      query += ' WHERE u.company_id = ?';
-      countQuery += ' WHERE u.company_id = ?';
+      query += ' WHERE r.company_id = ?';
+      countQuery += ' WHERE r.company_id = ?';
       queryParams.push(company_id);
       countParams.push(company_id);
       console.log('Filtering for company-manager - company_id:', company_id);
@@ -232,7 +232,7 @@ const getRecordDetail = async (req, res) => {
         r.salesforce as salesforce,
         r.skills,
         r.audio_file_path as audioFilePath,
-        u.company_id as userCompanyId,
+        r.company_id as companyId,
         u.name as userName,
         r.hope as hope
       FROM records r
@@ -242,13 +242,13 @@ const getRecordDetail = async (req, res) => {
 
     const queryParams = [recordId];
 
-    // Apply role-based filtering
+    // Apply role-based filtering using r.company_id (no JOIN needed for filtering)
     if (role === 'member') {
-      query += ' AND u.company_id = ?';
+      query += ' AND r.company_id = ?';
       queryParams.push(company_id);
       console.log('Filtering for member - company_id:', company_id);
     } else if (role === 'company-manager') {
-      query += ' AND u.company_id = ?';
+      query += ' AND r.company_id = ?';
       queryParams.push(company_id);
       console.log('Filtering for company-manager - company_id:', company_id);
     } else if (role === 'admin') {
@@ -352,6 +352,7 @@ const uploadAudio = async (req, res) => {
 
     const { staffId, fileId } = req.body;
     const userId = req.user.id; // Get the actual user ID from auth middleware
+    const companyId = req.user.company_id; // Get company_id from user
 
     if (!staffId || !fileId) {
       console.error('Upload error: Missing required fields');
@@ -589,13 +590,14 @@ const uploadAudio = async (req, res) => {
 
         // Insert record into database
         const query = `
-        INSERT INTO records (file_id, staff_id, employee_id, audio_file_path, stt, skill_sheet, lor, salesforce, skills, hope, date)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+        INSERT INTO records (file_id, staff_id, company_id, employee_id, audio_file_path, stt, skill_sheet, lor, salesforce, skills, hope, date)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
       `;
 
         const [result] = await pool.query(query, [
           fileId,
           userId,  // Use req.user.id instead of staffId for staff_id
+          companyId, // Add company_id
           staffId, // This is employee_id (string)
           audioFilePath,
           combinedText,
@@ -893,20 +895,19 @@ const updateStaffId = async (req, res) => {
 
     // Check permission: members can edit records from same company
     let permissionQuery = `
-      SELECT r.*, u.company_id as recordCompanyId, r.staff_id as ownerId
+      SELECT r.*, r.company_id as recordCompanyId, r.staff_id as ownerId
       FROM records r
-      LEFT JOIN users u ON r.staff_id = u.id
       WHERE r.id = ?
     `;
     const permissionParams = [recordId];
 
     if (role === 'member') {
       // Members can edit records from same company
-      permissionQuery += ' AND u.company_id = ?';
+      permissionQuery += ' AND r.company_id = ?';
       permissionParams.push(company_id);
     } else if (role === 'company-manager') {
       // Company managers can edit records from their company
-      permissionQuery += ' AND u.company_id = ?';
+      permissionQuery += ' AND r.company_id = ?';
       permissionParams.push(company_id);
     }
     // Admin can edit all records - no additional condition
@@ -942,20 +943,19 @@ const updateSkillSheet = async (req, res) => {
 
     // Check permission: members can edit records from same company
     let permissionQuery = `
-      SELECT r.*, u.company_id as recordCompanyId, r.staff_id as ownerId
+      SELECT r.*, r.company_id as recordCompanyId, r.staff_id as ownerId
       FROM records r
-      LEFT JOIN users u ON r.staff_id = u.id
       WHERE r.id = ?
     `;
     const permissionParams = [recordId];
 
     if (role === 'member') {
       // Members can edit records from same company
-      permissionQuery += ' AND u.company_id = ?';
+      permissionQuery += ' AND r.company_id = ?';
       permissionParams.push(company_id);
     } else if (role === 'company-manager') {
       // Company managers can edit records from their company
-      permissionQuery += ' AND u.company_id = ?';
+      permissionQuery += ' AND r.company_id = ?';
       permissionParams.push(company_id);
     }
     // Admin can edit all records - no additional condition
@@ -1004,20 +1004,19 @@ const updateSalesforce = async (req, res) => {
 
     // Check permission: members can edit records from same company
     let permissionQuery = `
-      SELECT r.*, u.company_id as recordCompanyId, r.staff_id as ownerId
+      SELECT r.*, r.company_id as recordCompanyId, r.staff_id as ownerId
       FROM records r
-      LEFT JOIN users u ON r.staff_id = u.id
       WHERE r.id = ?
     `;
     const permissionParams = [recordId];
 
     if (role === 'member') {
       // Members can edit records from same company
-      permissionQuery += ' AND u.company_id = ?';
+      permissionQuery += ' AND r.company_id = ?';
       permissionParams.push(company_id);
     } else if (role === 'company-manager') {
       // Company managers can edit records from their company
-      permissionQuery += ' AND u.company_id = ?';
+      permissionQuery += ' AND r.company_id = ?';
       permissionParams.push(company_id);
     }
     // Admin can edit all records - no additional condition
@@ -1344,20 +1343,19 @@ const updateLoR = async (req, res) => {
 
     // Check permission: members can edit records from same company
     let permissionQuery = `
-      SELECT r.*, u.company_id as recordCompanyId, r.staff_id as ownerId
+      SELECT r.*, r.company_id as recordCompanyId, r.staff_id as ownerId
       FROM records r
-      LEFT JOIN users u ON r.staff_id = u.id
       WHERE r.id = ?
     `;
     const permissionParams = [recordId];
 
     if (role === 'member') {
       // Members can edit records from same company
-      permissionQuery += ' AND u.company_id = ?';
+      permissionQuery += ' AND r.company_id = ?';
       permissionParams.push(company_id);
     } else if (role === 'company-manager') {
       // Company managers can edit records from their company
-      permissionQuery += ' AND u.company_id = ?';
+      permissionQuery += ' AND r.company_id = ?';
       permissionParams.push(company_id);
     }
     // Admin can edit all records - no additional condition
@@ -1395,9 +1393,8 @@ const deleteRecord = async (req, res) => {
     const { role, company_id, id: userId } = req.user;
 
     let query = `
-      SELECT r.*, u.company_id as recordCompanyId
+      SELECT r.*, r.company_id as recordCompanyId
       FROM records r
-      LEFT JOIN users u ON r.staff_id = u.id
       WHERE r.id = ?
     `;
     const queryParams = [recordId];
@@ -1409,7 +1406,7 @@ const deleteRecord = async (req, res) => {
       queryParams.push(userId);
     } else if (role === 'company-manager') {
       // Company managers can delete records from their company
-      query += ' AND u.company_id = ?';
+      query += ' AND r.company_id = ?';
       queryParams.push(company_id);
     } else if (role === 'admin') {
       // Admin can delete all records - no additional WHERE condition
@@ -1444,20 +1441,19 @@ const updateStaffName = async (req, res) => {
 
     // Check permission: members can edit records from same company
     let permissionQuery = `
-      SELECT r.*, u.company_id as recordCompanyId, r.staff_id as ownerId
+      SELECT r.*, r.company_id as recordCompanyId, r.staff_id as ownerId
       FROM records r
-      LEFT JOIN users u ON r.staff_id = u.id
       WHERE r.id = ?
     `;
     const permissionParams = [recordId];
 
     if (role === 'member') {
       // Members can edit records from same company
-      permissionQuery += ' AND u.company_id = ?';
+      permissionQuery += ' AND r.company_id = ?';
       permissionParams.push(company_id);
     } else if (role === 'company-manager') {
       // Company managers can edit records from their company
-      permissionQuery += ' AND u.company_id = ?';
+      permissionQuery += ' AND r.company_id = ?';
       permissionParams.push(company_id);
     }
     // Admin can edit all records - no additional condition

@@ -93,6 +93,7 @@ export const initializeDatabase = async () => {
         id INT PRIMARY KEY AUTO_INCREMENT,
         file_id VARCHAR(255),
         staff_id INT,
+        company_id INT,
         employee_id VARCHAR(255),
         staff_name VARCHAR(255) DEFAULT '',
         memo TEXT DEFAULT '',
@@ -106,7 +107,9 @@ export const initializeDatabase = async () => {
         date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        FOREIGN KEY (staff_id) REFERENCES users(id) ON DELETE SET NULL
+        FOREIGN KEY (staff_id) REFERENCES users(id) ON DELETE SET NULL,
+        FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE SET NULL,
+        INDEX idx_company_id (company_id)
       )
     `;
 
@@ -209,6 +212,12 @@ export const initializeDatabase = async () => {
       await pool.query(salesforceTable);
     }
 
+    // Migration: Add company_id column to records table if it doesn't exist
+    await addCompanyIdToRecords();
+    
+    // Backfill company_id for existing records
+    await backfillCompanyId();
+
     // Create admin user if it doesn't exist
     const [adminExists] = await pool.query('SELECT * FROM users WHERE role = "admin" LIMIT 1');
     if (adminExists.length === 0) {
@@ -223,5 +232,77 @@ export const initializeDatabase = async () => {
   } catch (error) {
     console.error('Error initializing database:', error);
     throw error;
+  }
+};
+
+// Migration function: Add company_id column to records table
+const addCompanyIdToRecords = async () => {
+  try {
+    const dbName = process.env.DB_NAME || 'company_management';
+    // Check if column exists
+    const [columns] = await pool.query(`
+      SELECT COLUMN_NAME 
+      FROM INFORMATION_SCHEMA.COLUMNS 
+      WHERE TABLE_SCHEMA = ? 
+      AND TABLE_NAME = 'records' 
+      AND COLUMN_NAME = 'company_id'
+    `, [dbName]);
+    
+    if (columns.length === 0) {
+      // Add column with index and foreign key
+      await pool.query(`
+        ALTER TABLE records 
+        ADD COLUMN company_id INT AFTER staff_id
+      `);
+      
+      // Add index
+      await pool.query(`
+        ALTER TABLE records 
+        ADD INDEX idx_company_id (company_id)
+      `);
+      
+      // Add foreign key constraint
+      await pool.query(`
+        ALTER TABLE records 
+        ADD CONSTRAINT fk_records_company 
+        FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE SET NULL
+      `);
+      
+      console.log('Added company_id column to records table');
+    } else {
+      console.log('company_id column already exists in records table');
+    }
+  } catch (error) {
+    console.error('Error adding company_id to records:', error);
+    // Don't throw - allow initialization to continue
+  }
+};
+
+// Backfill function: Populate company_id for existing records
+const backfillCompanyId = async () => {
+  try {
+    // Update records with company_id from users table
+    const [result] = await pool.query(`
+      UPDATE records r
+      INNER JOIN users u ON r.staff_id = u.id
+      SET r.company_id = u.company_id
+      WHERE r.company_id IS NULL AND u.company_id IS NOT NULL
+    `);
+    
+    console.log(`Backfilled company_id for ${result.affectedRows} existing records`);
+    
+    // Check for records that couldn't be backfilled
+    const [nullRecords] = await pool.query(`
+      SELECT COUNT(*) as count 
+      FROM records 
+      WHERE company_id IS NULL AND staff_id IS NOT NULL
+    `);
+    
+    if (nullRecords[0].count > 0) {
+      console.warn(`Warning: ${nullRecords[0].count} records have NULL company_id (staff_id exists but user not found or user has no company_id)`);
+    }
+  } catch (error) {
+    console.error('Error backfilling company_id:', error);
+    // Don't throw - allow initialization to continue
   }
 }; 

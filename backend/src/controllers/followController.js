@@ -116,7 +116,7 @@ const getRecords = async (req, res) => {
         r.salesforce as salesforce,
         r.skills,
         r.audio_file_path as audioFilePath,
-        u.company_id as userCompanyId,
+        r.company_id as companyId,
         u.name as userName,
         r.hope as hope
       FROM follows r
@@ -133,6 +133,8 @@ const getRecords = async (req, res) => {
       console.log('Filtering for member - staff_id:', userId);
     } else if (role === 'company-manager') {
       // Company managers can see records from their company
+      // Note: follows table doesn't have company_id yet, so keep using JOIN for now
+      // This will be updated in a future migration
       query += ' WHERE u.company_id = ?';
       queryParams.push(company_id);
       console.log('Filtering for company-manager - company_id:', company_id);
