@@ -109,18 +109,17 @@ const getRecords = async (req, res) => {
         r.id, 
         DATE_FORMAT(r.date, '%Y-%m-%d %H:%i:%s') as date,
         r.file_id as fileId, 
-        r.employee_id as staffId, 
+        r.staff_id as staffId, 
         r.stt,
         r.skill_sheet as skillSheet,
         r.lor,
         r.salesforce as salesforce,
         r.skills,
         r.audio_file_path as audioFilePath,
-        r.company_id as companyId,
         u.name as userName,
         r.hope as hope
       FROM follows r
-      LEFT JOIN users u ON r.staff_id = u.id
+      LEFT JOIN users u ON r.user_id = u.id
     `;
 
     const queryParams = [];
@@ -128,9 +127,9 @@ const getRecords = async (req, res) => {
     // Apply role-based filtering
     if (role === 'member') {
       // Members can only see their own records
-      query += ' WHERE r.staff_id = ?';
+      query += ' WHERE r.user_id = ?';
       queryParams.push(userId);
-      console.log('Filtering for member - staff_id:', userId);
+      console.log('Filtering for member - user_id:', userId);
     } else if (role === 'company-manager') {
       // Company managers can see records from their company
       // Note: follows table doesn't have company_id yet, so keep using JOIN for now
@@ -144,7 +143,7 @@ const getRecords = async (req, res) => {
     } else {
       console.log('Unknown role:', role);
       // Default to showing only user's own records for unknown roles
-      query += ' WHERE r.staff_id = ?';
+      query += ' WHERE r.user_id = ?';
       queryParams.push(userId);
     }
 
@@ -396,14 +395,15 @@ const uploadAudio = async (req, res) => {
 
         // Insert record into database
         const query = `
-        INSERT INTO follows (file_id, staff_id, employee_id, audio_file_path, stt, skill_sheet, lor, salesforce, skills, hope, date)
+        INSERT INTO follows (file_id, user_id, staff_id, audio_file_path, stt, skill_sheet, lor, salesforce, skills, hope, date)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
       `;
 
+        const userId = req.user.id; // Get user ID from auth
         const [result] = await pool.query(query, [
           fileId, 
-          staffId, 
-          staffId,
+          userId,  // user_id references users table
+          staffId, // staff_id for Salesforce integration
           audioFilePath, 
           combinedText, 
           outputs.skillsheet, 
@@ -419,7 +419,7 @@ const uploadAudio = async (req, res) => {
             id, 
             DATE_FORMAT(date, '%Y-%m-%d %H:%i:%s') as date,
             file_id as fileId, 
-            employee_id as staffId, 
+            staff_id as staffId, 
             audio_file_path as audioFilePath,
             stt,
             skill_sheet as skillSheet,
@@ -534,7 +534,7 @@ const downloadSkillSheet = async (req, res) => {
   try {
     const { recordId } = req.params;
     const [records] = await pool.query(
-      'SELECT skill_sheet, file_id, employee_id, skills FROM follows WHERE id = ?',
+      'SELECT skill_sheet, file_id, staff_id, skills FROM follows WHERE id = ?',
       [recordId]
     );
     if (records.length === 0) {
@@ -559,7 +559,7 @@ const downloadSkillSheet = async (req, res) => {
     }
     
     const fileId = records[0].file_id;
-    const staffId = records[0].employee_id;
+    const staffId = records[0].staff_id;
     // Parse and clean skills JSON
     let cleanSkillsData = null;
     try {
@@ -696,7 +696,7 @@ const updateStaffId = async (req, res) => {
       return res.status(400).json({ error: 'staffId is required' });
     }
     const [result] = await pool.query(
-      'UPDATE follows SET employee_id = ? WHERE id = ?',
+      'UPDATE follows SET staff_id = ? WHERE id = ?',
       [staffId, recordId]
     );
     if (result.affectedRows === 0) {
@@ -824,13 +824,13 @@ const downloadBulk = async (req, res) => {
     const { recordId } = req.params;
     // Get record info
     const [records] = await pool.query(
-      'SELECT file_id, audio_file_path, skill_sheet, salesforce, employee_id, skills, stt, hope FROM follows WHERE id = ?',
+      'SELECT file_id, audio_file_path, skill_sheet, salesforce, staff_id, skills, stt, hope FROM follows WHERE id = ?',
       [recordId]
     );
     if (records.length === 0) {
       return res.status(404).json({ error: 'Record not found' });
     }
-    const { file_id, audio_file_path, skill_sheet, salesforce, employee_id, skills, stt, hope } = records[0];
+    const { file_id, audio_file_path, skill_sheet, salesforce, staff_id, skills, stt, hope } = records[0];
     
     // Clean and parse skillsheet if it's a string
     const cleanSkillsheet = typeof skill_sheet === 'string' 
@@ -938,7 +938,7 @@ const downloadBulk = async (req, res) => {
     drawSolidLine(skillSheetPDF);
     skillSheetPDF.text('＋＋プロフィール＋＋');
     drawSolidLine(skillSheetPDF);
-    skillSheetPDF.text(`■氏名：${employee_id}`);
+    skillSheetPDF.text(`■氏名：${staff_id}`);
     drawSolidLine(skillSheetPDF, true);
 
     // Career History Section

@@ -92,9 +92,9 @@ export const initializeDatabase = async () => {
       CREATE TABLE IF NOT EXISTS records (
         id INT PRIMARY KEY AUTO_INCREMENT,
         file_id VARCHAR(255),
-        staff_id INT,
+        user_id INT,
         company_id INT,
-        employee_id VARCHAR(255),
+        staff_id VARCHAR(255),
         staff_name VARCHAR(255) DEFAULT '',
         memo TEXT DEFAULT '',
         audio_file_path VARCHAR(500),
@@ -107,7 +107,7 @@ export const initializeDatabase = async () => {
         date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        FOREIGN KEY (staff_id) REFERENCES users(id) ON DELETE SET NULL,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
         FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE SET NULL,
         INDEX idx_company_id (company_id)
       )
@@ -118,8 +118,8 @@ export const initializeDatabase = async () => {
       CREATE TABLE IF NOT EXISTS follows (
         id INT PRIMARY KEY AUTO_INCREMENT,
         file_id VARCHAR(255),
-        staff_id INT,
-        employee_id VARCHAR(255),
+        user_id INT,
+        staff_id VARCHAR(255),
         audio_file_path VARCHAR(500),
         stt TEXT,
         skill_sheet LONGTEXT,
@@ -130,7 +130,7 @@ export const initializeDatabase = async () => {
         date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        FOREIGN KEY (staff_id) REFERENCES users(id) ON DELETE SET NULL
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
       )
     `;
 
@@ -217,6 +217,11 @@ export const initializeDatabase = async () => {
     
     // Backfill company_id for existing records
     await backfillCompanyId();
+    
+    // Migration: Rename columns (staff_id -> user_id, employee_id -> staff_id)
+    await renameRecordsColumns();
+    await renameFollowsColumns();
+    await renameFollowsColumns();
 
     // Create admin user if it doesn't exist
     const [adminExists] = await pool.query('SELECT * FROM users WHERE role = "admin" LIMIT 1');
@@ -281,10 +286,26 @@ const addCompanyIdToRecords = async () => {
 // Backfill function: Populate company_id for existing records
 const backfillCompanyId = async () => {
   try {
+    // Check if user_id column exists (new name) or staff_id (old name)
+    const dbName = process.env.DB_NAME || 'company_management';
+    const [columns] = await pool.query(`
+      SELECT COLUMN_NAME 
+      FROM INFORMATION_SCHEMA.COLUMNS 
+      WHERE TABLE_SCHEMA = ? 
+      AND TABLE_NAME = 'records' 
+      AND COLUMN_NAME IN ('user_id', 'staff_id')
+    `, [dbName]);
+    
+    const userIdColumn = columns.find(col => col.COLUMN_NAME === 'user_id');
+    const staffIdColumn = columns.find(col => col.COLUMN_NAME === 'staff_id');
+    
+    // Use appropriate column name
+    const joinColumn = userIdColumn ? 'user_id' : 'staff_id';
+    
     // Update records with company_id from users table
     const [result] = await pool.query(`
       UPDATE records r
-      INNER JOIN users u ON r.staff_id = u.id
+      INNER JOIN users u ON r.${joinColumn} = u.id
       SET r.company_id = u.company_id
       WHERE r.company_id IS NULL AND u.company_id IS NOT NULL
     `);
@@ -295,14 +316,164 @@ const backfillCompanyId = async () => {
     const [nullRecords] = await pool.query(`
       SELECT COUNT(*) as count 
       FROM records 
-      WHERE company_id IS NULL AND staff_id IS NOT NULL
+      WHERE company_id IS NULL AND ${joinColumn} IS NOT NULL
     `);
     
     if (nullRecords[0].count > 0) {
-      console.warn(`Warning: ${nullRecords[0].count} records have NULL company_id (staff_id exists but user not found or user has no company_id)`);
+      console.warn(`Warning: ${nullRecords[0].count} records have NULL company_id (${joinColumn} exists but user not found or user has no company_id)`);
     }
   } catch (error) {
     console.error('Error backfilling company_id:', error);
     // Don't throw - allow initialization to continue
   }
-}; 
+};
+
+// Migration function: Rename columns in records table
+const renameRecordsColumns = async () => {
+  try {
+    const dbName = process.env.DB_NAME || 'company_management';
+    
+    // Check current column names
+    const [columns] = await pool.query(`
+      SELECT COLUMN_NAME 
+      FROM INFORMATION_SCHEMA.COLUMNS 
+      WHERE TABLE_SCHEMA = ? 
+      AND TABLE_NAME = 'records' 
+      AND COLUMN_NAME IN ('staff_id', 'employee_id', 'user_id')
+    `, [dbName]);
+    
+    const columnNames = columns.map(col => col.COLUMN_NAME);
+    const hasOldStaffId = columnNames.includes('staff_id');
+    const hasOldEmployeeId = columnNames.includes('employee_id');
+    const hasNewUserId = columnNames.includes('user_id');
+    const hasNewStaffId = columnNames.includes('staff_id') && !hasOldEmployeeId; // staff_id exists but employee_id doesn't (already renamed)
+    
+    // Step 1: Rename staff_id to user_id (if it exists and user_id doesn't)
+    if (hasOldStaffId && !hasNewUserId) {
+      // First, drop the foreign key constraint
+      try {
+        await pool.query(`ALTER TABLE records DROP FOREIGN KEY records_ibfk_1`);
+      } catch (error) {
+        // Try alternative constraint name
+        try {
+          await pool.query(`ALTER TABLE records DROP FOREIGN KEY fk_records_user`);
+        } catch (e) {
+          // Constraint might have different name, try to find it
+          const [constraints] = await pool.query(`
+            SELECT CONSTRAINT_NAME 
+            FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE 
+            WHERE TABLE_SCHEMA = ? 
+            AND TABLE_NAME = 'records' 
+            AND COLUMN_NAME = 'staff_id' 
+            AND REFERENCED_TABLE_NAME = 'users'
+          `, [dbName]);
+          
+          if (constraints.length > 0) {
+            await pool.query(`ALTER TABLE records DROP FOREIGN KEY ${constraints[0].CONSTRAINT_NAME}`);
+          }
+        }
+      }
+      
+      // Rename column
+      await pool.query(`ALTER TABLE records CHANGE COLUMN staff_id user_id INT`);
+      
+      // Recreate foreign key with new name
+      await pool.query(`
+        ALTER TABLE records 
+        ADD CONSTRAINT fk_records_user 
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+      `);
+      
+      console.log('Renamed staff_id to user_id in records table');
+    }
+    
+    // Step 2: Rename employee_id to staff_id (if it exists)
+    if (hasOldEmployeeId && !hasNewStaffId) {
+      await pool.query(`ALTER TABLE records CHANGE COLUMN employee_id staff_id VARCHAR(255)`);
+      console.log('Renamed employee_id to staff_id in records table');
+    }
+    
+    // Update staff_name column position if needed (should be after staff_id)
+    if (hasNewStaffId || hasOldEmployeeId) {
+      try {
+        await pool.query(`ALTER TABLE records MODIFY COLUMN staff_name VARCHAR(255) DEFAULT '' AFTER staff_id`);
+      } catch (error) {
+        // Column position update might fail, but that's okay
+        console.log('Note: Could not update staff_name column position');
+      }
+    }
+  } catch (error) {
+      console.error('Error renaming columns in records table:', error);
+    // Don't throw - allow initialization to continue
+  }
+};
+
+// Migration function: Rename columns in follows table
+const renameFollowsColumns = async () => {
+  try {
+    const dbName = process.env.DB_NAME || 'company_management';
+    
+    // Check current column names
+    const [columns] = await pool.query(`
+      SELECT COLUMN_NAME 
+      FROM INFORMATION_SCHEMA.COLUMNS 
+      WHERE TABLE_SCHEMA = ? 
+      AND TABLE_NAME = 'follows' 
+      AND COLUMN_NAME IN ('staff_id', 'employee_id', 'user_id')
+    `, [dbName]);
+    
+    const columnNames = columns.map(col => col.COLUMN_NAME);
+    const hasOldStaffId = columnNames.includes('staff_id') && columnNames.some(c => c === 'employee_id');
+    const hasOldEmployeeId = columnNames.includes('employee_id');
+    const hasNewUserId = columnNames.includes('user_id');
+    const hasNewStaffId = columnNames.includes('staff_id') && !columnNames.includes('employee_id');
+    
+    // Step 1: Rename staff_id to user_id (if it exists and user_id doesn't)
+    if (hasOldStaffId && !hasNewUserId) {
+      // First, drop the foreign key constraint
+      try {
+        await pool.query(`ALTER TABLE follows DROP FOREIGN KEY follows_ibfk_1`);
+      } catch (error) {
+        // Try alternative constraint name
+        try {
+          await pool.query(`ALTER TABLE follows DROP FOREIGN KEY fk_follows_user`);
+        } catch (e) {
+          // Constraint might have different name, try to find it
+          const [constraints] = await pool.query(`
+            SELECT CONSTRAINT_NAME 
+            FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE 
+            WHERE TABLE_SCHEMA = ? 
+            AND TABLE_NAME = 'follows' 
+            AND COLUMN_NAME = 'staff_id' 
+            AND REFERENCED_TABLE_NAME = 'users'
+          `, [dbName]);
+          
+          if (constraints.length > 0) {
+            await pool.query(`ALTER TABLE follows DROP FOREIGN KEY ${constraints[0].CONSTRAINT_NAME}`);
+          }
+        }
+      }
+      
+      // Rename column
+      await pool.query(`ALTER TABLE follows CHANGE COLUMN staff_id user_id INT`);
+      
+      // Recreate foreign key with new name
+      await pool.query(`
+        ALTER TABLE follows 
+        ADD CONSTRAINT fk_follows_user 
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+      `);
+      
+      console.log('Renamed staff_id to user_id in follows table');
+    }
+    
+    // Step 2: Rename employee_id to staff_id (if it exists)
+    if (hasOldEmployeeId && !hasNewStaffId) {
+      await pool.query(`ALTER TABLE follows CHANGE COLUMN employee_id staff_id VARCHAR(255)`);
+      console.log('Renamed employee_id to staff_id in follows table');
+    }
+  } catch (error) {
+    console.error('Error renaming columns in follows table:', error);
+    // Don't throw - allow initialization to continue
+  }
+};

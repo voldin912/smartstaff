@@ -128,16 +128,16 @@ const getRecords = async (req, res) => {
     let query = `
       SELECT 
         r.id, 
-        r.staff_id as ownerId,
+        r.user_id as ownerId,
         DATE_FORMAT(r.date, '%Y-%m-%d %H:%i:%s') as date,
         r.file_id as fileId, 
-        r.employee_id as staffId, 
+        r.staff_id as staffId, 
         r.staff_name as staffName,
         r.memo,
         r.company_id as companyId,
         u.name as userName
       FROM records r
-      LEFT JOIN users u ON r.staff_id = u.id
+      LEFT JOIN users u ON r.user_id = u.id
     `;
 
     const queryParams = [];
@@ -164,8 +164,8 @@ const getRecords = async (req, res) => {
     } else {
       console.log('Unknown role:', role);
       // Default to showing only user's own records for unknown roles
-      query += ' WHERE r.staff_id = ?';
-      countQuery += ' WHERE r.staff_id = ?';
+      query += ' WHERE r.user_id = ?';
+      countQuery += ' WHERE r.user_id = ?';
       queryParams.push(userId);
       countParams.push(userId);
     }
@@ -220,10 +220,10 @@ const getRecordDetail = async (req, res) => {
     let query = `
       SELECT 
         r.id, 
-        r.staff_id as ownerId,
+        r.user_id as ownerId,
         DATE_FORMAT(r.date, '%Y-%m-%d %H:%i:%s') as date,
         r.file_id as fileId, 
-        r.employee_id as staffId, 
+        r.staff_id as staffId, 
         r.staff_name as staffName,
         r.memo,
         r.stt,
@@ -236,7 +236,7 @@ const getRecordDetail = async (req, res) => {
         u.name as userName,
         r.hope as hope
       FROM records r
-      LEFT JOIN users u ON r.staff_id = u.id
+      LEFT JOIN users u ON r.user_id = u.id
       WHERE r.id = ?
     `;
 
@@ -257,7 +257,7 @@ const getRecordDetail = async (req, res) => {
     } else {
       console.log('Unknown role:', role);
       // Default to showing only user's own records for unknown roles
-      query += ' AND r.staff_id = ?';
+      query += ' AND r.user_id = ?';
       queryParams.push(userId);
     }
 
@@ -590,15 +590,15 @@ const uploadAudio = async (req, res) => {
 
         // Insert record into database
         const query = `
-        INSERT INTO records (file_id, staff_id, company_id, employee_id, audio_file_path, stt, skill_sheet, lor, salesforce, skills, hope, date)
+        INSERT INTO records (file_id, user_id, company_id, staff_id, audio_file_path, stt, skill_sheet, lor, salesforce, skills, hope, date)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
       `;
 
         const [result] = await pool.query(query, [
           fileId,
-          userId,  // Use req.user.id instead of staffId for staff_id
-          companyId, // Add company_id
-          staffId, // This is employee_id (string)
+          userId,  // Use req.user.id for user_id (references users table)
+          companyId, // company_id
+          staffId, // This is staff_id (string, for Salesforce integration)
           audioFilePath,
           combinedText,
           outputs.skillsheet,
@@ -614,7 +614,7 @@ const uploadAudio = async (req, res) => {
             id, 
             DATE_FORMAT(date, '%Y-%m-%d %H:%i:%s') as date,
             file_id as fileId, 
-            employee_id as staffId, 
+            staff_id as staffId, 
             staff_name as staffName,
             memo,
             audio_file_path as audioFilePath,
@@ -733,7 +733,7 @@ const downloadSkillSheet = async (req, res) => {
   try {
     const { recordId } = req.params;
     const [records] = await pool.query(
-      'SELECT skill_sheet, file_id, employee_id, skills FROM records WHERE id = ?',
+      'SELECT skill_sheet, file_id, staff_id, skills FROM records WHERE id = ?',
       [recordId]
     );
     if (records.length === 0) {
@@ -758,7 +758,7 @@ const downloadSkillSheet = async (req, res) => {
     }
 
     const fileId = records[0].file_id;
-    const staffId = records[0].employee_id;
+    const staffId = records[0].staff_id;
     // Parse and clean skills JSON
     let cleanSkillsData = null;
     try {
@@ -895,7 +895,7 @@ const updateStaffId = async (req, res) => {
 
     // Check permission: members can edit records from same company
     let permissionQuery = `
-      SELECT r.*, r.company_id as recordCompanyId, r.staff_id as ownerId
+      SELECT r.*, r.company_id as recordCompanyId, r.user_id as ownerId
       FROM records r
       WHERE r.id = ?
     `;
@@ -922,7 +922,7 @@ const updateStaffId = async (req, res) => {
       return res.status(400).json({ error: 'staffId is required' });
     }
     const [result] = await pool.query(
-      'UPDATE records SET employee_id = ? WHERE id = ?',
+      'UPDATE records SET staff_id = ? WHERE id = ?',
       [staffId, recordId]
     );
     if (result.affectedRows === 0) {
@@ -943,7 +943,7 @@ const updateSkillSheet = async (req, res) => {
 
     // Check permission: members can edit records from same company
     let permissionQuery = `
-      SELECT r.*, r.company_id as recordCompanyId, r.staff_id as ownerId
+      SELECT r.*, r.company_id as recordCompanyId, r.user_id as ownerId
       FROM records r
       WHERE r.id = ?
     `;
@@ -1004,7 +1004,7 @@ const updateSalesforce = async (req, res) => {
 
     // Check permission: members can edit records from same company
     let permissionQuery = `
-      SELECT r.*, r.company_id as recordCompanyId, r.staff_id as ownerId
+      SELECT r.*, r.company_id as recordCompanyId, r.user_id as ownerId
       FROM records r
       WHERE r.id = ?
     `;
@@ -1103,13 +1103,13 @@ const downloadBulk = async (req, res) => {
     const { recordId } = req.params;
     // Get record info
     const [records] = await pool.query(
-      'SELECT file_id, audio_file_path, skill_sheet, salesforce, employee_id, skills, stt, hope FROM records WHERE id = ?',
+      'SELECT file_id, audio_file_path, skill_sheet, salesforce, staff_id, skills, stt, hope FROM records WHERE id = ?',
       [recordId]
     );
     if (records.length === 0) {
       return res.status(404).json({ error: 'Record not found' });
     }
-    const { file_id, audio_file_path, skill_sheet, salesforce, employee_id, skills, stt, hope } = records[0];
+    const { file_id, audio_file_path, skill_sheet, salesforce, staff_id, skills, stt, hope } = records[0];
 
     // Clean and parse skillsheet if it's a string
     const cleanSkillsheet = typeof skill_sheet === 'string'
@@ -1217,7 +1217,7 @@ const downloadBulk = async (req, res) => {
     drawSolidLine(skillSheetPDF);
     skillSheetPDF.text('＋＋プロフィール＋＋');
     drawSolidLine(skillSheetPDF);
-    skillSheetPDF.text(`■氏名：${employee_id}`);
+    skillSheetPDF.text(`■氏名：${staff_id}`);
     drawSolidLine(skillSheetPDF, true);
 
     // Career History Section
@@ -1343,7 +1343,7 @@ const updateLoR = async (req, res) => {
 
     // Check permission: members can edit records from same company
     let permissionQuery = `
-      SELECT r.*, r.company_id as recordCompanyId, r.staff_id as ownerId
+      SELECT r.*, r.company_id as recordCompanyId, r.user_id as ownerId
       FROM records r
       WHERE r.id = ?
     `;
@@ -1402,7 +1402,7 @@ const deleteRecord = async (req, res) => {
     // Apply role-based access control
     if (role === 'member') {
       // Members can only delete their own records
-      query += ' AND r.staff_id = ?';
+      query += ' AND r.user_id = ?';
       queryParams.push(userId);
     } else if (role === 'company-manager') {
       // Company managers can delete records from their company
@@ -1412,7 +1412,7 @@ const deleteRecord = async (req, res) => {
       // Admin can delete all records - no additional WHERE condition
     } else {
       // Unknown role - default to member behavior
-      query += ' AND r.staff_id = ?';
+      query += ' AND r.user_id = ?';
       queryParams.push(userId);
     }
 
@@ -1441,7 +1441,7 @@ const updateStaffName = async (req, res) => {
 
     // Check permission: members can edit records from same company
     let permissionQuery = `
-      SELECT r.*, r.company_id as recordCompanyId, r.staff_id as ownerId
+      SELECT r.*, r.company_id as recordCompanyId, r.user_id as ownerId
       FROM records r
       WHERE r.id = ?
     `;
