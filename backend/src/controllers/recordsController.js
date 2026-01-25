@@ -9,6 +9,8 @@ import archiver from 'archiver';
 import path from 'path';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegPath from 'ffmpeg-static';
+import logger from '../utils/logger.js';
+import cache from '../utils/cache.js';
 
 
 // import path from 'path'
@@ -97,20 +99,133 @@ const transcriptionQueue = new TranscriptionQueue();
 
 ffmpeg.setFfmpegPath(ffmpegPath);
 
-// Get all records
+// Get all records with pagination
 const getRecords = async (req, res) => {
   try {
     const { role, company_id, id: userId } = req.user;
+    
+    // Get pagination parameters from query string
+    const limit = parseInt(req.query.limit) || 50; // Default 50 records per page
+    const offset = parseInt(req.query.offset) || 0; // Default start from 0
+    
+    // Validate pagination parameters
+    if (limit < 1 || limit > 200) {
+      return res.status(400).json({ error: 'Limit must be between 1 and 200' });
+    }
+    if (offset < 0) {
+      return res.status(400).json({ error: 'Offset must be 0 or greater' });
+    }
 
-    console.log('User info:', { role, company_id, userId });
+    logger.debug('User info', { role, company_id, userId });
+    logger.debug('Pagination params', { limit, offset });
 
+    // Build base query for counting total records (no JOIN needed for counting)
+    let countQuery = `
+      SELECT COUNT(*) as total
+      FROM records r
+    `;
+    
+    // Build main query for fetching records (lightweight fields only)
+    // JOIN only needed for userName field
     let query = `
       SELECT 
         r.id, 
-        r.staff_id as ownerId,
+        r.user_id as ownerId,
         DATE_FORMAT(r.date, '%Y-%m-%d %H:%i:%s') as date,
         r.file_id as fileId, 
-        r.employee_id as staffId, 
+        r.staff_id as staffId, 
+        r.staff_name as staffName,
+        r.memo,
+        r.company_id as companyId,
+        u.name as userName
+      FROM records r
+      LEFT JOIN users u ON r.user_id = u.id
+    `;
+
+    const queryParams = [];
+    const countParams = [];
+
+    // Apply role-based filtering using r.company_id (no JOIN needed)
+    if (role === 'member') {
+      // Members can see records from all users in the same company
+      query += ' WHERE r.company_id = ?';
+      countQuery += ' WHERE r.company_id = ?';
+      queryParams.push(company_id);
+      countParams.push(company_id);
+      logger.debug('Filtering for member', { company_id });
+    } else if (role === 'company-manager') {
+      // Company managers can see records from their company
+      query += ' WHERE r.company_id = ?';
+      countQuery += ' WHERE r.company_id = ?';
+      queryParams.push(company_id);
+      countParams.push(company_id);
+      logger.debug('Filtering for company-manager', { company_id });
+    } else if (role === 'admin') {
+      logger.debug('Admin user - no filtering applied, showing all records');
+      // For admin, we want to see all records, so no WHERE clause
+    } else {
+      logger.warn('Unknown role', { role });
+      // Default to showing only user's own records for unknown roles
+      query += ' WHERE r.user_id = ?';
+      countQuery += ' WHERE r.user_id = ?';
+      queryParams.push(userId);
+      countParams.push(userId);
+    }
+
+    query += ' ORDER BY r.created_at DESC';
+    query += ' LIMIT ? OFFSET ?';
+    queryParams.push(limit, offset);
+
+    logger.debug('Final query', { query });
+    logger.debug('Query params', { queryParams });
+
+    // Execute both queries in parallel
+    const [records] = await pool.query(query, queryParams);
+    const [countResult] = await pool.query(countQuery, countParams);
+    
+    const total = countResult[0].total;
+    const hasMore = offset + records.length < total;
+
+    logger.debug('Records found', { count: records.length, total });
+
+    // Return paginated response
+    res.json({
+      records: records,
+      pagination: {
+        total: total,
+        limit: limit,
+        offset: offset,
+        hasMore: hasMore,
+        currentPage: Math.floor(offset / limit) + 1,
+        totalPages: Math.ceil(total / limit)
+      }
+    });
+  } catch (error) {
+    logger.error('Error fetching records', error);
+    res.status(500).json({ error: 'Failed to fetch records' });
+  }
+};
+
+// Get single record detail with all fields
+const getRecordDetail = async (req, res) => {
+  try {
+    const { role, company_id, id: userId } = req.user;
+    const recordId = parseInt(req.params.recordId);
+
+    if (!recordId || isNaN(recordId)) {
+      return res.status(400).json({ error: 'Invalid record ID' });
+    }
+
+    logger.debug('Fetching record detail', { recordId, role, company_id, userId });
+
+    // Build query for fetching full record detail
+    let query = `
+      SELECT 
+        r.id, 
+        r.user_id as ownerId,
+        DATE_FORMAT(r.date, '%Y-%m-%d %H:%i:%s') as date,
+        r.file_id as fileId, 
+        r.staff_id as staffId, 
         r.staff_name as staffName,
         r.memo,
         r.stt,
@@ -119,48 +234,50 @@ const getRecords = async (req, res) => {
         r.salesforce as salesforce,
         r.skills,
         r.audio_file_path as audioFilePath,
-        u.company_id as userCompanyId,
+        r.company_id as companyId,
         u.name as userName,
         r.hope as hope
       FROM records r
-      LEFT JOIN users u ON r.staff_id = u.id
+      LEFT JOIN users u ON r.user_id = u.id
+      WHERE r.id = ?
     `;
 
-    const queryParams = [];
+    const queryParams = [recordId];
 
-    // Apply role-based filtering
+    // Apply role-based filtering using r.company_id (no JOIN needed for filtering)
     if (role === 'member') {
-      // Members can see records from all users in the same company
-      query += ' WHERE u.company_id = ?';
+      query += ' AND r.company_id = ?';
       queryParams.push(company_id);
-      console.log('Filtering for member - company_id:', company_id);
+      logger.debug('Filtering for member', { company_id });
     } else if (role === 'company-manager') {
-      // Company managers can see records from their company
-      query += ' WHERE u.company_id = ?';
+      query += ' AND r.company_id = ?';
       queryParams.push(company_id);
-      console.log('Filtering for company-manager - company_id:', company_id);
+      logger.debug('Filtering for company-manager', { company_id });
     } else if (role === 'admin') {
-      console.log('Admin user - no filtering applied, showing all records');
-      // For admin, we want to see all records, so no WHERE clause
+      logger.debug('Admin user - no additional filtering applied');
+      // For admin, we want to see all records, so no additional WHERE clause
     } else {
-      console.log('Unknown role:', role);
+      logger.warn('Unknown role', { role });
       // Default to showing only user's own records for unknown roles
-      query += ' WHERE r.staff_id = ?';
+      query += ' AND r.user_id = ?';
       queryParams.push(userId);
     }
 
-    query += ' ORDER BY r.date DESC';
-
-    console.log('Final query:', query);
-    console.log('Query params:', queryParams);
+    logger.debug('Detail query', { query });
+    logger.debug('Query params', { queryParams });
 
     const [records] = await pool.query(query, queryParams);
-    console.log('Records found:', records.length);
 
-    res.json(records);
+    if (records.length === 0) {
+      return res.status(404).json({ error: 'Record not found or access denied' });
+    }
+
+    logger.debug('Record detail found', { recordId: records[0].id });
+
+    res.json(records[0]);
   } catch (error) {
-    console.error('Error fetching records:', error);
-    res.status(500).json({ error: 'Failed to fetch records' });
+    logger.error('Error fetching record detail', error);
+    res.status(500).json({ error: 'Failed to fetch record detail' });
   }
 };
 
@@ -178,16 +295,17 @@ const uploadFile = async (filePath) => {
     headers: {
       Authorization: `Bearer ${process.env.DIFY_SECRET_KEY}`,
       ...form.getHeaders()
-    }
+    },
+    timeout: 300000 // 5 minutes timeout for file uploads
   });
 
-  console.log(response.data);
+  logger.debug('API response', { data: response.data });
 
   return response.data.id;
 }
 
 const testAPI = async (req, res) => {
-  console.log('testAPI');
+  logger.debug('testAPI called');
   const txtFilePath = 'C:/Users/ALPHA/BITREP/auth-crud/backend/uploads/audio/1747786259632-912707972.wav.csv';
   const fileId = await uploadFile(txtFilePath);
   const difyResponse = await axios.post(
@@ -209,10 +327,10 @@ const testAPI = async (req, res) => {
       }
     }
   );
-  console.log(difyResponse);
+  logger.debug('Dify response', { response: difyResponse });
   const { status, outputs } = difyResponse.data.data;
   if (status === 'succeeded') {
-    console.log(outputs.response);
+    logger.debug('Dify outputs response', { response: outputs.response });
     res.json({ message: outputs.response });
   }
   else {
@@ -228,19 +346,16 @@ const getTxtPathFromMp3 = (mp3Path) => {
 const uploadAudio = async (req, res) => {
   try {
     if (!req.file) {
-      console.error('Upload error: No file in request');
-      console.error('Request body:', req.body);
-      console.error('Request files:', req.files);
+      logger.error('Upload error: No file in request', { body: req.body, files: req.files });
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
     const { staffId, fileId } = req.body;
     const userId = req.user.id; // Get the actual user ID from auth middleware
+    const companyId = req.user.company_id; // Get company_id from user
 
     if (!staffId || !fileId) {
-      console.error('Upload error: Missing required fields');
-      console.error('Request body:', req.body);
-      console.error('staffId:', staffId, 'fileId:', fileId);
+      logger.error('Upload error: Missing required fields', { body: req.body, staffId, fileId });
       return res.status(400).json({ error: 'Missing required fields: staffId and fileId are required' });
     }
     let audioFilePath = req.file.path;
@@ -276,38 +391,103 @@ const uploadAudio = async (req, res) => {
       fs.writeFileSync(tempFilePath, chunk);
 
       try {
+        // Retry logic for file upload
+        let tempFileId;
+        let uploadRetryCount = 0;
+        const maxUploadRetries = 3;
 
-        const tempFileId = await uploadFile(tempFilePath);
-        // console.log("tempFileId", tempFileId);
-        // Process chunk with Dify workflow
-        const difyResponse = await axios.post(
-          'https://api.dify.ai/v1/workflows/run',
-          {
-            inputs: {
-              "audioFile": {
-                "transfer_method": "local_file",
-                "upload_file_id": tempFileId,
-                "type": "audio"
+        while (uploadRetryCount < maxUploadRetries) {
+          try {
+            tempFileId = await uploadFile(tempFilePath);
+            // console.log("tempFileId", tempFileId);
+            break; // Success, exit retry loop
+          } catch (error) {
+            uploadRetryCount++;
+            logger.warn(`Chunk ${index} - File upload attempt ${uploadRetryCount} failed`, { error: error.message });
+
+            if (uploadRetryCount >= maxUploadRetries) {
+              // All upload retries failed, clean up and return empty string
+              if (fs.existsSync(tempFilePath)) {
+                fs.unlinkSync(tempFilePath);
               }
-            },
-            user: 'voldin012'
-          },
-          {
-            headers: {
-              'Authorization': `Bearer ${process.env.DIFY_SECRET_KEY_STT}`,
-              'Content-Type': 'application/json'
+              logger.error(`Chunk ${index} - All ${maxUploadRetries} file upload attempts failed`);
+              return '';
             }
+
+            // Wait before retry (exponential backoff)
+            const waitTime = Math.pow(2, uploadRetryCount) * 1000; // 2s, 4s, 8s
+            logger.debug(`Chunk ${index} - Waiting ${waitTime}ms before file upload retry ${uploadRetryCount + 1}`);
+            await new Promise(resolve => setTimeout(resolve, waitTime));
           }
-        );
+        }
+        
+        // Retry logic for Dify workflow API calls
+        let difyResponse;
+        let workflowRetryCount = 0;
+        const maxWorkflowRetries = 3;
+
+        while (workflowRetryCount < maxWorkflowRetries) {
+          try {
+            // Process chunk with Dify workflow
+            difyResponse = await axios.post(
+              'https://api.dify.ai/v1/workflows/run',
+              {
+                inputs: {
+                  "audioFile": {
+                    "transfer_method": "local_file",
+                    "upload_file_id": tempFileId,
+                    "type": "audio"
+                  }
+                },
+                user: 'voldin012'
+              },
+              {
+                headers: {
+                  'Authorization': `Bearer ${process.env.DIFY_SECRET_KEY_STT}`,
+                  'Content-Type': 'application/json'
+                },
+                timeout: 240000 // 4 minutes timeout
+              }
+            );
+            break; // Success, exit retry loop
+          } catch (error) {
+            workflowRetryCount++;
+            logger.warn(`Chunk ${index} - Dify workflow API attempt ${workflowRetryCount} failed`, { error: error.message });
+
+            if (workflowRetryCount >= maxWorkflowRetries) {
+              // All retries failed, clean up and return empty string
+              if (fs.existsSync(tempFilePath)) {
+                fs.unlinkSync(tempFilePath);
+              }
+              logger.error(`Chunk ${index} - All ${maxWorkflowRetries} workflow attempts failed`);
+              return '';
+            }
+
+            // Wait before retry (exponential backoff)
+            const waitTime = Math.pow(2, workflowRetryCount) * 1000; // 2s, 4s, 8s
+            logger.debug(`Chunk ${index} - Waiting ${waitTime}ms before workflow retry ${workflowRetryCount + 1}`);
+            await new Promise(resolve => setTimeout(resolve, waitTime));
+          }
+        }
 
         // console.log("dify Response", difyResponse.data.data)
 
         // Clean up temp file
-        fs.unlinkSync(tempFilePath);
+        if (fs.existsSync(tempFilePath)) {
+          fs.unlinkSync(tempFilePath);
+        }
         // console.log("difyResponse", difyResponse.data.data.outputs.stt);
         return difyResponse.data.data.outputs.stt;
       } catch (error) {
-        console.error(`Error processing chunk ${index}:`, error);
+        logger.error(`Error processing chunk ${index}`, error);
+        // Clean up temp file on error
+        if (fs.existsSync(tempFilePath)) {
+          try {
+            fs.unlinkSync(tempFilePath);
+          } catch (unlinkError) {
+            logger.error(`Failed to clean up temp file ${tempFilePath}`, unlinkError);
+          }
+        }
         return '';
       }
     };
@@ -328,9 +508,9 @@ const uploadAudio = async (req, res) => {
     }
 
     // Combine all chunk results
-    console.log("chunk len", chunks.length)
+    logger.debug('Chunk processing', { chunkCount: chunks.length });
     const combinedText = chunkResults.join('\n');
-    console.log("combinedText", combinedText);
+    logger.debug('Combined text length', { length: combinedText?.length || 0 });
     const txtFilePath = getTxtPathFromMp3(audioFilePath);
     fs.writeFileSync(txtFilePath, combinedText);
 
@@ -368,7 +548,7 @@ const uploadAudio = async (req, res) => {
           break; // Success, exit retry loop
         } catch (error) {
           retryCount++;
-          console.error(`Dify API attempt ${retryCount} failed:`, error.message);
+          logger.warn(`Dify API attempt ${retryCount} failed`, { error: error.message });
 
           if (retryCount >= maxRetries) {
             throw error; // Re-throw the error if all retries failed
@@ -376,13 +556,13 @@ const uploadAudio = async (req, res) => {
 
           // Wait before retry (exponential backoff)
           const waitTime = Math.pow(2, retryCount) * 1000; // 2s, 4s, 8s
-          console.log(`Waiting ${waitTime}ms before retry ${retryCount + 1}...`);
+          logger.debug(`Waiting ${waitTime}ms before retry ${retryCount + 1}`);
           await new Promise(resolve => setTimeout(resolve, waitTime));
         }
       }
 
       const { status, outputs } = difyResponse.data.data;
-      console.log("outputs", outputs)
+      logger.debug('Dify outputs', { outputs });
       let skillsheetData = {};
       if (status === 'succeeded') {
         // Clean and parse skillsheet if it's a string
@@ -394,7 +574,7 @@ const uploadAudio = async (req, res) => {
           try {
             skillsheetData = JSON.parse(cleanSkillsheet);
           } catch (e) {
-            console.error("Invalid JSON in cleanSkillsheet:", e);
+            logger.error('Invalid JSON in cleanSkillsheet', e);
             skillsheetData = {}; // or null / fallback value
           }
         } else {
@@ -403,19 +583,20 @@ const uploadAudio = async (req, res) => {
 
         // Extract work content array from skillsheet
         const workContentArray = Object.values(skillsheetData).map(career => career['summary']);
-        console.log("workContentArray", workContentArray);
-        console.log("outputs.skills", outputs.skills);
+        logger.debug('Work content array', { workContentArray });
+        logger.debug('Outputs skills', { skills: outputs.skills });
 
         // Insert record into database
         const query = `
-        INSERT INTO records (file_id, staff_id, employee_id, audio_file_path, stt, skill_sheet, lor, salesforce, skills, hope, date)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+        INSERT INTO records (file_id, user_id, company_id, staff_id, audio_file_path, stt, skill_sheet, lor, salesforce, skills, hope, date)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
       `;
 
         const [result] = await pool.query(query, [
           fileId,
-          userId,  // Use req.user.id instead of staffId for staff_id
-          staffId, // This is employee_id (string)
+          userId,  // Use req.user.id for user_id (references users table)
+          companyId, // company_id
+          staffId, // This is staff_id (string, for Salesforce integration)
           audioFilePath,
           combinedText,
           outputs.skillsheet,
@@ -425,13 +606,20 @@ const uploadAudio = async (req, res) => {
           outputs.hope
         ]);
 
+        // Invalidate cache after creating record
+        if (companyId) {
+          cache.invalidatePattern(`records:company:${companyId}:*`);
+          cache.invalidatePattern(`dashboard:stats:company:${companyId}`);
+        }
+        logger.debug('Cache invalidated after record creation', { companyId });
+
         // Return the created record with formatted date
         const [newRecord] = await pool.query(
           `SELECT 
             id, 
             DATE_FORMAT(date, '%Y-%m-%d %H:%i:%s') as date,
             file_id as fileId, 
-            employee_id as staffId, 
+            staff_id as staffId, 
             staff_name as staffName,
             memo,
             audio_file_path as audioFilePath,
@@ -448,11 +636,11 @@ const uploadAudio = async (req, res) => {
 
         res.status(200).json(newRecord[0]);
       } else {
-        console.log("difyResponse", difyResponse.data.data.outputs);
+        logger.debug('Dify response outputs', { outputs: difyResponse.data.data.outputs });
         res.status(500).json({ message: 'Failed to get response from Dify' });
       }
     } catch (difyError) {
-      console.error('Error calling Dify API:', difyError);
+      logger.error('Error calling Dify API', difyError);
 
       if (difyError.code === 'ECONNABORTED' || difyError.response?.status === 504) {
         res.status(504).json({
@@ -475,7 +663,7 @@ const uploadAudio = async (req, res) => {
       }
     }
   } catch (error) {
-    console.error('Error uploading audio:', error);
+    logger.error('Error uploading audio', error);
     res.status(500).json({ error: 'Failed to upload audio file' });
   }
 };
@@ -526,7 +714,7 @@ const downloadSTT = async (req, res) => {
     });
     doc.end();
   } catch (error) {
-    console.error('Error downloading STT:', error);
+    logger.error('Error downloading STT', error);
     res.status(500).json({ error: 'Failed to download STT' });
   }
 };
@@ -550,7 +738,7 @@ const downloadSkillSheet = async (req, res) => {
   try {
     const { recordId } = req.params;
     const [records] = await pool.query(
-      'SELECT skill_sheet, file_id, employee_id, skills FROM records WHERE id = ?',
+      'SELECT skill_sheet, file_id, staff_id, skills FROM records WHERE id = ?',
       [recordId]
     );
     if (records.length === 0) {
@@ -567,7 +755,7 @@ const downloadSkillSheet = async (req, res) => {
       try {
         skillSheet = JSON.parse(cleanSkillsheet);
       } catch (e) {
-        console.error("Invalid JSON in cleanSkillsheet:", e);
+        logger.error('Invalid JSON in cleanSkillsheet', e);
         skillSheet = {}; // or null / fallback value
       }
     } else {
@@ -575,7 +763,7 @@ const downloadSkillSheet = async (req, res) => {
     }
 
     const fileId = records[0].file_id;
-    const staffId = records[0].employee_id;
+    const staffId = records[0].staff_id;
     // Parse and clean skills JSON
     let cleanSkillsData = null;
     try {
@@ -699,7 +887,7 @@ const downloadSkillSheet = async (req, res) => {
 
     doc.end();
   } catch (error) {
-    console.error('Error downloading skill sheet:', error);
+    logger.error('Error downloading skill sheet', error);
     res.status(500).json({ error: 'Failed to download skill sheet' });
   }
 };
@@ -712,20 +900,19 @@ const updateStaffId = async (req, res) => {
 
     // Check permission: members can edit records from same company
     let permissionQuery = `
-      SELECT r.*, u.company_id as recordCompanyId, r.staff_id as ownerId
+      SELECT r.*, r.company_id as recordCompanyId, r.user_id as ownerId
       FROM records r
-      LEFT JOIN users u ON r.staff_id = u.id
       WHERE r.id = ?
     `;
     const permissionParams = [recordId];
 
     if (role === 'member') {
       // Members can edit records from same company
-      permissionQuery += ' AND u.company_id = ?';
+      permissionQuery += ' AND r.company_id = ?';
       permissionParams.push(company_id);
     } else if (role === 'company-manager') {
       // Company managers can edit records from their company
-      permissionQuery += ' AND u.company_id = ?';
+      permissionQuery += ' AND r.company_id = ?';
       permissionParams.push(company_id);
     }
     // Admin can edit all records - no additional condition
@@ -740,15 +927,23 @@ const updateStaffId = async (req, res) => {
       return res.status(400).json({ error: 'staffId is required' });
     }
     const [result] = await pool.query(
-      'UPDATE records SET employee_id = ? WHERE id = ?',
+      'UPDATE records SET staff_id = ? WHERE id = ?',
       [staffId, recordId]
     );
     if (result.affectedRows === 0) {
       return res.status(404).json({ error: 'Record not found' });
     }
+
+    // Invalidate cache after update
+    if (company_id) {
+      cache.invalidatePattern(`records:company:${company_id}:*`);
+      cache.invalidatePattern(`records:detail:${recordId}:*`);
+    }
+    logger.debug('Cache invalidated after staff ID update', { recordId, company_id });
+
     res.json({ success: true });
   } catch (error) {
-    console.error('Error updating staffId:', error);
+    logger.error('Error updating staffId', error);
     res.status(500).json({ error: 'Failed to update staffId' });
   }
 };
@@ -761,20 +956,19 @@ const updateSkillSheet = async (req, res) => {
 
     // Check permission: members can edit records from same company
     let permissionQuery = `
-      SELECT r.*, u.company_id as recordCompanyId, r.staff_id as ownerId
+      SELECT r.*, r.company_id as recordCompanyId, r.user_id as ownerId
       FROM records r
-      LEFT JOIN users u ON r.staff_id = u.id
       WHERE r.id = ?
     `;
     const permissionParams = [recordId];
 
     if (role === 'member') {
       // Members can edit records from same company
-      permissionQuery += ' AND u.company_id = ?';
+      permissionQuery += ' AND r.company_id = ?';
       permissionParams.push(company_id);
     } else if (role === 'company-manager') {
       // Company managers can edit records from their company
-      permissionQuery += ' AND u.company_id = ?';
+      permissionQuery += ' AND r.company_id = ?';
       permissionParams.push(company_id);
     }
     // Admin can edit all records - no additional condition
@@ -785,8 +979,7 @@ const updateSkillSheet = async (req, res) => {
       return res.status(403).json({ error: 'このレコードを編集する権限がありません。' });
     }
 
-    console.log("skillSheet", skill_sheet);
-    console.log("skills", skills);
+    logger.debug('Updating skill sheet', { skillSheet: skill_sheet, skills });
     if (!skill_sheet || typeof skill_sheet !== 'object') {
       return res.status(400).json({ error: 'Invalid skill sheet data' });
     }
@@ -797,9 +990,17 @@ const updateSkillSheet = async (req, res) => {
     if (result.affectedRows === 0) {
       return res.status(404).json({ error: 'Record not found' });
     }
+
+    // Invalidate cache after update
+    if (company_id) {
+      cache.invalidatePattern(`records:company:${company_id}:*`);
+      cache.invalidatePattern(`records:detail:${recordId}:*`);
+    }
+    logger.debug('Cache invalidated after skill sheet update', { recordId, company_id });
+
     res.json({ success: true });
   } catch (error) {
-    console.error('Error updating skill sheet:', error);
+    logger.error('Error updating skill sheet', error);
     res.status(500).json({ error: 'Failed to update skill sheet' });
   }
 };
@@ -810,7 +1011,7 @@ const getSkillSheet = async (req, res) => {
     const [records] = await pool.query('SELECT skill_sheet FROM records WHERE id = ?', [recordId]);
     res.json(records[0].skill_sheet);
   } catch (error) {
-    console.error('Error getting skill sheet:', error);
+    logger.error('Error getting skill sheet', error);
     res.status(500).json({ error: 'Failed to get skill sheet' });
   }
 };
@@ -823,20 +1024,19 @@ const updateSalesforce = async (req, res) => {
 
     // Check permission: members can edit records from same company
     let permissionQuery = `
-      SELECT r.*, u.company_id as recordCompanyId, r.staff_id as ownerId
+      SELECT r.*, r.company_id as recordCompanyId, r.user_id as ownerId
       FROM records r
-      LEFT JOIN users u ON r.staff_id = u.id
       WHERE r.id = ?
     `;
     const permissionParams = [recordId];
 
     if (role === 'member') {
       // Members can edit records from same company
-      permissionQuery += ' AND u.company_id = ?';
+      permissionQuery += ' AND r.company_id = ?';
       permissionParams.push(company_id);
     } else if (role === 'company-manager') {
       // Company managers can edit records from their company
-      permissionQuery += ' AND u.company_id = ?';
+      permissionQuery += ' AND r.company_id = ?';
       permissionParams.push(company_id);
     }
     // Admin can edit all records - no additional condition
@@ -857,9 +1057,17 @@ const updateSalesforce = async (req, res) => {
     if (result.affectedRows === 0) {
       return res.status(404).json({ error: 'Record not found' });
     }
+
+    // Invalidate cache after update
+    if (company_id) {
+      cache.invalidatePattern(`records:company:${company_id}:*`);
+      cache.invalidatePattern(`records:detail:${recordId}:*`);
+    }
+    logger.debug('Cache invalidated after salesforce update', { recordId, company_id });
+
     res.json({ success: true });
   } catch (error) {
-    console.error('Error updating salesforce data:', error);
+    logger.error('Error updating salesforce data', error);
     res.status(500).json({ error: 'Failed to update salesforce data' });
   }
 };
@@ -913,7 +1121,7 @@ const downloadSalesforce = async (req, res) => {
 
     doc.end();
   } catch (error) {
-    console.error('Error downloading Salesforce:', error);
+    logger.error('Error downloading Salesforce', error);
     res.status(500).json({ error: 'Failed to download Salesforce PDF' });
   }
 };
@@ -923,13 +1131,13 @@ const downloadBulk = async (req, res) => {
     const { recordId } = req.params;
     // Get record info
     const [records] = await pool.query(
-      'SELECT file_id, audio_file_path, skill_sheet, salesforce, employee_id, skills, stt, hope FROM records WHERE id = ?',
+      'SELECT file_id, audio_file_path, skill_sheet, salesforce, staff_id, skills, stt, hope FROM records WHERE id = ?',
       [recordId]
     );
     if (records.length === 0) {
       return res.status(404).json({ error: 'Record not found' });
     }
-    const { file_id, audio_file_path, skill_sheet, salesforce, employee_id, skills, stt, hope } = records[0];
+    const { file_id, audio_file_path, skill_sheet, salesforce, staff_id, skills, stt, hope } = records[0];
 
     // Clean and parse skillsheet if it's a string
     const cleanSkillsheet = typeof skill_sheet === 'string'
@@ -942,7 +1150,7 @@ const downloadBulk = async (req, res) => {
       try {
         skillSheetObj = JSON.parse(cleanSkillsheet);
       } catch (e) {
-        console.error("Invalid JSON in cleanSkillsheet:", e);
+        logger.error('Invalid JSON in cleanSkillsheet', e);
         skillSheetObj = {}; // or null / fallback value
       }
     } else {
@@ -959,7 +1167,7 @@ const downloadBulk = async (req, res) => {
         skillsData = skills;
       }
     } catch (e) {
-      console.error('Error parsing skills data:', e);
+      logger.error('Error parsing skills data', e);
       skillsData = null;
     }
 
@@ -973,7 +1181,7 @@ const downloadBulk = async (req, res) => {
 
     // Handle archive errors
     archive.on('error', (err) => {
-      console.error('Archive error:', err);
+      logger.error('Archive error', err);
       if (!res.headersSent) {
         res.status(500).json({ error: 'Failed to create archive' });
       }
@@ -1037,7 +1245,7 @@ const downloadBulk = async (req, res) => {
     drawSolidLine(skillSheetPDF);
     skillSheetPDF.text('＋＋プロフィール＋＋');
     drawSolidLine(skillSheetPDF);
-    skillSheetPDF.text(`■氏名：${employee_id}`);
+    skillSheetPDF.text(`■氏名：${staff_id}`);
     drawSolidLine(skillSheetPDF, true);
 
     // Career History Section
@@ -1148,7 +1356,7 @@ const downloadBulk = async (req, res) => {
     // Finalize archive
     await archive.finalize();
   } catch (error) {
-    console.error('Error downloading bulk:', error);
+    logger.error('Error downloading bulk', error);
     if (!res.headersSent) {
       res.status(500).json({ error: 'Failed to download bulk zip' });
     }
@@ -1163,20 +1371,19 @@ const updateLoR = async (req, res) => {
 
     // Check permission: members can edit records from same company
     let permissionQuery = `
-      SELECT r.*, u.company_id as recordCompanyId, r.staff_id as ownerId
+      SELECT r.*, r.company_id as recordCompanyId, r.user_id as ownerId
       FROM records r
-      LEFT JOIN users u ON r.staff_id = u.id
       WHERE r.id = ?
     `;
     const permissionParams = [recordId];
 
     if (role === 'member') {
       // Members can edit records from same company
-      permissionQuery += ' AND u.company_id = ?';
+      permissionQuery += ' AND r.company_id = ?';
       permissionParams.push(company_id);
     } else if (role === 'company-manager') {
       // Company managers can edit records from their company
-      permissionQuery += ' AND u.company_id = ?';
+      permissionQuery += ' AND r.company_id = ?';
       permissionParams.push(company_id);
     }
     // Admin can edit all records - no additional condition
@@ -1200,9 +1407,16 @@ const updateLoR = async (req, res) => {
       return res.status(404).json({ error: 'Record not found' });
     }
 
+    // Invalidate cache after update
+    if (company_id) {
+      cache.invalidatePattern(`records:company:${company_id}:*`);
+      cache.invalidatePattern(`records:detail:${recordId}:*`);
+    }
+    logger.debug('Cache invalidated after LoR update', { recordId, company_id });
+
     res.json({ success: true });
   } catch (error) {
-    console.error('Error updating LoR:', error);
+    logger.error('Error updating LoR', error);
     res.status(500).json({ error: 'Failed to update LoR' });
   }
 };
@@ -1214,9 +1428,8 @@ const deleteRecord = async (req, res) => {
     const { role, company_id, id: userId } = req.user;
 
     let query = `
-      SELECT r.*, u.company_id as recordCompanyId
+      SELECT r.*, r.company_id as recordCompanyId
       FROM records r
-      LEFT JOIN users u ON r.staff_id = u.id
       WHERE r.id = ?
     `;
     const queryParams = [recordId];
@@ -1224,17 +1437,17 @@ const deleteRecord = async (req, res) => {
     // Apply role-based access control
     if (role === 'member') {
       // Members can only delete their own records
-      query += ' AND r.staff_id = ?';
+      query += ' AND r.user_id = ?';
       queryParams.push(userId);
     } else if (role === 'company-manager') {
       // Company managers can delete records from their company
-      query += ' AND u.company_id = ?';
+      query += ' AND r.company_id = ?';
       queryParams.push(company_id);
     } else if (role === 'admin') {
       // Admin can delete all records - no additional WHERE condition
     } else {
       // Unknown role - default to member behavior
-      query += ' AND r.staff_id = ?';
+      query += ' AND r.user_id = ?';
       queryParams.push(userId);
     }
 
@@ -1244,12 +1457,23 @@ const deleteRecord = async (req, res) => {
       return res.status(404).json({ error: 'レコードが見つからないか、削除する権限がありません。' });
     }
 
+    // Get company_id before deletion for cache invalidation
+    const recordCompanyId = records[0].recordCompanyId || records[0].company_id;
+
     // Delete the record (physical deletion)
     await pool.query('DELETE FROM records WHERE id = ?', [recordId]);
 
+    // Invalidate cache after deletion
+    if (recordCompanyId) {
+      cache.invalidatePattern(`records:company:${recordCompanyId}:*`);
+      cache.invalidatePattern(`records:detail:${recordId}:*`);
+      cache.invalidatePattern(`dashboard:stats:company:${recordCompanyId}`);
+    }
+    logger.debug('Cache invalidated after record deletion', { recordId, company_id: recordCompanyId });
+
     res.json({ success: true, message: 'Record deleted successfully' });
   } catch (error) {
-    console.error('Error deleting record:', error);
+    logger.error('Error deleting record', error);
     res.status(500).json({ error: 'Failed to delete record' });
   }
 };
@@ -1263,20 +1487,19 @@ const updateStaffName = async (req, res) => {
 
     // Check permission: members can edit records from same company
     let permissionQuery = `
-      SELECT r.*, u.company_id as recordCompanyId, r.staff_id as ownerId
+      SELECT r.*, r.company_id as recordCompanyId, r.user_id as ownerId
       FROM records r
-      LEFT JOIN users u ON r.staff_id = u.id
       WHERE r.id = ?
     `;
     const permissionParams = [recordId];
 
     if (role === 'member') {
       // Members can edit records from same company
-      permissionQuery += ' AND u.company_id = ?';
+      permissionQuery += ' AND r.company_id = ?';
       permissionParams.push(company_id);
     } else if (role === 'company-manager') {
       // Company managers can edit records from their company
-      permissionQuery += ' AND u.company_id = ?';
+      permissionQuery += ' AND r.company_id = ?';
       permissionParams.push(company_id);
     }
     // Admin can edit all records - no additional condition
@@ -1304,13 +1527,20 @@ const updateStaffName = async (req, res) => {
         return res.status(404).json({ error: 'Record not found' });
       }
 
+      // Invalidate cache after update
+      if (company_id) {
+        cache.invalidatePattern(`records:company:${company_id}:*`);
+        cache.invalidatePattern(`records:detail:${recordId}:*`);
+      }
+      logger.debug('Cache invalidated after staff name update', { recordId, company_id });
+
       res.json({ success: true });
     } catch (error) {
-      console.error('Error updating staff name:', error);
+      logger.error('Error updating staff name', error);
       res.status(500).json({ error: 'Failed to update staff name' });
     }
   } catch (error) {
-    console.error('Error updating staff name:', error);
+    logger.error('Error updating staff name', error);
     res.status(500).json({ error: 'Failed to update staff name' });
   }
 };
@@ -1334,9 +1564,20 @@ const updateMemo = async (req, res) => {
       return res.status(404).json({ error: 'Record not found' });
     }
 
+    // Get company_id for cache invalidation
+    const [recordCheck] = await pool.query('SELECT company_id FROM records WHERE id = ?', [recordId]);
+    const recordCompanyId = recordCheck[0]?.company_id;
+
+    // Invalidate cache after update
+    if (recordCompanyId) {
+      cache.invalidatePattern(`records:company:${recordCompanyId}:*`);
+      cache.invalidatePattern(`records:detail:${recordId}:*`);
+    }
+    logger.debug('Cache invalidated after memo update', { recordId, company_id: recordCompanyId });
+
     res.json({ success: true });
   } catch (error) {
-    console.error('Error updating memo:', error);
+    logger.error('Error updating memo', error);
     res.status(500).json({ error: 'Failed to update memo' });
   }
 };
@@ -1355,15 +1596,16 @@ const autoDeleteOldRecords = async () => {
     );
 
     if (result.affectedRows > 0) {
-      console.log(`Auto-deleted ${result.affectedRows} record(s) older than ${months} month(s)`);
+      logger.info(`Auto-deleted ${result.affectedRows} record(s) older than ${months} month(s)`);
     }
   } catch (error) {
-    console.error('Error in auto-delete old records:', error);
+    logger.error('Error in auto-delete old records', error);
   }
 };
 
 export {
   getRecords,
+  getRecordDetail,
   uploadAudio,
   testAPI,
   downloadSTT,

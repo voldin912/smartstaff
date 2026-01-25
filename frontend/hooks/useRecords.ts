@@ -1,28 +1,32 @@
 import { useState, useEffect, useCallback } from 'react';
-import { apiRequest, handleApiError } from '@/lib/api';
-import { Record } from '@/lib/types';
+import { recordsService } from '@/services/recordsService';
+import { RecordSummary, PaginationInfo } from '@/lib/types';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || '';
-
-export const useRecords = () => {
-  const [records, setRecords] = useState<Record[]>([]);
+export const useRecords = (currentPage: number = 1, rowsPerPage: number = 10) => {
+  const [records, setRecords] = useState<RecordSummary[]>([]);
+  const [pagination, setPagination] = useState<PaginationInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchRecords = useCallback(async () => {
+  const fetchRecords = useCallback(async (page?: number, limit?: number) => {
     setLoading(true);
     setError(null);
     try {
-      const data = await apiRequest<Record[]>(`${API_URL}/api/records`);
-      setRecords(data);
+      const pageToFetch = page ?? currentPage;
+      const limitToFetch = limit ?? rowsPerPage;
+      const offset = (pageToFetch - 1) * limitToFetch;
+      
+      const response = await recordsService.getRecords(limitToFetch, offset);
+      setRecords(response.records);
+      setPagination(response.pagination);
     } catch (err) {
-      const errorMessage = handleApiError(err, 'レコードの取得に失敗しました。');
+      const errorMessage = err instanceof Error ? err.message : 'レコードの取得に失敗しました。';
       setError(errorMessage);
       console.error('Error fetching records:', err);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [currentPage, rowsPerPage]);
 
   useEffect(() => {
     fetchRecords();
@@ -30,6 +34,7 @@ export const useRecords = () => {
 
   return {
     records,
+    pagination,
     loading,
     error,
     refetch: fetchRecords,

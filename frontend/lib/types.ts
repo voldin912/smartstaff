@@ -18,6 +18,19 @@ export interface SkillSheetData {
 // skillSheet can be a JSON string (from database) or already parsed object
 export type SkillSheet = string | SkillSheetData | null;
 
+// Lightweight record summary for list display
+export interface RecordSummary {
+  id: number;
+  ownerId?: number;
+  date: string;
+  fileId: string;
+  staffId: string;
+  staffName?: string;
+  userName?: string;
+  memo?: string | null;
+}
+
+// Full record detail with all fields
 export interface Record {
   id: number;
   ownerId?: number;
@@ -50,3 +63,20 @@ export interface AlertMessage {
   type: 'success' | 'error';
   message: string;
 }
+
+export interface PaginationInfo {
+  total: number;
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+  currentPage: number;
+  totalPages: number;
+}
+
+export interface PaginatedResponse<T> {
+  records: T[];
+  pagination: PaginationInfo;
+}
+
+// Type alias for backward compatibility
+export type RecordDetail = Record;

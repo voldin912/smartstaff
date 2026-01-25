@@ -1,5 +1,6 @@
 import { pool } from '../config/database.js';
 import jsforce from 'jsforce';
+import logger from '../utils/logger.js';
 
 // Get Salesforce settings
 export const getSalesforceSettings = async (req, res) => {
@@ -16,7 +17,7 @@ export const getSalesforceSettings = async (req, res) => {
     const [rows] = await pool.query('SELECT * FROM salesforce WHERE company_id = ?', [company_id]);
     res.json(rows[0] || null);
   } catch (error) {
-    console.error('Error fetching Salesforce settings:', error);
+    logger.error('Error fetching Salesforce settings', error);
     res.status(500).json({ message: 'Internal server error' });
   }
 };
@@ -26,13 +27,13 @@ export const updateSalesforceSettings = async (req, res) => {
   try {
     const { role, company_id } = req.user;
     const { base_url, username, password, security_token } = req.body;
-    console.log("req.body", req.body);
+    logger.debug('Request body', { body: req.body });
     
-    console.log("req.body", base_url, username, password, security_token);
+    logger.debug('Salesforce settings', { base_url, username, hasPassword: !!password, hasToken: !!security_token });
     // If user is admin and target_company_id is provided, update that company's settings
     const actualCompanyId = role === 'admin' ? 'admin' : String(company_id);
 
-    console.log("role, company_id", role, company_id);
+    logger.debug('User context', { role, company_id });
     
     const [existing] = await pool.query(
       'SELECT * FROM salesforce WHERE company_id = ?',
@@ -55,7 +56,7 @@ export const updateSalesforceSettings = async (req, res) => {
 
     res.json({ message: 'Salesforce settings updated successfully' });
   } catch (error) {
-    console.error('Error updating Salesforce settings:', error);
+    logger.error('Error updating Salesforce settings', error);
     res.status(500).json({ message: 'Internal server error' });
   }
 };
@@ -64,7 +65,7 @@ async function sfLogin(conn, username, password, security_token) {
   return new Promise((resolve, reject) => {
       conn.login(username, password + security_token, (err, userInfo) => {
           if (err) {
-              console.log("err", err);
+              logger.error('Salesforce connection error', err);
               resolve(err)
           } else {
               resolve(userInfo)
@@ -90,9 +91,9 @@ export const getSalesforceObjects = async (req, res) => {
     let userInfo;
     try {
       userInfo = await conn.login(username, password + security_token);
-      console.log("Login successful for user:", userInfo);
+      logger.info('Salesforce login successful', { userId: userInfo.id });
     } catch (error) {
-      console.error('Salesforce login error:', error);
+      logger.error('Salesforce login error', error);
       return res.status(401).json({ 
         message: 'Failed to authenticate with Salesforce',
         error: error.message
@@ -175,7 +176,7 @@ export const getSalesforceObjects = async (req, res) => {
               isIsDeletable: obj.isIsDeletable
             };
           } catch (error) {
-            console.error(`Error getting metadata for ${obj.name}:`, error);
+            logger.error(`Error getting metadata for ${obj.name}`, error);
             return {
               name: obj.name,
               label: obj.label,
@@ -194,7 +195,7 @@ export const getSalesforceObjects = async (req, res) => {
       totalObjects: objects.length
     });
   } catch (error) {
-    console.error('Error fetching Salesforce objects:', error);
+    logger.error('Error fetching Salesforce objects', error);
     res.status(500).json({ 
       success: false,
       message: 'Failed to fetch Salesforce objects',
@@ -209,11 +210,11 @@ export const saveCareerMappings = async (req, res) => {
     const { role, company_id } = req.user;
     const {careerMappings, staffMemo} = req.body;
     const mappings = careerMappings
-    console.log("mapping staffmemo", mappings, staffMemo)
+    logger.debug('Mapping staff memo', { mappings, staffMemo });
     if (!Array.isArray(mappings) || mappings.length === 0) {
       return res.status(400).json({ message: '無効なマッピングデータです' });
     }
-    console.log(role, company_id);
+    logger.debug('User context', { role, company_id });
     // Use admin as company_id for admin users
     const actualCompanyId = role === 'admin' ? 'admin' : String(company_id);
 
@@ -228,7 +229,7 @@ export const saveCareerMappings = async (req, res) => {
         [actualCompanyId]
       );
       const existingIndices = new Set(existingMappings.map(m => m.career_index));
-      console.log("existingIndices", existingIndices);
+      logger.debug('Existing indices', { existingIndices });
       
       // Process each mapping
       for (const mapping of mappings) {
@@ -267,12 +268,12 @@ export const saveCareerMappings = async (req, res) => {
       res.json({ message: '職務経歴フィールドマッピングの保存が完了しました' });
     } catch (error) {
       await connection.rollback();
-      console.log(error)
+      logger.error('Error in getCareerMappings', error);
     } finally {
       connection.release();
     }
   } catch (error) {
-    console.error('Error saving career mappings:', error);
+    logger.error('Error saving career mappings', error);
     res.status(500).json({ message: 'サーバーエラーが発生しました' });
   }
 };
@@ -322,18 +323,18 @@ export const getCareerMappings = async (req, res) => {
 
     res.json(allMappings);
   } catch (error) {
-    console.error('Error fetching career mappings:', error);
+    logger.error('Error fetching career mappings', error);
     res.status(500).json({ message: 'サーバーエラーが発生しました' });
   }
 };
 
-// Helper function to add timestamp to logs
+// Helper function to add timestamp to logs (uses logger internally)
+// Kept for backward compatibility - all calls use logger.debug for detailed logs
 function logWithTimestamp(message, data = null) {
-  const timestamp = new Date().toISOString();
   if (data) {
-    console.log(`[${timestamp}] ${message}`, data);
+    logger.debug(message, data);
   } else {
-    console.log(`[${timestamp}] ${message}`);
+    logger.debug(message);
   }
 }
 

@@ -3,7 +3,7 @@
 import { useMemo, useRef, useState } from 'react';
 import Image from 'next/image';
 import Pagination from '@/components/molecules/pagination';
-import { Record } from '@/lib/types';
+import { RecordSummary, PaginationInfo } from '@/lib/types';
 import {
   convertToArray,
   formatDate,
@@ -13,30 +13,41 @@ import {
 } from '@/lib/utils';
 import { recordsService } from '@/services/recordsService';
 import { useAuth } from '@/contexts/AuthContext';
+import RecordSkeletonRow from './RecordSkeletonRow';
 
 type SortField = 'date' | 'fileId' | 'userName';
 type SortOrder = 'asc' | 'desc';
 
 interface RecordsTableProps {
-  records: Record[];
+  records: RecordSummary[];
+  pagination: PaginationInfo | null;
   loading: boolean;
-  onSkillSheetEdit: (record: Record) => void;
-  onSkillSheetDownload: (record: Record) => Promise<void>;
-  onSalesforceEdit: (record: Record) => void;
-  onSalesforceDownload: (record: Record) => Promise<void>;
-  onSalesforceIconClick: (record: Record, type: 'skillSheet' | 'salesforce') => void;
-  onLoREdit: (record: Record) => void;
-  onLoRCopy: (record: Record) => Promise<void>;
-  onSTTDownload: (record: Record) => Promise<void>;
-  onBulkDownload: (record: Record) => Promise<void>;
-  onDeleteClick: (record: Record) => void;
+  currentPage: number;
+  rowsPerPage: number;
+  onPageChange: (page: number) => void;
+  onRowsPerPageChange: (rowsPerPage: number) => void;
+  onSkillSheetEdit: (record: RecordSummary) => void;
+  onSkillSheetDownload: (record: RecordSummary) => Promise<void>;
+  onSalesforceEdit: (record: RecordSummary) => void;
+  onSalesforceDownload: (record: RecordSummary) => Promise<void>;
+  onSalesforceIconClick: (record: RecordSummary, type: 'skillSheet' | 'salesforce') => void;
+  onLoREdit: (record: RecordSummary) => void;
+  onLoRCopy: (record: RecordSummary) => Promise<void>;
+  onSTTDownload: (record: RecordSummary) => Promise<void>;
+  onBulkDownload: (record: RecordSummary) => Promise<void>;
+  onDeleteClick: (record: RecordSummary) => void;
   onNotify?: (type: 'success' | 'error', message: string) => void;
   onRefetch?: () => void;
 }
 
 export default function RecordsTable({
   records,
+  pagination,
   loading,
+  currentPage,
+  rowsPerPage,
+  onPageChange,
+  onRowsPerPageChange,
   onSkillSheetEdit,
   onSkillSheetDownload,
   onSalesforceEdit,
@@ -57,8 +68,6 @@ export default function RecordsTable({
   const [sortIconDate, setSortIconDate] = useState<'↑' | '↓'>('↓');
   const [sortIconFileId, setSortIconFileId] = useState<'↑' | '↓'>('↓');
   const [sortIconUserName, setSortIconUserName] = useState<'↑' | '↓'>('↓');
-  const [currentPage, setCurrentPage] = useState(1);
-  const [rowsPerPage, setRowsPerPage] = useState(10);
 
   const [editingStaffId, setEditingStaffId] = useState<number | null>(null);
   const [staffIdInput, setStaffIdInput] = useState('');
@@ -98,6 +107,7 @@ export default function RecordsTable({
     (rec.userName || '').toLowerCase().includes(searchTerm.toLowerCase())
   );
 
+  // Client-side sorting for UI feedback (server already sorts by date DESC)
   const sortedRecords = useMemo(() => {
     return [...filteredRecords].sort((a, b) => {
       if (sortField === 'date') {
@@ -119,12 +129,6 @@ export default function RecordsTable({
       }
     });
   }, [filteredRecords, sortField, sortOrder]);
-
-  const paginatedRecords = useMemo(() => {
-    const indexOfLastRecord = currentPage * rowsPerPage;
-    const indexOfFirstRecord = indexOfLastRecord - rowsPerPage;
-    return sortedRecords.slice(indexOfFirstRecord, indexOfLastRecord);
-  }, [sortedRecords, currentPage, rowsPerPage]);
 
   const notify = (type: 'success' | 'error', message: string) => {
     onNotify?.(type, message);
@@ -191,8 +195,8 @@ export default function RecordsTable({
   };
 
   const handleRowsPerPageChange = (rows: number) => {
-    setRowsPerPage(rows);
-    setCurrentPage(1);
+    onRowsPerPageChange(rows);
+    onPageChange(1); // Reset to first page when changing rows per page
   };
 
   return (
@@ -249,11 +253,13 @@ export default function RecordsTable({
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan={12} className="text-center py-8">Loading...</td></tr>
-                ) : paginatedRecords.length === 0 ? (
+                  Array.from({ length: rowsPerPage || 10 }).map((_, index) => (
+                    <RecordSkeletonRow key={`skeleton-${index}`} />
+                  ))
+                ) : sortedRecords.length === 0 ? (
                   <tr><td colSpan={12} className="text-center py-8">No records found</td></tr>
                 ) : (
-                  paginatedRecords.map((rec) => (
+                  sortedRecords.map((rec) => (
                     <tr key={rec.id} className="border-b border-gray-100 hover:bg-gray-50 transition text-left align-middle rounded-[5px]">
                       {/* Staff ID */}
                       <td className="py-5 px-4 whitespace-nowrap align-middle min-w-[100px] max-w-[300px] rounded-[5px]">
@@ -462,10 +468,10 @@ export default function RecordsTable({
         </div>
       </div>
       <Pagination
-        totalItems={filteredRecords.length}
+        totalItems={pagination?.total || 0}
         currentPage={currentPage}
         rowsPerPage={rowsPerPage}
-        onPageChange={setCurrentPage}
+        onPageChange={onPageChange}
         onRowsPerPageChange={handleRowsPerPageChange}
       />
     </div>
