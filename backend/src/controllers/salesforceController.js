@@ -2,6 +2,7 @@ import { pool } from '../config/database.js';
 import jsforce from 'jsforce';
 import logger from '../utils/logger.js';
 import { encrypt, decrypt, mask } from '../utils/encryption.js';
+import { cache } from '../utils/cache.js';
 
 // Get Salesforce settings
 export const getSalesforceSettings = async (req, res) => {
@@ -128,125 +129,183 @@ async function sfLogin(conn, username, password, security_token) {
   })
 }
 
-// Get Salesforce objects
+// Configuration for Salesforce API rate limiting
+const MAX_CONCURRENT_DESCRIBES = parseInt(process.env.SF_MAX_CONCURRENT_DESCRIBES || '5');
+const SF_CACHE_TTL = parseInt(process.env.SF_CACHE_TTL_SECONDS || '3600'); // 1 hour default
+const SF_MAX_OBJECTS = parseInt(process.env.SF_MAX_OBJECTS || '50');
+
+// Common Salesforce objects to fetch (can be extended)
+const COMMON_SALESFORCE_OBJECTS = [
+  'Account', 'Contact', 'Lead', 'Opportunity', 'Case', 
+  'Task', 'Event', 'Campaign', 'Product2', 'Pricebook2'
+];
+
+// Helper function to limit concurrency
+async function limitConcurrency(tasks, maxConcurrent) {
+  const results = [];
+  for (let i = 0; i < tasks.length; i += maxConcurrent) {
+    const batch = tasks.slice(i, i + maxConcurrent);
+    const batchResults = await Promise.all(batch.map(task => task()));
+    results.push(...batchResults);
+  }
+  return results;
+}
+
+// Get Salesforce objects with rate limiting and caching
 export const getSalesforceObjects = async (req, res) => {
   try {
-    const { base_url, username, password, security_token } = req.body;
+    const { role, company_id } = req.user;
+    const actualCompanyId = role === 'admin' ? 'admin' : String(company_id);
+    
+    // Optional: allow filtering specific objects from query params
+    const { objectNames, useCache = 'true' } = req.query;
+    const requestedObjects = objectNames ? objectNames.split(',').map(name => name.trim()) : null;
 
-    if (!base_url || !username || !password || !security_token) {
-      return res.status(400).json({ message: 'Missing required credentials' });
+    // Check cache first
+    const cacheKey = `salesforce:objects:${actualCompanyId}:${requestedObjects ? requestedObjects.join(',') : 'common'}`;
+    if (useCache === 'true') {
+      const cached = cache.get(cacheKey);
+      if (cached) {
+        logger.info('Returning cached Salesforce objects', { cacheKey, objectCount: cached.data.length });
+        return res.json({
+          success: true,
+          objects: cached.data,
+          totalObjects: cached.data.length,
+          cached: true
+        });
+      }
     }
 
-    // Create a new connection to Salesforce
-    const conn = new jsforce.Connection({
-      loginUrl: base_url
-    });
+    // Get Salesforce credentials from database
+    const [settingsRows] = await pool.query(
+      'SELECT * FROM salesforce WHERE company_id = ?',
+      [actualCompanyId]
+    );
+    const settings = settingsRows[0];
+
+    if (!settings) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Salesforce設定が見つかりません。設定画面で認証情報を登録してください。' 
+      });
+    }
+
+    // Decrypt credentials
+    const decryptedPassword = decrypt(settings.password);
+    const decryptedSecurityToken = decrypt(settings.security_token);
+
+    if (!decryptedPassword || !decryptedSecurityToken) {
+      return res.status(500).json({ 
+        success: false,
+        message: '認証情報の復号化に失敗しました' 
+      });
+    }
+
+    // Create connection
+    const conn = new jsforce.Connection({ loginUrl: settings.base_url });
 
     let userInfo;
     try {
-      userInfo = await conn.login(username, password + security_token);
+      userInfo = await conn.login(settings.username, decryptedPassword + decryptedSecurityToken);
       logger.info('Salesforce login successful', { userId: userInfo.id });
     } catch (error) {
       logger.error('Salesforce login error', error);
       return res.status(401).json({ 
+        success: false,
         message: 'Failed to authenticate with Salesforce',
         error: error.message
       });
     }
 
-    // Get all objects with detailed metadata
+    // Get global metadata
     const metadata = await conn.describeGlobal();
-    const objects = await Promise.all(
-      metadata.sobjects
-        .filter(obj => obj.queryable && obj.createable && obj.updateable)
-        .map(async (obj) => {
-          try {
-            // Get detailed metadata for each object
-            const describe = await conn.describe(obj.name);
-            return {
-              name: obj.name,
-              label: obj.label,
-              labelPlural: obj.labelPlural,
-              keyPrefix: obj.keyPrefix,
-              fields: describe.fields.map(field => ({
-                name: field.name,
-                label: field.label,
-                type: field.type,
-                length: field.length,
-                required: field.nillable === false,
-                unique: field.unique,
-                picklistValues: field.picklistValues || [],
-                referenceTo: field.referenceTo || []
-              })),
-              createable: obj.createable,
-              updateable: obj.updateable,
-              deletable: obj.deletable,
-              queryable: obj.queryable,
-              searchable: obj.searchable,
-              triggerable: obj.triggerable,
-              custom: obj.custom,
-              customSetting: obj.customSetting,
-              deprecatedAndHidden: obj.deprecatedAndHidden,
-              hasSubtypes: obj.hasSubtypes,
-              isSubtype: obj.isSubtype,
-              isInterface: obj.isInterface,
-              isApexTriggerable: obj.isApexTriggerable,
-              isWorkflowEnabled: obj.isWorkflowEnabled,
-              isFeedEnabled: obj.isFeedEnabled,
-              isSearchable: obj.isSearchable,
-              isLayoutable: obj.isLayoutable,
-              isCompactLayoutable: obj.isCompactLayoutable,
-              isProcessEnabled: obj.isProcessEnabled,
-              isReplicateable: obj.isReplicateable,
-              isRetrieveable: obj.isRetrieveable,
-              isUndeletable: obj.isUndeletable,
-              isMergeable: obj.isMergeable,
-              isQueryable: obj.isQueryable,
-              isTriggerable: obj.isTriggerable,
-              isUpdateable: obj.isUpdateable,
-              isCreateable: obj.isCreateable,
-              isDeletable: obj.isDeletable,
-              isCustom: obj.isCustom,
-              isCustomSetting: obj.isCustomSetting,
-              isDeprecatedAndHidden: obj.isDeprecatedAndHidden,
-              isHasSubtypes: obj.isHasSubtypes,
-              isIsSubtype: obj.isIsSubtype,
-              isIsInterface: obj.isIsInterface,
-              isIsApexTriggerable: obj.isIsApexTriggerable,
-              isIsWorkflowEnabled: obj.isIsWorkflowEnabled,
-              isIsFeedEnabled: obj.isIsFeedEnabled,
-              isIsSearchable: obj.isIsSearchable,
-              isIsLayoutable: obj.isIsLayoutable,
-              isIsCompactLayoutable: obj.isIsCompactLayoutable,
-              isIsProcessEnabled: obj.isIsProcessEnabled,
-              isIsReplicateable: obj.isIsReplicateable,
-              isIsRetrieveable: obj.isIsRetrieveable,
-              isIsUndeletable: obj.isIsUndeletable,
-              isIsMergeable: obj.isIsMergeable,
-              isIsQueryable: obj.isIsQueryable,
-              isIsTriggerable: obj.isIsTriggerable,
-              isIsUpdateable: obj.isIsUpdateable,
-              isIsCreateable: obj.isIsCreateable,
-              isIsDeletable: obj.isIsDeletable
-            };
-          } catch (error) {
-            logger.error(`Error getting metadata for ${obj.name}`, error);
-            return {
-              name: obj.name,
-              label: obj.label,
-              error: 'Failed to get detailed metadata'
-            };
-          }
-        })
+    
+    // Filter objects: use requested objects, or common objects, or all (with limit)
+    let objectsToProcess = metadata.sobjects.filter(obj => 
+      obj.queryable && obj.createable && obj.updateable
     );
 
-    // Sort objects by label
-    objects.sort((a, b) => a.label.localeCompare(b.label));
+    if (requestedObjects && requestedObjects.length > 0) {
+      // Filter to only requested objects
+      objectsToProcess = objectsToProcess.filter(obj => 
+        requestedObjects.includes(obj.name)
+      );
+      logger.info(`Filtering to requested objects: ${requestedObjects.join(', ')}`);
+    } else {
+      // Limit to common objects if no specific request (prevent rate limit)
+      const commonObjectsSet = new Set(COMMON_SALESFORCE_OBJECTS);
+      objectsToProcess = objectsToProcess.filter(obj => 
+        commonObjectsSet.has(obj.name)
+      );
+      logger.info(`Using common objects filter (${COMMON_SALESFORCE_OBJECTS.length} objects)`);
+    }
+
+    // Limit total objects to prevent overload
+    if (objectsToProcess.length > SF_MAX_OBJECTS) {
+      logger.warn(`Too many objects requested (${objectsToProcess.length}), limiting to ${SF_MAX_OBJECTS}`);
+      objectsToProcess = objectsToProcess.slice(0, SF_MAX_OBJECTS);
+    }
+
+    logger.info(`Processing ${objectsToProcess.length} Salesforce objects with concurrency limit of ${MAX_CONCURRENT_DESCRIBES}`);
+
+    // Create describe tasks with concurrency limiting
+    const describeTasks = objectsToProcess.map(obj => 
+      async () => {
+        try {
+          const describe = await conn.describe(obj.name);
+          return {
+            name: obj.name,
+            label: obj.label,
+            labelPlural: obj.labelPlural,
+            keyPrefix: obj.keyPrefix,
+            fields: describe.fields.map(field => ({
+              name: field.name,
+              label: field.label,
+              type: field.type,
+              length: field.length,
+              required: field.nillable === false,
+              unique: field.unique,
+              picklistValues: field.picklistValues || [],
+              referenceTo: field.referenceTo || []
+            })),
+            createable: obj.createable,
+            updateable: obj.updateable,
+            deletable: obj.deletable,
+            queryable: obj.queryable,
+            searchable: obj.searchable
+          };
+        } catch (error) {
+          logger.error(`Error getting metadata for ${obj.name}`, error);
+          return {
+            name: obj.name,
+            label: obj.label,
+            error: 'Failed to get detailed metadata'
+          };
+        }
+      }
+    );
+
+    // Execute with concurrency limit
+    const objects = await limitConcurrency(describeTasks, MAX_CONCURRENT_DESCRIBES);
+
+    // Filter out failed objects
+    const successfulObjects = objects.filter(obj => !obj.error);
+    
+    // Sort by label
+    successfulObjects.sort((a, b) => a.label.localeCompare(b.label));
+
+    // Cache the results
+    cache.set(cacheKey, successfulObjects, SF_CACHE_TTL, actualCompanyId);
+    logger.info(`Cached Salesforce objects`, { cacheKey, objectCount: successfulObjects.length, ttl: SF_CACHE_TTL });
 
     res.json({
       success: true,
-      objects: objects,
-      totalObjects: objects.length
+      objects: successfulObjects,
+      totalObjects: successfulObjects.length,
+      cached: false,
+      message: requestedObjects 
+        ? `Fetched ${successfulObjects.length} requested objects`
+        : `Fetched ${successfulObjects.length} common objects (use ?objectNames=Account,Contact to specify)`
     });
   } catch (error) {
     logger.error('Error fetching Salesforce objects', error);
@@ -833,11 +892,23 @@ export const syncAccountWithSalesforce = async (req, res) => {
       });
 
       let parsed = typeof cleanedSkillSheet === 'string' ? JSON.parse(cleanedSkillSheet) : cleanedSkillSheet;
-      workContents = Object.values(parsed).map(career => career['work content'] || '').filter(Boolean);
+      workContents = Object.values(parsed)
+        .map(career => {
+          const workContent = career['work content'] || '';
+          // If work content is an array, join it into a string
+          if (Array.isArray(workContent)) {
+            return workContent.join('\n');
+          }
+          return workContent;
+        })
+        .filter(Boolean);
 
       logWithTimestamp('[syncAccountWithSalesforce] Extracted work contents from skillSheet:', {
         count: workContents.length,
-        lengths: workContents.map((c, i) => ({ index: i + 1, length: c.length }))
+        lengths: workContents.map((c, i) => ({ 
+          index: i + 1, 
+          length: typeof c === 'string' ? c.length : (Array.isArray(c) ? c.join('\n').length : 0)
+        }))
       });
     } else if (type === 'salesforce') {
       logWithTimestamp('[syncAccountWithSalesforce] Processing salesforce data...');
@@ -901,12 +972,17 @@ export const syncAccountWithSalesforce = async (req, res) => {
       const fieldName = mapping.job_description_field;
       const existingContent = accounts[0][fieldName] || '';
 
+      // Convert workContent to string if it's an array
+      const workContentStr = Array.isArray(workContents[i]) 
+        ? workContents[i].join('\n')
+        : (workContents[i] || '');
+
       logWithTimestamp(`[syncAccountWithSalesforce] Career ${i + 1} - Field Info:`, {
         fieldName,
         existingContentLength: existingContent.length,
-        newContentLength: workContents[i]?.length || 0,
+        newContentLength: workContentStr.length,
         existingContentPreview: existingContent.substring(0, 200) + (existingContent.length > 200 ? '...' : ''),
-        newContentPreview: workContents[i]?.substring(0, 200) + (workContents[i]?.length > 200 ? '...' : '')
+        newContentPreview: workContentStr.substring(0, 200) + (workContentStr.length > 200 ? '...' : '')
       });
 
       // Parse existing content
@@ -915,7 +991,7 @@ export const syncAccountWithSalesforce = async (req, res) => {
 
       // Merge with new data - THIS PRESERVES ALL EXISTING DATA
       logWithTimestamp(`[syncAccountWithSalesforce] Career ${i + 1} - Merging data...`);
-      const mergedData = mergeFieldData(existingData, workContents[i], type);
+      const mergedData = mergeFieldData(existingData, workContentStr, type);
 
       // Format for Salesforce storage
       logWithTimestamp(`[syncAccountWithSalesforce] Career ${i + 1} - Formatting for Salesforce...`);
