@@ -1,6 +1,7 @@
 import { pool } from '../config/database.js';
 import jsforce from 'jsforce';
 import logger from '../utils/logger.js';
+import { encrypt, decrypt, mask } from '../utils/encryption.js';
 
 // Get Salesforce settings
 export const getSalesforceSettings = async (req, res) => {
@@ -10,12 +11,28 @@ export const getSalesforceSettings = async (req, res) => {
     // If user is admin, get all settings
     if (role === 'admin') {
       const [rows] = await pool.query('SELECT * FROM salesforce');
-      return res.json(rows);
+      // Mask sensitive credentials before returning
+      const maskedRows = rows.map(row => ({
+        ...row,
+        password: mask(row.password),
+        security_token: mask(row.security_token)
+      }));
+      return res.json(maskedRows);
     }
     
     // For regular users, get their company's settings
     const [rows] = await pool.query('SELECT * FROM salesforce WHERE company_id = ?', [company_id]);
-    res.json(rows[0] || null);
+    if (rows[0]) {
+      // Mask sensitive credentials before returning
+      const maskedRow = {
+        ...rows[0],
+        password: mask(rows[0].password),
+        security_token: mask(rows[0].security_token)
+      };
+      res.json(maskedRow);
+    } else {
+      res.json(null);
+    }
   } catch (error) {
     logger.error('Error fetching Salesforce settings', error);
     res.status(500).json({ message: 'Internal server error' });
@@ -40,17 +57,54 @@ export const updateSalesforceSettings = async (req, res) => {
       [actualCompanyId]
     );
 
+    // Encrypt sensitive credentials before storing
+    let encryptedPassword = null;
+    let encryptedSecurityToken = null;
+    
+    if (password) {
+      // If password is provided, encrypt it
+      // Check if it's already encrypted (starts with hex pattern and is long enough)
+      // If it looks like masked value (starts with ****), don't update
+      if (!password.startsWith('****')) {
+        encryptedPassword = encrypt(password);
+      } else {
+        // Password is masked, keep existing encrypted value
+        if (existing.length > 0 && existing[0].password) {
+          encryptedPassword = existing[0].password;
+        }
+      }
+    } else if (existing.length > 0) {
+      // No password provided, keep existing
+      encryptedPassword = existing[0].password;
+    }
+    
+    if (security_token) {
+      // If security_token is provided, encrypt it
+      // Check if it's masked
+      if (!security_token.startsWith('****')) {
+        encryptedSecurityToken = encrypt(security_token);
+      } else {
+        // Security token is masked, keep existing encrypted value
+        if (existing.length > 0 && existing[0].security_token) {
+          encryptedSecurityToken = existing[0].security_token;
+        }
+      }
+    } else if (existing.length > 0) {
+      // No security_token provided, keep existing
+      encryptedSecurityToken = existing[0].security_token;
+    }
+
     if (existing.length > 0) {
       // Update existing record
       await pool.query(
         'UPDATE salesforce SET base_url = ?, username = ?, password = ?, security_token = ? WHERE company_id = ?',
-        [base_url, username, password, security_token, actualCompanyId]
+        [base_url, username, encryptedPassword, encryptedSecurityToken, actualCompanyId]
       );
     } else {
       // Insert new record
       await pool.query(
         'INSERT INTO salesforce (company_id, base_url, username, password, security_token) VALUES (?, ?, ?, ?, ?)',
-        [actualCompanyId, base_url, username, password, security_token]
+        [actualCompanyId, base_url, username, encryptedPassword, encryptedSecurityToken]
       );
     }
 
@@ -720,10 +774,20 @@ export const syncAccountWithSalesforce = async (req, res) => {
       username: settings.username
     });
 
-    // 2. Login to Salesforce
+    // 2. Decrypt credentials for authentication
+    // The decrypt function handles backward compatibility with plain text data
+    const decryptedPassword = decrypt(settings.password);
+    const decryptedSecurityToken = decrypt(settings.security_token);
+    
+    if (!decryptedPassword || !decryptedSecurityToken) {
+      logger.error('Failed to decrypt Salesforce credentials');
+      return res.status(500).json({ message: '認証情報の復号化に失敗しました' });
+    }
+
+    // 3. Login to Salesforce
     logWithTimestamp('[syncAccountWithSalesforce] Logging in to Salesforce...');
     const conn = new jsforce.Connection({ loginUrl: settings.base_url });
-    await conn.login(settings.username, settings.password + settings.security_token);
+    await conn.login(settings.username, decryptedPassword + decryptedSecurityToken);
     logWithTimestamp('[syncAccountWithSalesforce] ✓ Successfully logged in to Salesforce');
 
     // 3. Query Account by staffId (StaffID__c)
