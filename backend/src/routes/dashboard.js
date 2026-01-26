@@ -30,7 +30,15 @@ router.get('/stats', auth, cacheMiddleware({
       totalCompanies = companies[0].count;
 
       const [recent] = await pool.query(
-        `SELECT u.*, c.name as company_name 
+        `SELECT 
+          u.id,
+          u.company_id,
+          u.name,
+          u.email,
+          u.role,
+          u.avatar,
+          u.created_at,
+          c.name as company_name 
          FROM users u 
          LEFT JOIN companies c ON u.company_id = c.id 
          ORDER BY u.created_at DESC 
@@ -45,7 +53,15 @@ router.get('/stats', auth, cacheMiddleware({
       totalUsers = users[0].count;
 
       const [recent] = await pool.query(
-        `SELECT u.*, c.name as company_name 
+        `SELECT 
+          u.id,
+          u.company_id,
+          u.name,
+          u.email,
+          u.role,
+          u.avatar,
+          u.created_at,
+          c.name as company_name 
          FROM users u 
          LEFT JOIN companies c ON u.company_id = c.id 
          WHERE u.company_id = ? 
@@ -56,12 +72,7 @@ router.get('/stats', auth, cacheMiddleware({
       recentUsers = recent;
     }
 
-    // Remove sensitive information from recent users
-    recentUsers = recentUsers.map(user => {
-      const { password, ...userWithoutPassword } = user;
-      return userWithoutPassword;
-    });
-
+    // No need to remove password - it's not selected in the query
     res.json({
       totalUsers,
       totalCompanies,
