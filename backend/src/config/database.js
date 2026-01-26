@@ -2,11 +2,20 @@ import mysql from 'mysql2/promise';
 import bcrypt from 'bcryptjs';
 import logger from '../utils/logger.js';
 
+// Validate required environment variables
+if (!process.env.DB_NAME) {
+  logger.error('FATAL: DB_NAME environment variable is required but not set');
+  logger.error('Please set DB_NAME in your .env file or environment variables');
+  process.exit(1);
+}
+
+const DB_NAME = process.env.DB_NAME;
+
 const dbConfig = {
   host: process.env.DB_HOST || 'localhost',
   user: process.env.DB_USER || 'root',
   password: process.env.DB_PASSWORD || '1234',
-  database: process.env.DB_NAME || 'mydb',
+  database: DB_NAME, // No fallback - required
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
@@ -29,7 +38,7 @@ export const initializeDatabase = async () => {
       database: undefined // Don't specify database for initial connection
     });
 
-    await connection.query(`CREATE DATABASE IF NOT EXISTS ${process.env.DB_NAME || 'company_management'}`);
+    await connection.query(`CREATE DATABASE IF NOT EXISTS ${DB_NAME}`);
     await connection.end();
 
     // Create tables
@@ -285,7 +294,7 @@ export const runMigrations = async () => {
 // Migration function: Add company_id column to records table
 const addCompanyIdToRecords = async () => {
   try {
-    const dbName = process.env.DB_NAME || 'company_management';
+    const dbName = DB_NAME;
     // Check if column exists
     const [columns] = await pool.query(`
       SELECT COLUMN_NAME 
@@ -329,7 +338,7 @@ const addCompanyIdToRecords = async () => {
 const backfillCompanyId = async () => {
   try {
     // Check if user_id column exists (new name) or staff_id (old name)
-    const dbName = process.env.DB_NAME || 'company_management';
+    const dbName = DB_NAME;
     const [columns] = await pool.query(`
       SELECT COLUMN_NAME 
       FROM INFORMATION_SCHEMA.COLUMNS 
@@ -373,7 +382,7 @@ const backfillCompanyId = async () => {
 // Migration function: Rename columns in records table
 const renameRecordsColumns = async () => {
   try {
-    const dbName = process.env.DB_NAME || 'company_management';
+    const dbName = DB_NAME;
     
     // Check current column names
     const [columns] = await pool.query(`
@@ -453,7 +462,7 @@ const renameRecordsColumns = async () => {
 // Migration function: Rename columns in follows table
 const renameFollowsColumns = async () => {
   try {
-    const dbName = process.env.DB_NAME || 'company_management';
+    const dbName = DB_NAME;
     
     // Check current column names
     const [columns] = await pool.query(`
@@ -523,7 +532,7 @@ const renameFollowsColumns = async () => {
 // Migration function: Add performance indexes
 const addPerformanceIndexes = async () => {
   try {
-    const dbName = process.env.DB_NAME || 'company_management';
+    const dbName = DB_NAME;
     
     // Helper function to check if index exists
     const indexExists = async (tableName, indexName) => {
@@ -578,7 +587,7 @@ const addPerformanceIndexes = async () => {
 // Migration function: Optimize sort columns (add NOT NULL, backfill NULLs, update indexes)
 const optimizeSortColumns = async () => {
   try {
-    const dbName = process.env.DB_NAME || 'company_management';
+    const dbName = DB_NAME;
     
     // Step 1: Backfill NULL dates with created_at
     try {
