@@ -1459,6 +1459,20 @@ const deleteRecord = async (req, res) => {
 
     // Get company_id before deletion for cache invalidation
     const recordCompanyId = records[0].recordCompanyId || records[0].company_id;
+    
+    // Get audio_file_path before deletion
+    const audioFilePath = records[0].audio_file_path;
+
+    // Delete the audio file if it exists
+    if (audioFilePath && fs.existsSync(audioFilePath)) {
+      try {
+        fs.unlinkSync(audioFilePath);
+        logger.debug('Audio file deleted', { recordId, audioFilePath });
+      } catch (fileError) {
+        // Log error but don't fail the deletion if file deletion fails
+        logger.warn('Failed to delete audio file', { recordId, audioFilePath, error: fileError });
+      }
+    }
 
     // Delete the record (physical deletion)
     await pool.query('DELETE FROM records WHERE id = ?', [recordId]);
