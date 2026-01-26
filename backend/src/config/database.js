@@ -17,9 +17,13 @@ const dbConfig = {
 
 export const pool = mysql.createPool(dbConfig);
 
+// Check if auto-migrations are enabled (default: true for development, false for production)
+const ENABLE_AUTO_MIGRATIONS = process.env.ENABLE_AUTO_MIGRATIONS !== 'false' && process.env.ENABLE_AUTO_MIGRATIONS !== '0';
+const NODE_ENV = process.env.NODE_ENV || 'development';
+
 export const initializeDatabase = async () => {
   try {
-    // Create database if it doesn't exist
+    // Create database if it doesn't exist (safe operation)
     const connection = await mysql.createConnection({
       ...dbConfig,
       database: undefined // Don't specify database for initial connection
@@ -144,6 +148,41 @@ export const initializeDatabase = async () => {
     await pool.query(recordsTable);
     await pool.query(followsTable);
 
+    // ============================================
+    // MIGRATION OPERATIONS - Only run if enabled
+    // ============================================
+    if (ENABLE_AUTO_MIGRATIONS) {
+      logger.info('Auto-migrations enabled - running migration operations');
+      await runMigrations();
+    } else {
+      logger.warn('Auto-migrations DISABLED - skipping ALTER/UPDATE operations. Run migrations manually using: npm run migrate');
+      if (NODE_ENV === 'production') {
+        logger.warn('Production mode detected - migrations must be run manually to avoid DB locks and downtime');
+      }
+    }
+
+    // Create admin user if it doesn't exist (safe operation - always run)
+    const [adminExists] = await pool.query('SELECT * FROM users WHERE role = "admin" LIMIT 1');
+    if (adminExists.length === 0) {
+      const hashedPassword = await bcrypt.hash('admin123', 10);
+      await pool.query(
+        'INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)',
+        ['Admin', 'admin@example.com', hashedPassword, 'admin']
+      );
+    }
+
+    logger.info('Database initialized successfully');
+  } catch (error) {
+    logger.error('Error initializing database', error);
+    throw error;
+  }
+};
+
+// Migration operations - separated for manual execution
+export const runMigrations = async () => {
+  try {
+    logger.info('Starting database migrations...');
+
     // Migration: Add staff_name and memo columns to records table if they don't exist
     try {
       await pool.query('SELECT staff_name FROM records LIMIT 1');
@@ -236,19 +275,9 @@ export const initializeDatabase = async () => {
     await optimizeSortColumns();
     await renameFollowsColumns();
 
-    // Create admin user if it doesn't exist
-    const [adminExists] = await pool.query('SELECT * FROM users WHERE role = "admin" LIMIT 1');
-    if (adminExists.length === 0) {
-      const hashedPassword = await bcrypt.hash('admin123', 10);
-      await pool.query(
-        'INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)',
-        ['Admin', 'admin@example.com', hashedPassword, 'admin']
-      );
-    }
-
-    logger.info('Database initialized successfully');
+    logger.info('Database migrations completed successfully');
   } catch (error) {
-    logger.error('Error initializing database', error);
+    logger.error('Error running migrations', error);
     throw error;
   }
 };
