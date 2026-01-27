@@ -2,12 +2,67 @@ import { pool } from '../config/database.js';
 import logger from './logger.js';
 
 /**
- * Acquire a distributed lock using MySQL GET_LOCK
+ * Execute a function with a distributed lock using MySQL GET_LOCK
+ * Ensures GET_LOCK, processing, and RELEASE_LOCK all use the same connection
+ * @param {string} lockName - Name of the lock
+ * @param {number} timeoutSeconds - Lock timeout in seconds (default: 10)
+ * @param {Function} callback - Function to execute while lock is held (receives connection as parameter)
+ * @returns {Promise<{acquired: boolean, result?: any}>}
+ */
+export async function withLock(lockName, timeoutSeconds, callback) {
+  const conn = await pool.getConnection();
+  let lockAcquired = false;
+  
+  try {
+    // Acquire lock on this specific connection
+    const [result] = await conn.query('SELECT GET_LOCK(?, ?) as lockAcquired', [lockName, timeoutSeconds]);
+    lockAcquired = result[0]?.lockAcquired === 1;
+    
+    if (!lockAcquired) {
+      logger.warn(`Failed to acquire lock: ${lockName} (timeout: ${timeoutSeconds}s)`);
+      return { acquired: false };
+    }
+    
+    logger.debug(`Lock acquired: ${lockName}`);
+    
+    // Execute callback with the same connection
+    const callbackResult = await callback(conn);
+    
+    // Release lock on the same connection
+    await conn.query('SELECT RELEASE_LOCK(?)', [lockName]);
+    logger.debug(`Lock released: ${lockName}`);
+    
+    return { acquired: true, result: callbackResult };
+    
+  } catch (error) {
+    logger.error(`Error in withLock: ${lockName}`, error);
+    
+    // Try to release lock if it was acquired
+    if (lockAcquired) {
+      try {
+        await conn.query('SELECT RELEASE_LOCK(?)', [lockName]);
+        logger.debug(`Lock released after error: ${lockName}`);
+      } catch (releaseError) {
+        logger.error(`Error releasing lock after error: ${lockName}`, releaseError);
+      }
+    }
+    
+    throw error;
+  } finally {
+    // Always release the connection back to the pool
+    conn.release();
+  }
+}
+
+/**
+ * Acquire a distributed lock using MySQL GET_LOCK (DEPRECATED - use withLock instead)
+ * @deprecated Use withLock() instead to ensure same connection for GET_LOCK and RELEASE_LOCK
  * @param {string} lockName - Name of the lock
  * @param {number} timeoutSeconds - Lock timeout in seconds (default: 10)
  * @returns {Promise<boolean>} - True if lock acquired, false otherwise
  */
 export async function acquireLock(lockName, timeoutSeconds = 10) {
+  logger.warn('acquireLock() is deprecated. Use withLock() instead to ensure same connection for GET_LOCK and RELEASE_LOCK');
   try {
     const [result] = await pool.query('SELECT GET_LOCK(?, ?) as lockAcquired', [lockName, timeoutSeconds]);
     const lockAcquired = result[0]?.lockAcquired === 1;
@@ -26,11 +81,13 @@ export async function acquireLock(lockName, timeoutSeconds = 10) {
 }
 
 /**
- * Release a distributed lock using MySQL RELEASE_LOCK
+ * Release a distributed lock using MySQL RELEASE_LOCK (DEPRECATED - use withLock instead)
+ * @deprecated Use withLock() instead to ensure same connection for GET_LOCK and RELEASE_LOCK
  * @param {string} lockName - Name of the lock
  * @returns {Promise<boolean>} - True if lock released, false otherwise
  */
 export async function releaseLock(lockName) {
+  logger.warn('releaseLock() is deprecated. Use withLock() instead to ensure same connection for GET_LOCK and RELEASE_LOCK');
   try {
     const [result] = await pool.query('SELECT RELEASE_LOCK(?) as lockReleased', [lockName]);
     const lockReleased = result[0]?.lockReleased === 1;
@@ -52,24 +109,30 @@ export async function releaseLock(lockName) {
  * Check if a job was recently executed (idempotency check)
  * @param {string} jobName - Name of the job
  * @param {number} intervalHours - Minimum hours between executions
+ * @param {object} connection - Optional database connection (if provided, uses this connection)
  * @returns {Promise<{shouldRun: boolean, lastRun: Date|null}>}
  */
-export async function shouldRunJob(jobName, intervalHours) {
+export async function shouldRunJob(jobName, intervalHours, connection = null) {
   try {
     // Check if job_runs table exists, create if not
-    await pool.query(`
+    const createTableQuery = `
       CREATE TABLE IF NOT EXISTS job_runs (
         job_name VARCHAR(255) PRIMARY KEY,
         last_run_at TIMESTAMP NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       )
-    `);
+    `;
+    
+    if (connection) {
+      await connection.query(createTableQuery);
+    } else {
+      await pool.query(createTableQuery);
+    }
 
-    const [rows] = await pool.query(
-      'SELECT last_run_at FROM job_runs WHERE job_name = ?',
-      [jobName]
-    );
+    const [rows] = connection
+      ? await connection.query('SELECT last_run_at FROM job_runs WHERE job_name = ?', [jobName])
+      : await pool.query('SELECT last_run_at FROM job_runs WHERE job_name = ?', [jobName]);
 
     if (rows.length === 0) {
       // Job never run before
@@ -96,15 +159,22 @@ export async function shouldRunJob(jobName, intervalHours) {
 /**
  * Record that a job was executed
  * @param {string} jobName - Name of the job
+ * @param {object} connection - Optional database connection (if provided, uses this connection)
  * @returns {Promise<void>}
  */
-export async function recordJobRun(jobName) {
+export async function recordJobRun(jobName, connection = null) {
   try {
-    await pool.query(`
+    const query = `
       INSERT INTO job_runs (job_name, last_run_at)
       VALUES (?, NOW())
       ON DUPLICATE KEY UPDATE last_run_at = NOW()
-    `, [jobName]);
+    `;
+    
+    if (connection) {
+      await connection.query(query, [jobName]);
+    } else {
+      await pool.query(query, [jobName]);
+    }
     logger.debug(`Job run recorded: ${jobName}`);
   } catch (error) {
     logger.error(`Error recording job run: ${jobName}`, error);
