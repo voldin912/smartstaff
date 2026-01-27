@@ -1634,14 +1634,17 @@ const autoDeleteOldRecords = async () => {
   const intervalHours = parseInt(process.env.AUTO_DELETE_INTERVAL_HOURS || '24');
   
   let lockAcquired = false;
+  let result = null;
   
   try {
     // Step 1: Check idempotency (has job run recently?)
-    const { shouldRun, lastRun } = await shouldRunJob(JOB_NAME, intervalHours);
+    const idempotencyCheck = await shouldRunJob(JOB_NAME, intervalHours);
     
-    if (!shouldRun) {
-      logger.info(`Skipping auto-delete job: last run was ${lastRun ? new Date(lastRun).toISOString() : 'unknown'}`);
-      return { success: false, reason: 'recently_executed', lastRun };
+    if (!idempotencyCheck.shouldRun) {
+      const lastRunStr = idempotencyCheck.lastRun ? new Date(idempotencyCheck.lastRun).toISOString() : 'unknown';
+      logger.info(`Skipping auto-delete job: last run was ${lastRunStr}`);
+      result = { success: false, reason: 'recently_executed', lastRun: idempotencyCheck.lastRun };
+      return result;
     }
     
     // Step 2: Acquire distributed lock
@@ -1649,33 +1652,41 @@ const autoDeleteOldRecords = async () => {
     
     if (!lockAcquired) {
       logger.warn('Auto-delete job skipped: could not acquire lock (another instance may be running)');
-      return { success: false, reason: 'lock_not_acquired' };
+      result = { success: false, reason: 'lock_not_acquired' };
+      return result;
     }
     
     // Step 3: Double-check idempotency after acquiring lock
-    const { shouldRun: shouldRunAfterLock } = await shouldRunJob(JOB_NAME, intervalHours);
-    if (!shouldRunAfterLock) {
+    const idempotencyCheckAfterLock = await shouldRunJob(JOB_NAME, intervalHours);
+    if (!idempotencyCheckAfterLock.shouldRun) {
       logger.info('Auto-delete job skipped: another instance may have already executed it');
-      return { success: false, reason: 'recently_executed_after_lock' };
+      result = { success: false, reason: 'recently_executed_after_lock' };
+      return result;
     }
     
     // Step 4: Execute the deletion
     logger.info('Starting auto-delete old records job...');
-    const result = await _autoDeleteOldRecordsInternal();
+    const deletionResult = await _autoDeleteOldRecordsInternal();
     
     // Step 5: Record successful execution
     await recordJobRun(JOB_NAME);
     
-    logger.info('Auto-delete old records job completed successfully', result);
-    return { success: true, ...result };
+    logger.info('Auto-delete old records job completed successfully', deletionResult);
+    result = { success: true, deletedCount: deletionResult.deletedCount };
+    return result;
     
   } catch (error) {
     logger.error('Error in auto-delete old records job', error);
-    return { success: false, reason: 'error', error: error.message };
+    result = { success: false, reason: 'error', error: error.message };
+    return result;
   } finally {
     // Step 6: Always release the lock
     if (lockAcquired) {
-      await releaseLock(LOCK_NAME);
+      try {
+        await releaseLock(LOCK_NAME);
+      } catch (releaseError) {
+        logger.error('Error releasing lock in finally block', releaseError);
+      }
     }
   }
 };
