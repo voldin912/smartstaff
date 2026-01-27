@@ -11,6 +11,7 @@ import ffmpeg from 'fluent-ffmpeg';
 import ffmpegPath from 'ffmpeg-static';
 import logger from '../utils/logger.js';
 import cache from '../utils/cache.js';
+import { acquireLock, releaseLock, shouldRunJob, recordJobRun } from '../utils/jobLock.js';
 
 
 // import path from 'path'
@@ -1597,7 +1598,8 @@ const updateMemo = async (req, res) => {
 };
 
 // Auto-delete records older than specified months (default: 4 months)
-const autoDeleteOldRecords = async () => {
+// Internal function - performs the actual deletion
+const _autoDeleteOldRecordsInternal = async () => {
   try {
     // Get retention period from environment variable or use default of 4 months
     const months = parseInt(process.env.AUTO_DELETE_RETENTION_MONTHS || '4');
@@ -1611,9 +1613,70 @@ const autoDeleteOldRecords = async () => {
 
     if (result.affectedRows > 0) {
       logger.info(`Auto-deleted ${result.affectedRows} record(s) older than ${months} month(s)`);
+    } else {
+      logger.info(`No records found to delete (older than ${months} month(s))`);
     }
+    
+    return { success: true, deletedCount: result.affectedRows };
   } catch (error) {
     logger.error('Error in auto-delete old records', error);
+    throw error;
+  }
+};
+
+// Safe wrapper with distributed locking and idempotency
+const autoDeleteOldRecords = async () => {
+  const LOCK_NAME = 'auto_delete_old_records';
+  const JOB_NAME = 'auto_delete_old_records';
+  const LOCK_TIMEOUT = 30; // 30 seconds to acquire lock
+  
+  // Get interval from environment variable (default: 24 hours)
+  const intervalHours = parseInt(process.env.AUTO_DELETE_INTERVAL_HOURS || '24');
+  
+  let lockAcquired = false;
+  
+  try {
+    // Step 1: Check idempotency (has job run recently?)
+    const { shouldRun, lastRun } = await shouldRunJob(JOB_NAME, intervalHours);
+    
+    if (!shouldRun) {
+      logger.info(`Skipping auto-delete job: last run was ${lastRun ? new Date(lastRun).toISOString() : 'unknown'}`);
+      return { success: false, reason: 'recently_executed', lastRun };
+    }
+    
+    // Step 2: Acquire distributed lock
+    lockAcquired = await acquireLock(LOCK_NAME, LOCK_TIMEOUT);
+    
+    if (!lockAcquired) {
+      logger.warn('Auto-delete job skipped: could not acquire lock (another instance may be running)');
+      return { success: false, reason: 'lock_not_acquired' };
+    }
+    
+    // Step 3: Double-check idempotency after acquiring lock
+    const { shouldRun: shouldRunAfterLock } = await shouldRunJob(JOB_NAME, intervalHours);
+    if (!shouldRunAfterLock) {
+      logger.info('Auto-delete job skipped: another instance may have already executed it');
+      return { success: false, reason: 'recently_executed_after_lock' };
+    }
+    
+    // Step 4: Execute the deletion
+    logger.info('Starting auto-delete old records job...');
+    const result = await _autoDeleteOldRecordsInternal();
+    
+    // Step 5: Record successful execution
+    await recordJobRun(JOB_NAME);
+    
+    logger.info('Auto-delete old records job completed successfully', result);
+    return { success: true, ...result };
+    
+  } catch (error) {
+    logger.error('Error in auto-delete old records job', error);
+    return { success: false, reason: 'error', error: error.message };
+  } finally {
+    // Step 6: Always release the lock
+    if (lockAcquired) {
+      await releaseLock(LOCK_NAME);
+    }
   }
 };
 

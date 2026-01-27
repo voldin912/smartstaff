@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
-    "migrate": "node src/scripts/migrate.js"
+    "migrate": "node src/scripts/migrate.js",
+    "job:auto-delete": "node src/scripts/autoDeleteJob.js"
   },
   "dependencies": {
     "archiver": "^7.0.1",

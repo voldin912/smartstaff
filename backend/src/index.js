@@ -10,6 +10,7 @@ import recordsRoutes from './routes/records.js';
 import followRoutes from './routes/follow.js';
 import salesforceRoutes from './routes/salesforceRoutes.js';
 import invitationRoutes from './routes/invitations.js';
+import jobRoutes from './routes/jobs.js';
 import { initializeDatabase } from './config/database.js';
 import { autoDeleteOldRecords } from './controllers/recordsController.js';
 import logger from './utils/logger.js';
@@ -67,6 +68,7 @@ app.use('/api/records', recordsRoutes);
 app.use('/api/follow', followRoutes);
 app.use('/api/salesforce', salesforceRoutes);
 app.use('/api/invitations', invitationRoutes);
+app.use('/api/jobs', jobRoutes);
 
 // Initialize database and start server
 initializeDatabase().then(() => {
@@ -74,20 +76,35 @@ initializeDatabase().then(() => {
     logger.info(`Server is running on port ${PORT}`);
     logger.info(`CORS: Allowed origins: ${allowedOrigins.join(', ') || 'none (using environment variable)'}`);
     
-    // Start auto-delete scheduler
-    // Get retention period from environment variable (default: 4 months)
-    const retentionMonths = parseInt(process.env.AUTO_DELETE_RETENTION_MONTHS || '4');
+    // Auto-delete scheduler (optional - disabled by default for multi-instance safety)
+    // Enable with ENABLE_AUTO_DELETE_SCHEDULER=true environment variable
+    // Recommended: Use external scheduler (Cron/Cloud Scheduler) instead
+    const ENABLE_AUTO_DELETE_SCHEDULER = process.env.ENABLE_AUTO_DELETE_SCHEDULER === 'true';
     
-    // Run once immediately on startup
-    autoDeleteOldRecords();
-    
-    // Then run every 24 hours (86400000 milliseconds)
-    const AUTO_DELETE_INTERVAL_HOURS = parseInt(process.env.AUTO_DELETE_INTERVAL_HOURS || '24');
-    setInterval(() => {
-      autoDeleteOldRecords();
-    }, AUTO_DELETE_INTERVAL_HOURS * 60 * 60 * 1000);
-    
-    logger.info(`Auto-delete scheduler started (runs every ${AUTO_DELETE_INTERVAL_HOURS} hours, deletes records older than ${retentionMonths} months)`);
+    if (ENABLE_AUTO_DELETE_SCHEDULER) {
+      const retentionMonths = parseInt(process.env.AUTO_DELETE_RETENTION_MONTHS || '4');
+      const AUTO_DELETE_INTERVAL_HOURS = parseInt(process.env.AUTO_DELETE_INTERVAL_HOURS || '24');
+      
+      logger.warn('⚠️  Auto-delete scheduler enabled in application (not recommended for production)');
+      logger.warn('⚠️  For production, use external scheduler (Cron/Cloud Scheduler) with /api/jobs/auto-delete endpoint');
+      
+      // Run once immediately on startup (with locking protection)
+      autoDeleteOldRecords().catch(err => {
+        logger.error('Error in initial auto-delete run', err);
+      });
+      
+      // Then run every N hours (with locking protection)
+      setInterval(() => {
+        autoDeleteOldRecords().catch(err => {
+          logger.error('Error in scheduled auto-delete run', err);
+        });
+      }, AUTO_DELETE_INTERVAL_HOURS * 60 * 60 * 1000);
+      
+      logger.info(`Auto-delete scheduler started (runs every ${AUTO_DELETE_INTERVAL_HOURS} hours, deletes records older than ${retentionMonths} months)`);
+    } else {
+      logger.info('Auto-delete scheduler disabled (use external scheduler or set ENABLE_AUTO_DELETE_SCHEDULER=true)');
+      logger.info('To trigger manually: POST /api/jobs/auto-delete (requires authentication)');
+    }
   });
 }).catch(err => {
   logger.error('Failed to initialize database', err);
