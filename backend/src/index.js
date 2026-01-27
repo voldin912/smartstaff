@@ -20,12 +20,39 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Middleware
+// CORS Configuration
+// Parse allowed origins from environment variable (comma-separated)
+// Default to localhost for development
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',').map(origin => origin.trim())
+  : [
+      'http://localhost:3000',
+      'http://localhost:3001',
+      'http://127.0.0.1:3000',
+      'http://127.0.0.1:3001'
+    ];
+
+// CORS middleware with proper origin validation
 app.use(cors({
-  origin: '*',
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  origin: (origin, callback) => {
+    // Allow requests with no origin (mobile apps, Postman, curl, etc.)
+    if (!origin) {
+      return callback(null, true);
+    }
+    
+    // Check if origin is in allowed list
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      logger.warn(`CORS: Blocked request from origin: ${origin}`);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true, // Safe now because origin is validated
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  exposedHeaders: ['Content-Type'],
+  maxAge: 86400 // 24 hours - cache preflight requests
 }));
 // Increase body size limit to 100MB for file uploads
 app.use(express.json({ limit: '100mb' }));
@@ -45,6 +72,7 @@ app.use('/api/invitations', invitationRoutes);
 initializeDatabase().then(() => {
   app.listen(PORT, () => {
     logger.info(`Server is running on port ${PORT}`);
+    logger.info(`CORS: Allowed origins: ${allowedOrigins.join(', ') || 'none (using environment variable)'}`);
     
     // Start auto-delete scheduler
     // Get retention period from environment variable (default: 4 months)
