@@ -7,6 +7,7 @@ import { pool } from '../config/database.js';
 import { auth } from '../middleware/auth.js';
 import logger from '../utils/logger.js';
 import cacheMiddleware from '../middleware/cache.js';
+import { jwtSecret } from '../utils/jwtSecret.js';
 
 const router = express.Router();
 
@@ -78,7 +79,7 @@ router.post(
 
       const token = jwt.sign(
         { id: result.insertId },
-        process.env.JWT_SECRET || 'your-super-secret-jwt-key',
+        jwtSecret,
         { expiresIn: '7d' }
       );
 
@@ -122,7 +123,7 @@ router.post(
 
       const token = jwt.sign(
         { id: user.id },
-        process.env.JWT_SECRET || 'your-super-secret-jwt-key',
+        jwtSecret,
         { expiresIn: '7d' }
       );
 
