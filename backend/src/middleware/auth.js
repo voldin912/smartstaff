@@ -1,5 +1,6 @@
 import jwt from 'jsonwebtoken';
 import { pool } from '../config/database.js';
+import { jwtSecret } from '../utils/jwtSecret.js';
 
 export const auth = async (req, res, next) => {
   try {
@@ -8,7 +9,7 @@ export const auth = async (req, res, next) => {
       return res.status(401).json({ message: 'Authentication required' });
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-super-secret-jwt-key');
+    const decoded = jwt.verify(token, jwtSecret);
     const [users] = await pool.query('SELECT * FROM users WHERE id = ?', [decoded.id]);
     
     if (users.length === 0) {
