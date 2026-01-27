@@ -157,6 +157,27 @@ export const initializeDatabase = async () => {
     await pool.query(recordsTable);
     await pool.query(followsTable);
 
+    // Create invitations table
+    const invitationsTable = `
+      CREATE TABLE IF NOT EXISTS invitations (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        token_hash VARCHAR(255) UNIQUE NOT NULL,
+        company_id INT NOT NULL,
+        email VARCHAR(255),
+        created_by_user_id INT,
+        expires_at TIMESTAMP NOT NULL,
+        used BOOLEAN DEFAULT FALSE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+        FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE SET NULL,
+        INDEX idx_token_hash (token_hash),
+        INDEX idx_company_id (company_id),
+        INDEX idx_expires_at (expires_at)
+      )
+    `;
+
+    await pool.query(invitationsTable);
+
     // ============================================
     // MIGRATION OPERATIONS - Only run if enabled
     // ============================================

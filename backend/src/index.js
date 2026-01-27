@@ -9,6 +9,7 @@ import companyRoutes from './routes/companies.js';
 import recordsRoutes from './routes/records.js';
 import followRoutes from './routes/follow.js';
 import salesforceRoutes from './routes/salesforceRoutes.js';
+import invitationRoutes from './routes/invitations.js';
 import { initializeDatabase } from './config/database.js';
 import { autoDeleteOldRecords } from './controllers/recordsController.js';
 import logger from './utils/logger.js';
@@ -38,6 +39,7 @@ app.use('/api/companies', companyRoutes);
 app.use('/api/records', recordsRoutes);
 app.use('/api/follow', followRoutes);
 app.use('/api/salesforce', salesforceRoutes);
+app.use('/api/invitations', invitationRoutes);
 
 // Initialize database and start server
 initializeDatabase().then(() => {
