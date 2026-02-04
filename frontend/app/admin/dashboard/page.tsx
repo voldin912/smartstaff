@@ -12,7 +12,7 @@ import { useRecords } from "@/hooks/useRecords";
 import { useRecordDetail } from "@/hooks/useRecordDetail";
 import { generateFileId } from "@/lib/utils";
 import { convertToArray } from "@/lib/utils";
-import { UploadStatus, Record as RecordType, RecordSummary, AlertMessage } from "@/lib/types";
+import { UploadStatus, Record as RecordType, RecordSummary, AlertMessage, ProcessingJob } from "@/lib/types";
 import { recordsService } from "@/services/recordsService";
 import DashboardHeader from "@/components/dashboard/DashboardHeader";
 import AlertMessageComp from "@/components/dashboard/AlertMessage";
@@ -68,6 +68,64 @@ export default function DashboardPage() {
     }
   }, [detailRecord, detailRecordId, detailLoading, isSkillSheetOpen, isSalesforceOpen, isLoROpen]);
 
+  // Polling cleanup reference
+  const [pollCleanup, setPollCleanup] = useState<(() => void) | null>(null);
+
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => {
+      if (pollCleanup) {
+        pollCleanup();
+      }
+    };
+  }, [pollCleanup]);
+
+  // Handle progress updates from polling
+  const handleProgressUpdate = (job: ProcessingJob) => {
+    const progressMap: { [key: string]: UploadStatus['progress'] } = {
+      'pending': 'uploading',
+      'processing': 'transcribing',
+      'completed': 'complete',
+      'failed': 'error'
+    };
+
+    setUploadStatus(prev => ({
+      ...prev,
+      isUploading: job.status !== 'completed' && job.status !== 'failed',
+      progress: progressMap[job.status] || 'processing',
+      message: job.currentStep || '処理中...',
+      progressPercent: job.progress,
+      jobId: job.jobId
+    }));
+  };
+
+  // Handle job completion
+  const handleJobComplete = (job: ProcessingJob) => {
+    setUploadStatus({
+      isUploading: false,
+      progress: 'complete',
+      message: '処理が完了しました。',
+      progressPercent: 100,
+      jobId: job.jobId
+    });
+    notify('success', 'ファイルの処理が完了しました。');
+    refetch();
+    setPollCleanup(null);
+  };
+
+  // Handle job error
+  const handleJobError = (error: string) => {
+    setUploadStatus(prev => ({
+      ...prev,
+      isUploading: false,
+      progress: 'error',
+      message: error
+    }));
+    notify('error', error);
+    setPollCleanup(null);
+  };
+
+  // File upload handler (async with polling)
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -89,42 +147,49 @@ export default function DashboardPage() {
     }
 
     const fileSizeInMB = file.size / (1024 * 1024);
-    const estimatedMinutes = Math.ceil(fileSizeInMB * 1.5);
+    const estimatedMinutes = Math.ceil(fileSizeInMB * 0.5); // Faster with parallel processing
     const estimatedTime = estimatedMinutes > 1 ? `${estimatedMinutes}分程度` : '1分程度';
 
     setUploadStatus({
       isUploading: true,
       progress: 'uploading',
       message: 'ファイルをアップロード中です...',
-      estimatedTime
+      estimatedTime,
+      progressPercent: 0
     });
 
     try {
-      setUploadStatus(prev => ({
-        ...prev,
-        progress: 'transcribing',
-        message: `音声ファイルの文字起こしを開始しました。\n完了までお待ちください。`
-      }));
-
-      await recordsService.uploadAudio(
+      // Upload and get job ID (returns immediately)
+      const response = await recordsService.uploadAudio(
         file,
         generateFileId(file.name.split('.')[0]),
         user.id.toString()
       );
 
-      setUploadStatus({
-        isUploading: false,
-        progress: 'complete',
-        message: 'ファイルの処理が完了しました。'
-      });
+      setUploadStatus(prev => ({
+        ...prev,
+        progress: 'transcribing',
+        message: '処理を開始しました...',
+        jobId: response.jobId,
+        progressPercent: 5
+      }));
+
+      // Start polling for job status
+      const cleanup = recordsService.pollJobStatus(
+        response.jobId,
+        handleProgressUpdate,
+        handleJobComplete,
+        handleJobError
+      );
       
-      notify('success', 'ファイルの処理が完了しました。');
-      refetch();
+      setPollCleanup(() => cleanup);
+
     } catch (error) {
       setUploadStatus({
         isUploading: false,
         progress: 'error',
-        message: (error as Error).message || 'アップロードに失敗しました。'
+        message: (error as Error).message || 'アップロードに失敗しました。',
+        progressPercent: 0
       });
       notify('error', (error as Error).message || 'アップロードに失敗しました。');
     }

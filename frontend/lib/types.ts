@@ -54,6 +54,34 @@ export interface UploadStatus {
   progress: 'uploading' | 'transcribing' | 'processing' | 'complete' | 'error';
   message: string;
   estimatedTime?: string;
+  jobId?: number;
+  progressPercent?: number;
+}
+
+// Processing job status for async upload
+export type ProcessingJobStatus = 'pending' | 'processing' | 'completed' | 'failed';
+
+export interface ProcessingJob {
+  jobId: number;
+  fileId: string;
+  userId?: number;
+  companyId?: number;
+  staffId: string;
+  status: ProcessingJobStatus;
+  progress: number;
+  currentStep: string;
+  totalChunks: number;
+  completedChunks: number;
+  errorMessage?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string | null;
+}
+
+export interface UploadResponse {
+  jobId: number;
+  message: string;
+  status: string;
 }
 
 export type SortField = 'date' | 'fileId' | 'userName';

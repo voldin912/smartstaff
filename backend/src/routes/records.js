@@ -1,7 +1,27 @@
 import express from 'express';
 import multer from 'multer';
 import { auth } from '../middleware/auth.js';
-import { getRecords, getRecordDetail, uploadAudio, testAPI, downloadSTT, downloadSkillSheet, updateStaffId, updateStaffName, updateMemo, updateSkillSheet, getSkillSheet, updateSalesforce, downloadSalesforce, downloadBulk, updateLoR, deleteRecord } from '../controllers/recordsController.js';
+import { 
+  getRecords, 
+  getRecordDetail, 
+  uploadAudio, 
+  getProcessingJobStatus,
+  getProcessingJobs,
+  retryProcessingJob,
+  testAPI, 
+  downloadSTT, 
+  downloadSkillSheet, 
+  updateStaffId, 
+  updateStaffName, 
+  updateMemo, 
+  updateSkillSheet, 
+  getSkillSheet, 
+  updateSalesforce, 
+  downloadSalesforce, 
+  downloadBulk, 
+  updateLoR, 
+  deleteRecord 
+} from '../controllers/recordsController.js';
 import { upload } from '../middleware/upload.js';
 import logger from '../utils/logger.js';
 import cacheMiddleware, { getCacheKey } from '../middleware/cache.js';
@@ -49,6 +69,23 @@ router.post('/upload', auth, (req, res, next) => {
     next();
   });
 }, uploadAudio);
+
+// ============================================
+// Processing Job Status APIs (for async upload)
+// ============================================
+
+// Get all processing jobs for current user
+router.get('/processing/jobs', auth, getProcessingJobs);
+
+// Get single processing job status (for polling)
+router.get('/processing/jobs/:jobId', auth, getProcessingJobStatus);
+
+// Retry a failed processing job
+router.post('/processing/jobs/:jobId/retry', auth, retryProcessingJob);
+
+// ============================================
+// Record Download/Update APIs
+// ============================================
 
 // Download STT as PDF
 router.get('/:recordId/stt', auth, downloadSTT);
