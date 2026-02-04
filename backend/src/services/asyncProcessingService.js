@@ -17,11 +17,14 @@ const CONFIG = {
   maxChunkSize: 10 * 1024 * 1024,  // 10MB
   minChunkSize: 1 * 1024 * 1024,   // 1MB
   fallbackChunkSize: 4 * 1024 * 1024, // 4MB
+  maxChunkDuration: parseInt(process.env.MAX_CHUNK_DURATION || '180'), // 3 min target
+  maxChunkDurationHard: parseInt(process.env.MAX_CHUNK_DURATION_HARD || '210'), // 3.5 min absolute max
   silenceThreshold: parseInt(process.env.SILENCE_THRESHOLD || '-40'), // dB
   silenceDuration: parseFloat(process.env.SILENCE_DURATION || '0.5'), // seconds
   difyTimeout: 240000, // 4 minutes
   uploadTimeout: 300000, // 5 minutes
 };
+
 
 // ============================================
 // Job Management Functions
@@ -460,44 +463,77 @@ export async function splitAudioWithSilenceDetection(audioFilePath) {
     let splitPoints = [];
     
     if (silencePoints.length > 0) {
-      // Use silence points to determine split locations
+      // Hybrid silence-based splitting with soft/hard duration limits
       let lastSplitTime = 0;
+      let i = 0;
       
-      for (const silence of silencePoints) {
+      while (i < silencePoints.length) {
+        const silence = silencePoints[i];
         const timeSinceLastSplit = silence.midpoint - lastSplitTime;
         const estimatedChunkSize = timeSinceLastSplit * bytesPerSecond;
         
-        // Split if chunk would be too large
-        if (estimatedChunkSize >= CONFIG.maxChunkSize * 0.8) {
+        // Case 1: Chunk exceeds soft limit (3 min) or size limit - split at this silence
+        if (timeSinceLastSplit >= CONFIG.maxChunkDuration || 
+            estimatedChunkSize >= CONFIG.maxChunkSize * 0.8) {
           splitPoints.push(silence.midpoint);
           lastSplitTime = silence.midpoint;
         }
+        // Case 2: Check if we need to force-split (hard limit exceeded with no silence)
+        else if (i === silencePoints.length - 1 || 
+                 silencePoints[i + 1].midpoint - lastSplitTime > CONFIG.maxChunkDurationHard) {
+          // Next silence would exceed hard limit, check if current chunk is too long
+          if (timeSinceLastSplit > CONFIG.maxChunkDuration * 0.5) {
+            // Current chunk is reasonably sized, split here
+            splitPoints.push(silence.midpoint);
+            lastSplitTime = silence.midpoint;
+          }
+        }
+        
+        i++;
       }
       
-      // Ensure we don't have empty chunks at the end
-      if (splitPoints.length > 0 && (duration - splitPoints[splitPoints.length - 1]) < 5) {
-        splitPoints.pop(); // Remove last split point if remaining duration is too short
+      // Handle remaining audio after last silence point
+      const remainingDuration = duration - lastSplitTime;
+      if (remainingDuration > CONFIG.maxChunkDurationHard) {
+        // Need to add force-split points for the remaining audio
+        let currentTime = lastSplitTime + CONFIG.maxChunkDuration;
+        while (currentTime < duration - 5) {
+          splitPoints.push(currentTime);
+          currentTime += CONFIG.maxChunkDuration;
+        }
+        logger.debug('Added force-split points for remaining audio', {
+          remainingDuration,
+          forceSplitCount: splitPoints.length
+        });
+      }
+      
+      // Remove split points too close to the end
+      while (splitPoints.length > 0 && (duration - splitPoints[splitPoints.length - 1]) < 5) {
+        splitPoints.pop();
       }
       
       logger.debug('Using silence-based splitting', { 
         splitPointsCount: splitPoints.length,
-        silencePointsCount: silencePoints.length
+        silencePointsCount: silencePoints.length,
+        maxChunkDuration: CONFIG.maxChunkDuration,
+        maxChunkDurationHard: CONFIG.maxChunkDurationHard,
+        estimatedChunks: splitPoints.length + 1
       });
     }
     
     // Fallback to time-based splitting if no suitable silence points found
-    if (splitPoints.length === 0 && fileSize > CONFIG.fallbackChunkSize) {
-      const fallbackDuration = CONFIG.fallbackChunkSize / bytesPerSecond;
-      let currentTime = fallbackDuration;
+    if (splitPoints.length === 0 && duration > CONFIG.maxChunkDuration) {
+      // No silence points - use fixed interval splitting based on maxChunkDuration
+      let currentTime = CONFIG.maxChunkDuration;
       
       while (currentTime < duration - 5) { // Leave at least 5 seconds for last chunk
         splitPoints.push(currentTime);
-        currentTime += fallbackDuration;
+        currentTime += CONFIG.maxChunkDuration;
       }
       
-      logger.debug('Using time-based fallback splitting', { 
+      logger.debug('Using fixed-interval fallback (no silence detected)', { 
         splitPointsCount: splitPoints.length,
-        fallbackDuration
+        intervalDuration: CONFIG.maxChunkDuration
       });
     }
     
