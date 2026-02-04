@@ -25,16 +25,16 @@ const navItems: NavItem[] = [
     roles: ['admin', 'company-manager', 'member'],
   },
   {
-    href: '/follow',
-    label: 'Follow',
-    icon: (
-      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-      </svg>
-    ),
-    roles: ['admin', 'company-manager', 'member'],
-  },
-  {
+  //   href: '/follow',
+  //   label: 'Follow',
+  //   icon: (
+  //     <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+  //       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+  //     </svg>
+  //   ),
+  //   roles: ['admin', 'company-manager', 'member'],
+  // },
+  // {
     href: '/companies',
     label: 'Companies',
     icon: (
@@ -90,12 +90,12 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           href: `/${baseSlug}/dashboard`
         };
       }
-      if (item.href === '/follow') {
-        return {
-          ...item,
-          href: `/${baseSlug}/follow`
-        };
-      }
+      // if (item.href === '/follow') {
+      //   return {
+      //     ...item,
+      //     href: `/${baseSlug}/follow`
+      //   };
+      // }
       return item;
     });
   };

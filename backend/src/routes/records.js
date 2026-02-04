@@ -28,15 +28,15 @@ import cacheMiddleware, { getCacheKey } from '../middleware/cache.js';
 
 const router = express.Router();
 
-// Get all records (with caching)
-router.get('/', auth, cacheMiddleware({
+// Get all records (caching disabled for immediate UI updates)
+router.get('/', auth, /* cacheMiddleware({
   prefix: 'records',
   includeQuery: true,
   ttl: 30
-}), getRecords);
+}), */ getRecords);
 
-// Get single record detail (must be before other /:recordId routes) (with caching)
-router.get('/:recordId', auth, cacheMiddleware({
+// Get single record detail (must be before other /:recordId routes) (caching disabled for immediate UI updates)
+router.get('/:recordId', auth, /* cacheMiddleware({
   keyGenerator: (req) => {
     const recordId = req.params.recordId;
     const { role, company_id } = req.user;
@@ -47,7 +47,7 @@ router.get('/:recordId', auth, cacheMiddleware({
   },
   includeParams: true,
   ttl: 30
-}), getRecordDetail);
+}), */ getRecordDetail);
 
 // Upload audio file with multer error handling
 router.post('/upload', auth, (req, res, next) => {

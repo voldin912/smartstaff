@@ -210,6 +210,9 @@ export default function DashboardPage() {
     const file = event.target.files?.[0];
     if (!file) return;
 
+    // Reset input immediately to allow re-selecting the same file
+    event.target.value = '';
+
     if (!user?.id) {
       notify('error', 'ユーザー情報の取得に失敗しました。再度ログインしてください。');
       return;

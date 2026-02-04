@@ -12,7 +12,7 @@ ffmpeg.setFfmpegPath(ffmpegPath);
 
 // Configuration
 const CONFIG = {
-  maxConcurrency: parseInt(process.env.CHUNK_CONCURRENCY || '5'),
+  maxConcurrency: parseInt(process.env.CHUNK_CONCURRENCY || '10'),
   maxRetries: parseInt(process.env.CHUNK_MAX_RETRIES || '3'),
   maxChunkSize: 10 * 1024 * 1024,  // 10MB
   minChunkSize: 1 * 1024 * 1024,   // 1MB

@@ -76,11 +76,11 @@ export default function UploadModal({ uploadStatus, isVisible, onClose }: Upload
           </p>
 
           {/* Estimated Time */}
-          {uploadStatus.estimatedTime && (
+          {/* {uploadStatus.estimatedTime && (
             <p className="text-sm text-gray-500 mt-2">
               予想時間: {uploadStatus.estimatedTime}
             </p>
-          )}
+          )} */}
 
           {/* Job ID for reference */}
           {uploadStatus.jobId && (
