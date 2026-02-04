@@ -4,11 +4,15 @@ import { UploadStatus } from '@/lib/types';
 
 interface UploadModalProps {
   uploadStatus: UploadStatus;
+  isVisible: boolean;
   onClose: () => void;
 }
 
-export default function UploadModal({ uploadStatus, onClose }: UploadModalProps) {
-  if (!uploadStatus.isUploading) return null;
+export default function UploadModal({ uploadStatus, isVisible, onClose }: UploadModalProps) {
+  // Don't show if not visible or nothing to show
+  if (!isVisible || (!uploadStatus.isUploading && uploadStatus.progress !== 'complete' && uploadStatus.progress !== 'error')) {
+    return null;
+  }
 
   const progressPercent = uploadStatus.progressPercent || 0;
   const isProcessing = uploadStatus.progress === 'uploading' || 

@@ -21,6 +21,9 @@ import DeleteModal from "@/components/dashboard/DeleteModal";
 import SalesforceSyncModal from "@/components/dashboard/SalesforceSyncModal";
 import RecordsTable from "@/components/dashboard/RecordsTable";
 
+// localStorage key for persisting active job across page navigations
+const ACTIVE_JOB_KEY = 'smartstaff_active_job';
+
 export default function DashboardPage() {
   const { user } = useAuth();
   const [currentPage, setCurrentPage] = useState(1);
@@ -37,6 +40,7 @@ export default function DashboardPage() {
     progress: 'uploading',
     message: '',
   });
+  const [isUploadModalVisible, setIsUploadModalVisible] = useState(false);
   const [isLoROpen, setIsLoROpen] = useState(false);
   const [selectedLoRRecord, setSelectedLoRRecord] = useState<RecordType | null>(null);
   const [showSalesforceModal, setShowSalesforceModal] = useState(false);
@@ -80,6 +84,78 @@ export default function DashboardPage() {
     };
   }, [pollCleanup]);
 
+  // Check for active job on mount and resume polling if needed
+  useEffect(() => {
+    const checkActiveJob = async () => {
+      try {
+        const stored = localStorage.getItem(ACTIVE_JOB_KEY);
+        if (!stored) return;
+
+        const { jobId } = JSON.parse(stored);
+        if (!jobId) return;
+
+        // Fetch current job status
+        const job = await recordsService.getJobStatus(jobId);
+
+        if (job.status === 'pending' || job.status === 'processing') {
+          // Job still running - restore state and resume polling
+          const progressMap: { [key: string]: UploadStatus['progress'] } = {
+            'pending': 'uploading',
+            'processing': 'transcribing',
+          };
+
+          setUploadStatus({
+            isUploading: true,
+            progress: progressMap[job.status] || 'processing',
+            message: job.currentStep || '処理中...',
+            progressPercent: job.progress,
+            jobId: job.jobId
+          });
+
+          // Resume polling
+          const cleanup = recordsService.pollJobStatus(
+            jobId,
+            handleProgressUpdate,
+            handleJobComplete,
+            handleJobError
+          );
+          setPollCleanup(() => cleanup);
+        } else if (job.status === 'completed') {
+          // Job completed while away - show completion modal
+          localStorage.removeItem(ACTIVE_JOB_KEY);
+          setUploadStatus({
+            isUploading: false,
+            progress: 'complete',
+            message: '処理が完了しました。',
+            progressPercent: 100,
+            jobId: job.jobId
+          });
+          setIsUploadModalVisible(true);
+          notify('success', 'ファイルの処理が完了しました。');
+          refetch();
+        } else if (job.status === 'failed') {
+          // Job failed while away - show error modal
+          localStorage.removeItem(ACTIVE_JOB_KEY);
+          setUploadStatus({
+            isUploading: false,
+            progress: 'error',
+            message: job.errorMessage || '処理に失敗しました。',
+            jobId: job.jobId
+          });
+          setIsUploadModalVisible(true);
+          notify('error', job.errorMessage || '処理に失敗しました。');
+        }
+      } catch (error) {
+        // If we can't fetch job status, clear storage
+        localStorage.removeItem(ACTIVE_JOB_KEY);
+        console.error('Failed to check active job:', error);
+      }
+    };
+
+    checkActiveJob();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Run only on mount
+
   // Handle progress updates from polling
   const handleProgressUpdate = (job: ProcessingJob) => {
     const progressMap: { [key: string]: UploadStatus['progress'] } = {
@@ -101,6 +177,7 @@ export default function DashboardPage() {
 
   // Handle job completion
   const handleJobComplete = (job: ProcessingJob) => {
+    localStorage.removeItem(ACTIVE_JOB_KEY); // Clear persisted job
     setUploadStatus({
       isUploading: false,
       progress: 'complete',
@@ -108,6 +185,7 @@ export default function DashboardPage() {
       progressPercent: 100,
       jobId: job.jobId
     });
+    setIsUploadModalVisible(true); // Show modal on completion
     notify('success', 'ファイルの処理が完了しました。');
     refetch();
     setPollCleanup(null);
@@ -115,12 +193,14 @@ export default function DashboardPage() {
 
   // Handle job error
   const handleJobError = (error: string) => {
+    localStorage.removeItem(ACTIVE_JOB_KEY); // Clear persisted job
     setUploadStatus(prev => ({
       ...prev,
       isUploading: false,
       progress: 'error',
       message: error
     }));
+    setIsUploadModalVisible(true); // Show modal on error
     notify('error', error);
     setPollCleanup(null);
   };
@@ -157,6 +237,7 @@ export default function DashboardPage() {
       estimatedTime,
       progressPercent: 0
     });
+    setIsUploadModalVisible(true); // Show modal when starting upload
 
     try {
       // Upload and get job ID (returns immediately)
@@ -165,6 +246,9 @@ export default function DashboardPage() {
         generateFileId(file.name.split('.')[0]),
         user.id.toString()
       );
+
+      // Save active job to localStorage for persistence across page navigations
+      localStorage.setItem(ACTIVE_JOB_KEY, JSON.stringify({ jobId: response.jobId }));
 
       setUploadStatus(prev => ({
         ...prev,
@@ -390,7 +474,11 @@ export default function DashboardPage() {
     <Layout>
       <div className="min-h-screen bg-[#f8fafd] px-4 sm:px-6 lg:px-8 py-6 rounded-[5px]">
         <AlertMessageComp message={alertMessage} onDismiss={() => setAlertMessage(null)} />
-        <UploadModal uploadStatus={uploadStatus} onClose={() => setUploadStatus({ ...uploadStatus, isUploading: false })} />
+        <UploadModal 
+          uploadStatus={uploadStatus} 
+          isVisible={isUploadModalVisible}
+          onClose={() => setIsUploadModalVisible(false)} 
+        />
 
         {/* Skill Sheet Sidebar */}
         <SkillSheetSidebar
@@ -450,7 +538,8 @@ export default function DashboardPage() {
         <DashboardHeader
           userName={user?.name || 'User'}
           onFileChange={handleFileChange}
-          isUploading={uploadStatus.isUploading}
+          isProcessing={uploadStatus.isUploading}
+          onProcessingClick={() => setIsUploadModalVisible(true)}
         />
 
         {/* Records Section */}
