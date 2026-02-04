@@ -178,6 +178,56 @@ export const initializeDatabase = async () => {
 
     await pool.query(invitationsTable);
 
+    // Create processing_jobs table for async upload processing
+    const processingJobsTable = `
+      CREATE TABLE IF NOT EXISTS processing_jobs (
+        id BIGINT PRIMARY KEY AUTO_INCREMENT,
+        file_id VARCHAR(255) NOT NULL,
+        user_id INT NOT NULL,
+        company_id INT,
+        staff_id VARCHAR(255),
+        status ENUM('pending', 'processing', 'completed', 'failed') NOT NULL DEFAULT 'pending',
+        progress INT DEFAULT 0,
+        current_step VARCHAR(255) DEFAULT '',
+        local_file_path VARCHAR(500),
+        total_chunks INT DEFAULT 0,
+        completed_chunks INT DEFAULT 0,
+        stt_result LONGTEXT,
+        error_message TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        completed_at TIMESTAMP NULL,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE SET NULL,
+        INDEX idx_status (status),
+        INDEX idx_user_id (user_id),
+        INDEX idx_company_id (company_id),
+        INDEX idx_created_at (created_at DESC)
+      )
+    `;
+
+    // Create chunk_processing table for tracking individual chunk processing
+    const chunkProcessingTable = `
+      CREATE TABLE IF NOT EXISTS chunk_processing (
+        id BIGINT PRIMARY KEY AUTO_INCREMENT,
+        job_id BIGINT NOT NULL,
+        chunk_index INT NOT NULL,
+        chunk_file_path VARCHAR(500),
+        status ENUM('pending', 'processing', 'completed', 'failed') NOT NULL DEFAULT 'pending',
+        stt_result TEXT,
+        error_message TEXT,
+        retry_count INT DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (job_id) REFERENCES processing_jobs(id) ON DELETE CASCADE,
+        INDEX idx_job_id_status (job_id, status),
+        UNIQUE KEY unique_job_chunk (job_id, chunk_index)
+      )
+    `;
+
+    await pool.query(processingJobsTable);
+    await pool.query(chunkProcessingTable);
+
     // ============================================
     // MIGRATION OPERATIONS - Only run if enabled
     // ============================================

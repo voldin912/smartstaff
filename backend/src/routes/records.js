@@ -1,22 +1,42 @@
 import express from 'express';
 import multer from 'multer';
 import { auth } from '../middleware/auth.js';
-import { getRecords, getRecordDetail, uploadAudio, testAPI, downloadSTT, downloadSkillSheet, updateStaffId, updateStaffName, updateMemo, updateSkillSheet, getSkillSheet, updateSalesforce, downloadSalesforce, downloadBulk, updateLoR, deleteRecord } from '../controllers/recordsController.js';
+import { 
+  getRecords, 
+  getRecordDetail, 
+  uploadAudio, 
+  getProcessingJobStatus,
+  getProcessingJobs,
+  retryProcessingJob,
+  testAPI, 
+  downloadSTT, 
+  downloadSkillSheet, 
+  updateStaffId, 
+  updateStaffName, 
+  updateMemo, 
+  updateSkillSheet, 
+  getSkillSheet, 
+  updateSalesforce, 
+  downloadSalesforce, 
+  downloadBulk, 
+  updateLoR, 
+  deleteRecord 
+} from '../controllers/recordsController.js';
 import { upload } from '../middleware/upload.js';
 import logger from '../utils/logger.js';
 import cacheMiddleware, { getCacheKey } from '../middleware/cache.js';
 
 const router = express.Router();
 
-// Get all records (with caching)
-router.get('/', auth, cacheMiddleware({
+// Get all records (caching disabled for immediate UI updates)
+router.get('/', auth, /* cacheMiddleware({
   prefix: 'records',
   includeQuery: true,
   ttl: 30
-}), getRecords);
+}), */ getRecords);
 
-// Get single record detail (must be before other /:recordId routes) (with caching)
-router.get('/:recordId', auth, cacheMiddleware({
+// Get single record detail (must be before other /:recordId routes) (caching disabled for immediate UI updates)
+router.get('/:recordId', auth, /* cacheMiddleware({
   keyGenerator: (req) => {
     const recordId = req.params.recordId;
     const { role, company_id } = req.user;
@@ -27,7 +47,7 @@ router.get('/:recordId', auth, cacheMiddleware({
   },
   includeParams: true,
   ttl: 30
-}), getRecordDetail);
+}), */ getRecordDetail);
 
 // Upload audio file with multer error handling
 router.post('/upload', auth, (req, res, next) => {
@@ -49,6 +69,23 @@ router.post('/upload', auth, (req, res, next) => {
     next();
   });
 }, uploadAudio);
+
+// ============================================
+// Processing Job Status APIs (for async upload)
+// ============================================
+
+// Get all processing jobs for current user
+router.get('/processing/jobs', auth, getProcessingJobs);
+
+// Get single processing job status (for polling)
+router.get('/processing/jobs/:jobId', auth, getProcessingJobStatus);
+
+// Retry a failed processing job
+router.post('/processing/jobs/:jobId/retry', auth, retryProcessingJob);
+
+// ============================================
+// Record Download/Update APIs
+// ============================================
 
 // Download STT as PDF
 router.get('/:recordId/stt', auth, downloadSTT);

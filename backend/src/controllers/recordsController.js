@@ -12,50 +12,15 @@ import ffmpegPath from 'ffmpeg-static';
 import logger from '../utils/logger.js';
 import cache from '../utils/cache.js';
 import { withLock, shouldRunJob, recordJobRun } from '../utils/jobLock.js';
+import { 
+  createProcessingJob, 
+  updateJobStatus, 
+  processAudioJob,
+  getJobStatus,
+  getUserJobs,
+  retryFailedJob
+} from '../services/asyncProcessingService.js';
 
-
-// import path from 'path'
-// import { nodewhisper } from 'nodejs-whisper'
-
-// // Need to provide exact path to your audio file.
-// const filePath = path.resolve(__dirname, 'YourAudioFileName')
-
-// await nodewhisper(filePath, {
-// 	modelName: 'base.en', //Downloaded models name
-// 	autoDownloadModelName: 'base.en', // (optional) auto download a model if model is not present
-// 	removeWavFileAfterTranscription: false, // (optional) remove wav file once transcribed
-// 	withCuda: false, // (optional) use cuda for faster processing
-// 	logger: console, // (optional) Logging instance, defaults to console
-// 	whisperOptions: {
-// 		outputInCsv: false, // get output result in csv file
-// 		outputInJson: false, // get output result in json file
-// 		outputInJsonFull: false, // get output result in json file including more information
-// 		outputInLrc: false, // get output result in lrc file
-// 		outputInSrt: true, // get output result in srt file
-// 		outputInText: false, // get output result in txt file
-// 		outputInVtt: false, // get output result in vtt file
-// 		outputInWords: false, // get output result in wts file for karaoke
-// 		translateToEnglish: false, // translate from source language to english
-// 		wordTimestamps: false, // word-level timestamps
-// 		timestamps_length: 20, // amount of dialogue per timestamp pair
-// 		splitOnWord: true, // split on word rather than on token
-// 	},
-// })
-
-// // Model list
-// const MODELS_LIST = [
-// 	'tiny',
-// 	'tiny.en',
-// 	'base',
-// 	'base.en',
-// 	'small',
-// 	'small.en',
-// 	'medium',
-// 	'medium.en',
-// 	'large-v1',
-// 	'large',
-// 	'large-v3-turbo',
-// ]
 
 // Transcription Queue Manager
 class TranscriptionQueue {
@@ -343,7 +308,7 @@ const getTxtPathFromMp3 = (mp3Path) => {
   return mp3Path.replace(/\.(mp3|wav|m4a|flac|aac)$/i, '.csv');
 }
 
-// Upload audio file and create record
+// Upload audio file and create record (Async version - returns jobId immediately)
 const uploadAudio = async (req, res) => {
   try {
     if (!req.file) {
@@ -352,320 +317,119 @@ const uploadAudio = async (req, res) => {
     }
 
     const { staffId, fileId } = req.body;
-    const userId = req.user.id; // Get the actual user ID from auth middleware
-    const companyId = req.user.company_id; // Get company_id from user
+    const userId = req.user.id;
+    const companyId = req.user.company_id;
 
     if (!staffId || !fileId) {
       logger.error('Upload error: Missing required fields', { body: req.body, staffId, fileId });
       return res.status(400).json({ error: 'Missing required fields: staffId and fileId are required' });
     }
+
     let audioFilePath = req.file.path;
     const ext = path.extname(audioFilePath).toLowerCase();
-    // If file is .m4a, convert to .wav
+    
+    // If file is .m4a, convert to .mp3
     if (ext === '.m4a') {
-      const wavPath = audioFilePath.replace(/\.m4a$/i, '.mp3');
+      const mp3Path = audioFilePath.replace(/\.m4a$/i, '.mp3');
       await new Promise((resolve, reject) => {
         ffmpeg(audioFilePath)
           .toFormat('mp3')
           .on('end', () => resolve())
           .on('error', (err) => reject(err))
-          .save(wavPath);
+          .save(mp3Path);
       });
-      // Optionally remove the original m4a file
+      // Remove the original m4a file
       fs.unlinkSync(audioFilePath);
-      audioFilePath = wavPath;
+      audioFilePath = mp3Path;
     }
 
-    // Function to split audio into chunks
-    const splitAudioIntoChunks = async (filePath, chunkSize = 4 * 1024 * 1024) => {
-      const fileBuffer = fs.readFileSync(filePath);
-      const chunks = [];
-      for (let i = 0; i < fileBuffer.length; i += chunkSize) {
-        chunks.push(fileBuffer.slice(i, i + chunkSize));
-      }
-      return chunks;
-    };
+    // Create processing job in database
+    const jobId = await createProcessingJob(fileId, userId, companyId, staffId, audioFilePath);
 
-    // Function to process a single chunk
-    const processChunk = async (chunk, index) => {
-      const tempFilePath = `${audioFilePath}_chunk_${index}.mp3`;
-      fs.writeFileSync(tempFilePath, chunk);
+    logger.info('Processing job created, starting async processing', { 
+      jobId, 
+      fileId, 
+      userId,
+      audioFilePath
+    });
 
-      try {
-        // Retry logic for file upload
-        let tempFileId;
-        let uploadRetryCount = 0;
-        const maxUploadRetries = 3;
-
-        while (uploadRetryCount < maxUploadRetries) {
-          try {
-            tempFileId = await uploadFile(tempFilePath);
-            // console.log("tempFileId", tempFileId);
-            break; // Success, exit retry loop
-          } catch (error) {
-            uploadRetryCount++;
-            logger.warn(`Chunk ${index} - File upload attempt ${uploadRetryCount} failed`, { error: error.message });
-
-            if (uploadRetryCount >= maxUploadRetries) {
-              // All upload retries failed, clean up and return empty string
-              if (fs.existsSync(tempFilePath)) {
-                fs.unlinkSync(tempFilePath);
-              }
-              logger.error(`Chunk ${index} - All ${maxUploadRetries} file upload attempts failed`);
-              return '';
-            }
-
-            // Wait before retry (exponential backoff)
-            const waitTime = Math.pow(2, uploadRetryCount) * 1000; // 2s, 4s, 8s
-            logger.debug(`Chunk ${index} - Waiting ${waitTime}ms before file upload retry ${uploadRetryCount + 1}`);
-            await new Promise(resolve => setTimeout(resolve, waitTime));
-          }
-        }
-        
-        // Retry logic for Dify workflow API calls
-        let difyResponse;
-        let workflowRetryCount = 0;
-        const maxWorkflowRetries = 3;
-
-        while (workflowRetryCount < maxWorkflowRetries) {
-          try {
-            // Process chunk with Dify workflow
-            difyResponse = await axios.post(
-              'https://api.dify.ai/v1/workflows/run',
-              {
-                inputs: {
-                  "audioFile": {
-                    "transfer_method": "local_file",
-                    "upload_file_id": tempFileId,
-                    "type": "audio"
-                  }
-                },
-                user: 'voldin012'
-              },
-              {
-                headers: {
-                  'Authorization': `Bearer ${process.env.DIFY_SECRET_KEY_STT}`,
-                  'Content-Type': 'application/json'
-                },
-                timeout: 240000 // 4 minutes timeout
-              }
-            );
-            break; // Success, exit retry loop
-          } catch (error) {
-            workflowRetryCount++;
-            logger.warn(`Chunk ${index} - Dify workflow API attempt ${workflowRetryCount} failed`, { error: error.message });
-
-            if (workflowRetryCount >= maxWorkflowRetries) {
-              // All retries failed, clean up and return empty string
-              if (fs.existsSync(tempFilePath)) {
-                fs.unlinkSync(tempFilePath);
-              }
-              logger.error(`Chunk ${index} - All ${maxWorkflowRetries} workflow attempts failed`);
-              return '';
-            }
-
-            // Wait before retry (exponential backoff)
-            const waitTime = Math.pow(2, workflowRetryCount) * 1000; // 2s, 4s, 8s
-            logger.debug(`Chunk ${index} - Waiting ${waitTime}ms before workflow retry ${workflowRetryCount + 1}`);
-            await new Promise(resolve => setTimeout(resolve, waitTime));
-          }
-        }
-
-        // console.log("dify Response", difyResponse.data.data)
-
-        // Clean up temp file
-        if (fs.existsSync(tempFilePath)) {
-          fs.unlinkSync(tempFilePath);
-        }
-        // console.log("difyResponse", difyResponse.data.data.outputs.stt);
-        return difyResponse.data.data.outputs.stt;
-      } catch (error) {
-        logger.error(`Error processing chunk ${index}`, error);
-        // Clean up temp file on error
-        if (fs.existsSync(tempFilePath)) {
-          try {
-            fs.unlinkSync(tempFilePath);
-          } catch (unlinkError) {
-            logger.error(`Failed to clean up temp file ${tempFilePath}`, unlinkError);
-          }
-        }
-        return '';
-      }
-    };
-
-    // Split audio into chunks and process them
-    const chunks = await splitAudioIntoChunks(audioFilePath);
-
-    // Process chunks sequentially with waiting time between each chunk
-    const chunkResults = [];
-    for (let i = 0; i < chunks.length; i++) {
-      const result = await processChunk(chunks[i], i);
-      chunkResults.push(result);
-
-      // Wait 0.5 seconds between each chunk processing
-      if (i < chunks.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, 500));
-      }
-    }
-
-    // Combine all chunk results
-    logger.debug('Chunk processing', { chunkCount: chunks.length });
-    const combinedText = chunkResults.join('\n');
-    logger.debug('Combined text length', { length: combinedText?.length || 0 });
-    const txtFilePath = getTxtPathFromMp3(audioFilePath);
-    fs.writeFileSync(txtFilePath, combinedText);
-
-    // Process combined text with main Dify workflow
-    try {
-      const txtFileId = await uploadFile(txtFilePath);
-
-      // Retry logic for Dify API calls
-      let difyResponse;
-      let retryCount = 0;
-      const maxRetries = 3;
-
-      while (retryCount < maxRetries) {
-        try {
-          difyResponse = await axios.post(
-            'https://api.dify.ai/v1/workflows/run',
-            {
-              inputs: {
-                "txtFile": {
-                  "transfer_method": "local_file",
-                  "upload_file_id": txtFileId,
-                  "type": "document"
-                }
-              },
-              user: 'voldin012'
-            },
-            {
-              headers: {
-                'Authorization': `Bearer ${process.env.DIFY_SECRET_KEY}`,
-                'Content-Type': 'application/json'
-              },
-              timeout: 240000 // 4分のタイムアウト
-            }
-          );
-          break; // Success, exit retry loop
-        } catch (error) {
-          retryCount++;
-          logger.warn(`Dify API attempt ${retryCount} failed`, { error: error.message });
-
-          if (retryCount >= maxRetries) {
-            throw error; // Re-throw the error if all retries failed
-          }
-
-          // Wait before retry (exponential backoff)
-          const waitTime = Math.pow(2, retryCount) * 1000; // 2s, 4s, 8s
-          logger.debug(`Waiting ${waitTime}ms before retry ${retryCount + 1}`);
-          await new Promise(resolve => setTimeout(resolve, waitTime));
-        }
-      }
-
-      const { status, outputs } = difyResponse.data.data;
-      logger.debug('Dify outputs', { outputs });
-      let skillsheetData = {};
-      if (status === 'succeeded') {
-        // Clean and parse skillsheet if it's a string
-        const cleanSkillsheet = typeof outputs.skillsheet === 'string'
-          ? outputs.skillsheet.replace(/```json\n?|\n?```/g, '').trim()
-          : outputs.skillsheet;
-
-        if (typeof cleanSkillsheet === "string") {
-          try {
-            skillsheetData = JSON.parse(cleanSkillsheet);
-          } catch (e) {
-            logger.error('Invalid JSON in cleanSkillsheet', e);
-            skillsheetData = {}; // or null / fallback value
-          }
-        } else {
-          skillsheetData = cleanSkillsheet;
-        }
-
-        // Extract work content array from skillsheet
-        const workContentArray = Object.values(skillsheetData).map(career => career['summary']);
-        logger.debug('Work content array', { workContentArray });
-        logger.debug('Outputs skills', { skills: outputs.skills });
-
-        // Insert record into database
-        const query = `
-        INSERT INTO records (file_id, user_id, company_id, staff_id, audio_file_path, stt, skill_sheet, lor, salesforce, skills, hope, date)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
-      `;
-
-        const [result] = await pool.query(query, [
-          fileId,
-          userId,  // Use req.user.id for user_id (references users table)
-          companyId, // company_id
-          staffId, // This is staff_id (string, for Salesforce integration)
-          audioFilePath,
-          combinedText,
-          outputs.skillsheet,
-          outputs.lor,
-          JSON.stringify(workContentArray),
-          outputs.skills,
-          outputs.hope
-        ]);
-
-        // Invalidate cache after creating record
-        if (companyId) {
-          cache.invalidatePattern(`records:company:${companyId}:*`);
-          cache.invalidatePattern(`dashboard:stats:company:${companyId}`);
-        }
-        logger.debug('Cache invalidated after record creation', { companyId });
-
-        // Return the created record with formatted date
-        const [newRecord] = await pool.query(
-          `SELECT 
-            id, 
-            DATE_FORMAT(date, '%Y-%m-%d %H:%i:%s') as date,
-            file_id as fileId, 
-            staff_id as staffId, 
-            staff_name as staffName,
-            memo,
-            audio_file_path as audioFilePath,
-            stt,
-            skill_sheet as skillSheet,
-            lor,
-            salesforce as salesforce,
-            skills,
-            hope
-          FROM records 
-          WHERE id = ?`,
-          [result.insertId]
-        );
-
-        res.status(200).json(newRecord[0]);
-      } else {
-        logger.debug('Dify response outputs', { outputs: difyResponse.data.data.outputs });
-        res.status(500).json({ message: 'Failed to get response from Dify' });
-      }
-    } catch (difyError) {
-      logger.error('Error calling Dify API', difyError);
-
-      if (difyError.code === 'ECONNABORTED' || difyError.response?.status === 504) {
-        res.status(504).json({
-          error: 'Dify API Timeout',
-          message: 'The Dify API took too long to respond. Please try again with a smaller file or contact support.',
-          details: 'Gateway timeout - the server did not respond within the expected time'
+    // Start async processing (non-blocking)
+    setImmediate(() => {
+      processAudioJob(jobId, audioFilePath, fileId, userId, companyId, staffId)
+        .catch(error => {
+          logger.error('Error in async audio processing', { 
+            jobId, 
+            error: error.message 
+          });
+          // Status is already updated to 'failed' in processAudioJob
         });
-      } else if (difyError.response) {
-        res.status(difyError.response.status).json({
-          error: 'Dify API Error',
-          message: `Dify API returned error: ${difyError.response.status} ${difyError.response.statusText}`,
-          details: difyError.response.data
-        });
-      } else {
-        res.status(500).json({
-          error: 'Failed to process audio file',
-          message: 'An unexpected error occurred while processing the audio file',
-          details: difyError.message
-        });
-      }
-    }
+    });
+
+    // Return job ID immediately (non-blocking response)
+    res.status(200).json({
+      jobId: jobId,
+      message: 'アップロードを受け付けました。処理を開始します。',
+      status: 'pending'
+    });
+
   } catch (error) {
     logger.error('Error uploading audio', error);
     res.status(500).json({ error: 'Failed to upload audio file' });
+  }
+};
+
+// Get processing job status (for polling)
+const getProcessingJobStatus = async (req, res) => {
+  try {
+    const { jobId } = req.params;
+    const { role, company_id, id: userId } = req.user;
+
+    const job = await getJobStatus(parseInt(jobId), userId, role);
+
+    if (!job) {
+      return res.status(404).json({ error: 'Job not found or access denied' });
+    }
+
+    res.json(job);
+  } catch (error) {
+    logger.error('Error getting job status', error);
+    res.status(500).json({ error: 'Failed to get job status' });
+  }
+};
+
+// Get all processing jobs for current user
+const getProcessingJobs = async (req, res) => {
+  try {
+    const { role, company_id, id: userId } = req.user;
+    const { status, limit } = req.query;
+
+    const jobs = await getUserJobs(
+      userId, 
+      company_id, 
+      role, 
+      status || null, 
+      parseInt(limit) || 20
+    );
+
+    res.json({ jobs });
+  } catch (error) {
+    logger.error('Error getting user jobs', error);
+    res.status(500).json({ error: 'Failed to get processing jobs' });
+  }
+};
+
+// Retry a failed processing job
+const retryProcessingJob = async (req, res) => {
+  try {
+    const { jobId } = req.params;
+    const { role, company_id, id: userId } = req.user;
+
+    const result = await retryFailedJob(parseInt(jobId), userId, company_id, role);
+
+    res.json(result);
+  } catch (error) {
+    logger.error('Error retrying job', error);
+    res.status(500).json({ error: error.message || 'Failed to retry job' });
   }
 };
 
@@ -1683,6 +1447,9 @@ export {
   getRecords,
   getRecordDetail,
   uploadAudio,
+  getProcessingJobStatus,
+  getProcessingJobs,
+  retryProcessingJob,
   testAPI,
   downloadSTT,
   downloadSkillSheet,
