@@ -7,13 +7,17 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
+    "worker": "node src/workers/audioWorker.js",
+    "worker:dev": "nodemon src/workers/audioWorker.js",
     "migrate": "node src/scripts/migrate.js",
-    "job:auto-delete": "node src/scripts/autoDeleteJob.js"
+    "job:auto-delete": "node src/scripts/autoDeleteJob.js",
+    "job:recover-orphaned": "node src/scripts/recoverOrphanedJobs.js"
   },
   "dependencies": {
     "archiver": "^7.0.1",
     "axios": "^1.9.0",
     "bcryptjs": "^2.4.3",
+    "bullmq": "^5.67.3",
     "cors": "^2.8.5",
     "dotenv": "^16.0.3",
     "express": "^4.18.2",
@@ -21,6 +25,7 @@
     "ffmpeg-static": "^5.2.0",
     "fluent-ffmpeg": "^2.1.3",
     "form-data": "^4.0.2",
+    "ioredis": "^5.9.2",
     "jsforce": "^3.8.2",
     "jsonwebtoken": "^9.0.0",
     "multer": "^1.4.5-lts.1",
