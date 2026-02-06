@@ -714,7 +714,13 @@ export async function executeDifyWorkflow(combinedText) {
   } finally {
     // Clean up temp file
     if (fs.existsSync(tempFilePath)) {
-      fs.unlinkSync(tempFilePath);
+      try {
+        fs.unlinkSync(tempFilePath);
+        logger.debug('Temp file deleted', { tempFilePath });
+      } catch (error) {
+        logger.warn('Failed to delete temp file', { tempFilePath, error: error.message });
+        // Continue - cleanup failure should not affect job status
+      }
     }
   }
 }

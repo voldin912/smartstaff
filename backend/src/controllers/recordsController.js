@@ -339,7 +339,15 @@ const uploadAudio = async (req, res) => {
           .save(mp3Path);
       });
       // Remove the original m4a file
-      fs.unlinkSync(audioFilePath);
+      if (fs.existsSync(audioFilePath)) {
+        try {
+          fs.unlinkSync(audioFilePath);
+          logger.debug('Original m4a file deleted', { audioFilePath });
+        } catch (error) {
+          logger.warn('Failed to delete original m4a file', { audioFilePath, error: error.message });
+          // Continue - cleanup failure should not affect job creation
+        }
+      }
       audioFilePath = mp3Path;
     }
 

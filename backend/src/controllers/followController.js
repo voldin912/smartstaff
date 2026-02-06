@@ -244,7 +244,15 @@ const uploadAudio = async (req, res) => {
           .save(wavPath);
       });
       // Optionally remove the original m4a file
-      fs.unlinkSync(audioFilePath);
+      if (fs.existsSync(audioFilePath)) {
+        try {
+          fs.unlinkSync(audioFilePath);
+          logger.debug('Original m4a file deleted', { audioFilePath });
+        } catch (error) {
+          logger.warn('Failed to delete original m4a file', { audioFilePath, error: error.message });
+          // Continue - cleanup failure should not affect processing
+        }
+      }
       audioFilePath = wavPath;
     }
     
@@ -291,11 +299,27 @@ const uploadAudio = async (req, res) => {
         // console.log("dify Response", difyResponse.data.data)
 
         // Clean up temp file
-        fs.unlinkSync(tempFilePath);
+        if (fs.existsSync(tempFilePath)) {
+          try {
+            fs.unlinkSync(tempFilePath);
+            logger.debug('Chunk temp file deleted', { tempFilePath });
+          } catch (unlinkError) {
+            logger.warn('Failed to delete chunk temp file', { tempFilePath, error: unlinkError.message });
+            // Continue - cleanup failure should not affect result
+          }
+        }
         // console.log("difyResponse", difyResponse.data.data.outputs.stt);
         return difyResponse.data.data.outputs.stt;
       } catch (error) {
         logger.error(`Error processing chunk ${index}`, error);
+        // Also try to clean up temp file on error
+        if (fs.existsSync(tempFilePath)) {
+          try {
+            fs.unlinkSync(tempFilePath);
+          } catch (unlinkError) {
+            logger.warn('Failed to delete chunk temp file on error', { tempFilePath, error: unlinkError.message });
+          }
+        }
         return '';
       }
     };
