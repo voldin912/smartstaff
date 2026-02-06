@@ -106,6 +106,7 @@ export const initializeDatabase = async () => {
     const recordsTable = `
       CREATE TABLE IF NOT EXISTS records (
         id INT PRIMARY KEY AUTO_INCREMENT,
+        job_id BIGINT UNIQUE,
         file_id VARCHAR(255),
         user_id INT,
         company_id INT,
@@ -128,7 +129,8 @@ export const initializeDatabase = async () => {
         INDEX idx_company_created (company_id, created_at DESC),
         INDEX idx_user_created (user_id, created_at DESC),
         INDEX idx_created_at (created_at DESC),
-        INDEX idx_user_id (user_id)
+        INDEX idx_user_id (user_id),
+        INDEX idx_job_id (job_id)
       )
     `;
 
@@ -194,6 +196,7 @@ export const initializeDatabase = async () => {
         completed_chunks INT DEFAULT 0,
         stt_result LONGTEXT,
         error_message TEXT,
+        record_id INT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         completed_at TIMESTAMP NULL,
@@ -364,6 +367,9 @@ export const runMigrations = async () => {
     
     // Migration: Add heartbeat columns to processing_jobs
     await addHeartbeatColumns();
+    
+    // Migration: Add job exclusivity columns (job_id on records, record_id on processing_jobs)
+    await addJobExclusivityColumns();
 
     logger.info('Database migrations completed successfully');
   } catch (error) {
@@ -878,6 +884,65 @@ const addHeartbeatColumns = async () => {
     logger.info('Heartbeat columns migration completed');
   } catch (error) {
     logger.error('Error adding heartbeat columns', error);
+    // Don't throw - allow initialization to continue
+  }
+};
+
+// Migration function: Add job exclusivity columns for idempotent execution
+const addJobExclusivityColumns = async () => {
+  try {
+    const dbName = DB_NAME;
+    
+    // Helper function to check if column exists
+    const columnExists = async (tableName, columnName) => {
+      const [columns] = await pool.query(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = ? 
+        AND TABLE_NAME = ? 
+        AND COLUMN_NAME = ?
+      `, [dbName, tableName, columnName]);
+      return columns.length > 0;
+    };
+    
+    // Helper function to check if index exists
+    const indexExists = async (tableName, indexName) => {
+      const [indexes] = await pool.query(`
+        SELECT INDEX_NAME 
+        FROM INFORMATION_SCHEMA.STATISTICS 
+        WHERE TABLE_SCHEMA = ? 
+        AND TABLE_NAME = ? 
+        AND INDEX_NAME = ?
+      `, [dbName, tableName, indexName]);
+      return indexes.length > 0;
+    };
+    
+    // Add job_id column to records table
+    if (!await columnExists('records', 'job_id')) {
+      await pool.query('ALTER TABLE records ADD COLUMN job_id BIGINT UNIQUE AFTER id');
+      logger.info('Added job_id column to records table');
+    }
+    
+    // Add index for job_id on records
+    if (!await indexExists('records', 'idx_job_id')) {
+      try {
+        await pool.query('CREATE INDEX idx_job_id ON records (job_id)');
+        logger.info('Added idx_job_id index to records table');
+      } catch (e) {
+        // Index might already exist as part of UNIQUE constraint
+        logger.debug('idx_job_id index may already exist');
+      }
+    }
+    
+    // Add record_id column to processing_jobs table
+    if (!await columnExists('processing_jobs', 'record_id')) {
+      await pool.query('ALTER TABLE processing_jobs ADD COLUMN record_id INT NULL AFTER error_message');
+      logger.info('Added record_id column to processing_jobs table');
+    }
+    
+    logger.info('Job exclusivity columns migration completed');
+  } catch (error) {
+    logger.error('Error adding job exclusivity columns', error);
     // Don't throw - allow initialization to continue
   }
 };
