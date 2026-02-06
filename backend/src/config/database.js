@@ -120,6 +120,9 @@ export const initializeDatabase = async () => {
         salesforce LONGTEXT,
         skills LONGTEXT,
         hope LONGTEXT,
+        quality_status ENUM('complete', 'partial') DEFAULT 'complete',
+        chunk_success_rate DECIMAL(5,2) DEFAULT 100.00,
+        processing_warnings TEXT,
         date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -370,6 +373,9 @@ export const runMigrations = async () => {
     
     // Migration: Add job exclusivity columns (job_id on records, record_id on processing_jobs)
     await addJobExclusivityColumns();
+    
+    // Migration: Add quality tracking columns to records table
+    await addQualityTrackingColumns();
 
     logger.info('Database migrations completed successfully');
   } catch (error) {
@@ -943,6 +949,48 @@ const addJobExclusivityColumns = async () => {
     logger.info('Job exclusivity columns migration completed');
   } catch (error) {
     logger.error('Error adding job exclusivity columns', error);
+    // Don't throw - allow initialization to continue
+  }
+};
+
+// Migration function: Add quality tracking columns to records table
+const addQualityTrackingColumns = async () => {
+  try {
+    const dbName = DB_NAME;
+    
+    // Helper function to check if column exists
+    const columnExists = async (tableName, columnName) => {
+      const [columns] = await pool.query(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = ? 
+        AND TABLE_NAME = ? 
+        AND COLUMN_NAME = ?
+      `, [dbName, tableName, columnName]);
+      return columns.length > 0;
+    };
+    
+    // Add quality_status column to records table
+    if (!await columnExists('records', 'quality_status')) {
+      await pool.query(`ALTER TABLE records ADD COLUMN quality_status ENUM('complete', 'partial') DEFAULT 'complete' AFTER hope`);
+      logger.info('Added quality_status column to records table');
+    }
+    
+    // Add chunk_success_rate column to records table
+    if (!await columnExists('records', 'chunk_success_rate')) {
+      await pool.query('ALTER TABLE records ADD COLUMN chunk_success_rate DECIMAL(5,2) DEFAULT 100.00 AFTER quality_status');
+      logger.info('Added chunk_success_rate column to records table');
+    }
+    
+    // Add processing_warnings column to records table
+    if (!await columnExists('records', 'processing_warnings')) {
+      await pool.query('ALTER TABLE records ADD COLUMN processing_warnings TEXT AFTER chunk_success_rate');
+      logger.info('Added processing_warnings column to records table');
+    }
+    
+    logger.info('Quality tracking columns migration completed');
+  } catch (error) {
+    logger.error('Error adding quality tracking columns', error);
     // Don't throw - allow initialization to continue
   }
 };

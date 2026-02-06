@@ -10,6 +10,14 @@ import path from 'path';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegPath from 'ffmpeg-static';
 import logger from '../utils/logger.js';
+import {
+  API_CONFIG,
+  ERROR_CODES,
+  isRetryableStatus,
+  categorizeError,
+  calculateBackoff,
+  sleep,
+} from '../config/axiosConfig.js';
 
 
 // import path from 'path'
@@ -266,53 +274,83 @@ const uploadAudio = async (req, res) => {
       return chunks;
     };
 
-    // Function to process a single chunk
+    // Function to process a single chunk with retry logic
     const processChunk = async (chunk, index) => {
       const tempFilePath = `${audioFilePath}_chunk_${index}.mp3`;
       fs.writeFileSync(tempFilePath, chunk);
+      const maxRetries = API_CONFIG.dify.maxRetries;
 
       try {
-        
         const tempFileId = await uploadFile(tempFilePath);
-        // console.log("tempFileId", tempFileId);
-        // Process chunk with Dify workflow
-        const difyResponse = await axios.post(
-          'https://api.dify.ai/v1/workflows/run',
-          {
-            inputs: {
-              "audioFile": {
-                "transfer_method": "local_file",
-                "upload_file_id": tempFileId,
-                "type": "audio"
+        
+        // Process chunk with Dify workflow - with retry logic
+        let lastError = null;
+        
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+          try {
+            const difyResponse = await axios.post(
+              'https://api.dify.ai/v1/workflows/run',
+              {
+                inputs: {
+                  "audioFile": {
+                    "transfer_method": "local_file",
+                    "upload_file_id": tempFileId,
+                    "type": "audio"
+                  }
+                },
+                user: 'voldin012'
+              },
+              {
+                headers: {
+                  'Authorization': `Bearer ${process.env.DIFY_SECRET_KEY_STT}`,
+                  'Content-Type': 'application/json'
+                },
+                timeout: API_CONFIG.dify.workflowTimeout
               }
-            },
-            user: 'voldin012'
-          },
-          {
-            headers: {
-              'Authorization': `Bearer ${process.env.DIFY_SECRET_KEY_STT}`,
-              'Content-Type': 'application/json'
+            );
+
+            // Clean up temp file on success
+            if (fs.existsSync(tempFilePath)) {
+              try {
+                fs.unlinkSync(tempFilePath);
+                logger.debug('Chunk temp file deleted', { tempFilePath });
+              } catch (unlinkError) {
+                logger.warn('Failed to delete chunk temp file', { tempFilePath, error: unlinkError.message });
+              }
+            }
+            
+            return difyResponse.data.data.outputs.stt;
+          } catch (error) {
+            lastError = error;
+            const errorCode = categorizeError(error, 'workflow');
+            const httpStatus = error.response?.status;
+            
+            logger.warn(`Follow chunk ${index} attempt ${attempt}/${maxRetries} failed`, {
+              errorCode,
+              httpStatus,
+              message: error.message
+            });
+            
+            // Check if we should retry
+            const shouldRetry = attempt < maxRetries && 
+              (isRetryableStatus(httpStatus) || !error.response);
+            
+            if (shouldRetry) {
+              const delay = calculateBackoff(attempt);
+              logger.debug(`Retrying follow chunk in ${delay}ms`, { index, attempt });
+              await sleep(delay);
             }
           }
-        );
-
-        // console.log("dify Response", difyResponse.data.data)
-
-        // Clean up temp file
-        if (fs.existsSync(tempFilePath)) {
-          try {
-            fs.unlinkSync(tempFilePath);
-            logger.debug('Chunk temp file deleted', { tempFilePath });
-          } catch (unlinkError) {
-            logger.warn('Failed to delete chunk temp file', { tempFilePath, error: unlinkError.message });
-            // Continue - cleanup failure should not affect result
-          }
         }
-        // console.log("difyResponse", difyResponse.data.data.outputs.stt);
-        return difyResponse.data.data.outputs.stt;
+        
+        // All retries exhausted
+        const errorCode = categorizeError(lastError, 'workflow');
+        logger.error(`Follow chunk ${index} failed after all retries`, { errorCode });
+        throw lastError;
+        
       } catch (error) {
-        logger.error(`Error processing chunk ${index}`, error);
-        // Also try to clean up temp file on error
+        logger.error(`Error processing follow chunk ${index}`, { error: error.message });
+        // Clean up temp file on error
         if (fs.existsSync(tempFilePath)) {
           try {
             fs.unlinkSync(tempFilePath);
@@ -350,12 +388,12 @@ const uploadAudio = async (req, res) => {
     try {
       const txtFileId = await uploadFile(txtFilePath);
       
-      // Retry logic for Dify API calls
+      // Retry logic for Dify API calls using unified config
       let difyResponse;
-      let retryCount = 0;
-      const maxRetries = 3;
+      let lastError = null;
+      const maxRetries = API_CONFIG.dify.maxRetries;
       
-      while (retryCount < maxRetries) {
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
           difyResponse = await axios.post(
             'https://api.dify.ai/v1/workflows/run',
@@ -374,22 +412,37 @@ const uploadAudio = async (req, res) => {
                 'Authorization': `Bearer ${process.env.DIFY_SECRET_KEY}`,
                 'Content-Type': 'application/json'
               },
-              timeout: 240000 // 4分のタイムアウト
+              timeout: API_CONFIG.dify.workflowTimeout
             }
           );
           break; // Success, exit retry loop
         } catch (error) {
-          retryCount++;
-          logger.warn(`Dify API attempt ${retryCount} failed`, { error: error.message });
+          lastError = error;
+          const errorCode = categorizeError(error, 'workflow');
+          const httpStatus = error.response?.status;
           
-          if (retryCount >= maxRetries) {
-            throw error; // Re-throw the error if all retries failed
+          logger.warn(`Dify API attempt ${attempt}/${maxRetries} failed`, { 
+            errorCode,
+            httpStatus,
+            message: error.message 
+          });
+          
+          // Check if we should retry
+          const shouldRetry = attempt < maxRetries && 
+            (isRetryableStatus(httpStatus) || !error.response);
+          
+          if (!shouldRetry) {
+            throw error; // Don't retry non-retryable errors
           }
           
-          // Wait before retry (exponential backoff)
-          const waitTime = Math.pow(2, retryCount) * 1000; // 2s, 4s, 8s
-          logger.debug(`Waiting ${waitTime}ms before retry ${retryCount + 1}`);
-          await new Promise(resolve => setTimeout(resolve, waitTime));
+          if (attempt < maxRetries) {
+            // Wait before retry (exponential backoff)
+            const waitTime = calculateBackoff(attempt);
+            logger.debug(`Waiting ${waitTime}ms before retry ${attempt + 1}`);
+            await sleep(waitTime);
+          } else {
+            throw error; // Re-throw the error if all retries failed
+          }
         }
       }
 

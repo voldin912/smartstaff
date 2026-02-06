@@ -15,13 +15,21 @@ import {
   startHeartbeatInterval,
   stopHeartbeatInterval 
 } from './jobHeartbeat.js';
+import {
+  API_CONFIG,
+  ERROR_CODES,
+  isRetryableStatus,
+  categorizeError,
+  calculateBackoff,
+  sleep,
+} from '../config/axiosConfig.js';
 
 ffmpeg.setFfmpegPath(ffmpegPath);
 
-// Configuration
+// Configuration (uses unified API_CONFIG for external API settings)
 const CONFIG = {
   maxConcurrency: parseInt(process.env.CHUNK_CONCURRENCY || '10'),
-  maxRetries: parseInt(process.env.CHUNK_MAX_RETRIES || '3'),
+  maxRetries: API_CONFIG.dify.maxRetries,
   maxChunkSize: 10 * 1024 * 1024,  // 10MB
   minChunkSize: 1 * 1024 * 1024,   // 1MB
   fallbackChunkSize: 4 * 1024 * 1024, // 4MB
@@ -29,8 +37,9 @@ const CONFIG = {
   maxChunkDurationHard: parseInt(process.env.MAX_CHUNK_DURATION_HARD || '210'), // 3.5 min absolute max
   silenceThreshold: parseInt(process.env.SILENCE_THRESHOLD || '-40'), // dB
   silenceDuration: parseFloat(process.env.SILENCE_DURATION || '0.5'), // seconds
-  difyTimeout: 240000, // 4 minutes
-  uploadTimeout: 300000, // 5 minutes
+  difyTimeout: API_CONFIG.dify.workflowTimeout,
+  uploadTimeout: API_CONFIG.dify.uploadTimeout,
+  minChunkSuccessRate: API_CONFIG.minChunkSuccessRate,
 };
 
 
@@ -604,59 +613,140 @@ export async function splitAudioSimple(audioFilePath) {
 // ============================================
 
 /**
- * Upload file to Dify
+ * Upload file to Dify with retry logic
+ * @param {string} filePath - Path to the file to upload
+ * @param {number} maxRetries - Maximum retry attempts
+ * @returns {Promise<string>} - Dify file ID
+ * @throws {Error} - With standardized error code
  */
-export async function uploadFileToDify(filePath) {
-  const form = new FormData();
-  form.append('file', fs.createReadStream(filePath), {
-    filename: path.basename(filePath),
-    contentType: 'audio/mpeg',
-  });
-  form.append('type', 'audio');
-  form.append('purpose', 'workflow_input');
-  form.append('user', 'voldin012');
+export async function uploadFileToDify(filePath, maxRetries = CONFIG.maxRetries) {
+  let lastError = null;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const form = new FormData();
+      form.append('file', fs.createReadStream(filePath), {
+        filename: path.basename(filePath),
+        contentType: 'audio/mpeg',
+      });
+      form.append('type', 'audio');
+      form.append('purpose', 'workflow_input');
+      form.append('user', 'voldin012');
 
-  const response = await axios.post('https://api.dify.ai/v1/files/upload', form, {
-    headers: {
-      Authorization: `Bearer ${process.env.DIFY_SECRET_KEY}`,
-      ...form.getHeaders()
-    },
-    timeout: CONFIG.uploadTimeout
-  });
+      const response = await axios.post('https://api.dify.ai/v1/files/upload', form, {
+        headers: {
+          Authorization: `Bearer ${process.env.DIFY_SECRET_KEY}`,
+          ...form.getHeaders()
+        },
+        timeout: CONFIG.uploadTimeout
+      });
 
-  return response.data.id;
+      return response.data.id;
+    } catch (error) {
+      lastError = error;
+      const errorCode = categorizeError(error, 'upload');
+      const httpStatus = error.response?.status;
+      
+      logger.warn(`Dify upload attempt ${attempt}/${maxRetries} failed`, {
+        filePath,
+        errorCode,
+        httpStatus,
+        message: error.message
+      });
+      
+      // Check if we should retry
+      const shouldRetry = attempt < maxRetries && 
+        (isRetryableStatus(httpStatus) || !error.response);
+      
+      if (shouldRetry) {
+        const delay = calculateBackoff(attempt);
+        logger.debug(`Retrying upload in ${delay}ms`, { filePath, attempt });
+        await sleep(delay);
+      }
+    }
+  }
+  
+  // All retries exhausted
+  const errorCode = categorizeError(lastError, 'upload');
+  const errorMessage = `${errorCode}: ${lastError.message}`;
+  logger.error('Dify upload failed after all retries', { filePath, errorCode });
+  
+  const error = new Error(errorMessage);
+  error.code = errorCode;
+  error.httpStatus = lastError.response?.status;
+  throw error;
 }
 
 /**
  * Process chunk with Dify STT workflow
+ * @param {string} chunkPath - Path to the audio chunk
+ * @returns {Promise<string>} - STT result text
+ * @throws {Error} - With standardized error code
  */
 export async function processChunkWithDify(chunkPath) {
-  // Upload file to Dify
+  // Upload file to Dify (has its own retry logic)
   const fileId = await uploadFileToDify(chunkPath);
   
-  // Call STT workflow
-  const response = await axios.post(
-    'https://api.dify.ai/v1/workflows/run',
-    {
-      inputs: {
-        "audioFile": {
-          "transfer_method": "local_file",
-          "upload_file_id": fileId,
-          "type": "audio"
-        }
-      },
-      user: 'voldin012'
-    },
-    {
-      headers: {
-        'Authorization': `Bearer ${process.env.DIFY_SECRET_KEY_STT}`,
-        'Content-Type': 'application/json'
-      },
-      timeout: CONFIG.difyTimeout
-    }
-  );
+  // Call STT workflow with retry
+  let lastError = null;
   
-  return response.data.data.outputs.stt;
+  for (let attempt = 1; attempt <= CONFIG.maxRetries; attempt++) {
+    try {
+      const response = await axios.post(
+        'https://api.dify.ai/v1/workflows/run',
+        {
+          inputs: {
+            "audioFile": {
+              "transfer_method": "local_file",
+              "upload_file_id": fileId,
+              "type": "audio"
+            }
+          },
+          user: 'voldin012'
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${process.env.DIFY_SECRET_KEY_STT}`,
+            'Content-Type': 'application/json'
+          },
+          timeout: CONFIG.difyTimeout
+        }
+      );
+      
+      return response.data.data.outputs.stt;
+    } catch (error) {
+      lastError = error;
+      const errorCode = categorizeError(error, 'workflow');
+      const httpStatus = error.response?.status;
+      
+      logger.warn(`Dify STT workflow attempt ${attempt}/${CONFIG.maxRetries} failed`, {
+        chunkPath,
+        errorCode,
+        httpStatus,
+        message: error.message
+      });
+      
+      // Check if we should retry
+      const shouldRetry = attempt < CONFIG.maxRetries && 
+        (isRetryableStatus(httpStatus) || !error.response);
+      
+      if (shouldRetry) {
+        const delay = calculateBackoff(attempt);
+        logger.debug(`Retrying STT workflow in ${delay}ms`, { chunkPath, attempt });
+        await sleep(delay);
+      }
+    }
+  }
+  
+  // All retries exhausted
+  const errorCode = categorizeError(lastError, 'workflow');
+  const errorMessage = `${errorCode}: ${lastError.message}`;
+  logger.error('Dify STT workflow failed after all retries', { chunkPath, errorCode });
+  
+  const error = new Error(errorMessage);
+  error.code = errorCode;
+  error.httpStatus = lastError.response?.status;
+  throw error;
 }
 
 /**
@@ -885,17 +975,62 @@ export async function processAudioJob(jobId, audioFilePath, fileId, userId, comp
     const chunkResults = await processChunksInParallel(jobId, chunks);
     await updateHeartbeat(jobId);
     
-    // Step 4: Merge results
+    // Step 4: Calculate success rate and check quality threshold
     await updateJobStatus(jobId, 'processing', 80, '結果をマージしています...');
     await updateHeartbeat(jobId);
-    const combinedText = chunkResults
-      .filter(r => r && r.success)
+    
+    const successfulChunks = chunkResults.filter(r => r && r.success);
+    const failedChunks = chunkResults.filter(r => r && !r.success);
+    const totalChunks = chunks.length;
+    const chunkSuccessRate = totalChunks > 0 ? successfulChunks.length / totalChunks : 0;
+    
+    logger.info('Chunk processing summary', {
+      jobId,
+      totalChunks,
+      successfulCount: successfulChunks.length,
+      failedCount: failedChunks.length,
+      successRate: (chunkSuccessRate * 100).toFixed(1) + '%'
+    });
+    
+    // Build warnings for failed chunks
+    const processingWarnings = failedChunks.map(chunk => ({
+      code: ERROR_CODES.CHUNK_PROCESS_FAILED,
+      chunk_index: chunk.index,
+      error: chunk.error || 'Unknown error'
+    }));
+    
+    // Determine quality status
+    const qualityStatus = failedChunks.length > 0 ? 'partial' : 'complete';
+    
+    // Check minimum success rate threshold
+    if (chunkSuccessRate < CONFIG.minChunkSuccessRate) {
+      const errorMsg = `${ERROR_CODES.INSUFFICIENT_SUCCESS_RATE}: Success rate ${(chunkSuccessRate * 100).toFixed(1)}% is below minimum ${(CONFIG.minChunkSuccessRate * 100).toFixed(0)}%`;
+      logger.error('Job failed due to insufficient chunk success rate', {
+        jobId,
+        successRate: chunkSuccessRate,
+        minRequired: CONFIG.minChunkSuccessRate,
+        failedChunks: failedChunks.map(c => c.index)
+      });
+      throw new Error(errorMsg);
+    }
+    
+    // Merge successful results
+    const combinedText = successfulChunks
       .sort((a, b) => a.index - b.index)
       .map(r => r.stt)
       .join('\n');
     
     if (!combinedText) {
       throw new Error('STT処理に失敗しました。全てのチャンクでエラーが発生しました。');
+    }
+    
+    // Log warning if partial success
+    if (qualityStatus === 'partial') {
+      logger.warn('Job completing with partial data', {
+        jobId,
+        successRate: (chunkSuccessRate * 100).toFixed(1) + '%',
+        missingChunks: failedChunks.map(c => c.index)
+      });
     }
     
     // Save combined STT result
@@ -944,12 +1079,19 @@ export async function processAudioJob(jobId, audioFilePath, fileId, userId, comp
     
     // Insert record with job_id for idempotency (prevents duplicate records)
     // ON DUPLICATE KEY UPDATE ensures we get the existing record if job was already processed
+    // Include quality tracking columns
+    const warningsJson = processingWarnings.length > 0 ? JSON.stringify(processingWarnings) : null;
+    const successRatePercent = parseFloat((chunkSuccessRate * 100).toFixed(2));
+    
     const [recordResult] = await pool.query(
       `INSERT INTO records 
-       (job_id, file_id, user_id, company_id, staff_id, audio_file_path, stt, skill_sheet, lor, salesforce, skills, hope, date)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+       (job_id, file_id, user_id, company_id, staff_id, audio_file_path, stt, skill_sheet, lor, salesforce, skills, hope, quality_status, chunk_success_rate, processing_warnings, date)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
        ON DUPLICATE KEY UPDATE 
          updated_at = NOW(),
+         quality_status = VALUES(quality_status),
+         chunk_success_rate = VALUES(chunk_success_rate),
+         processing_warnings = VALUES(processing_warnings),
          id = LAST_INSERT_ID(id)`,
       [
         jobId,
@@ -963,7 +1105,10 @@ export async function processAudioJob(jobId, audioFilePath, fileId, userId, comp
         outputs.lor,
         JSON.stringify(workContentArray),
         outputs.skills,
-        outputs.hope
+        outputs.hope,
+        qualityStatus,
+        successRatePercent,
+        warningsJson
       ]
     );
     
@@ -997,17 +1142,28 @@ export async function processAudioJob(jobId, audioFilePath, fileId, userId, comp
     // Stop heartbeat interval and mark job as completed
     stopHeartbeatInterval(jobId);
     await endJobHeartbeat(jobId, 'completed', 'none');
-    await updateJobStatus(jobId, 'completed', 100, '処理が完了しました');
+    
+    // Set completion message based on quality status
+    const completionMessage = qualityStatus === 'partial' 
+      ? `処理が完了しました（一部データ欠損あり: 成功率${successRatePercent}%）`
+      : '処理が完了しました';
+    await updateJobStatus(jobId, 'completed', 100, completionMessage);
     
     logger.info('Audio job completed successfully', { 
       jobId, 
       recordId,
-      fileId
+      fileId,
+      qualityStatus,
+      chunkSuccessRate: successRatePercent + '%',
+      warningsCount: processingWarnings.length
     });
     
     return {
       success: true,
-      recordId
+      recordId,
+      qualityStatus,
+      chunkSuccessRate: successRatePercent,
+      warnings: processingWarnings
     };
     
   } catch (error) {
