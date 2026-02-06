@@ -241,6 +241,28 @@ export const initializeDatabase = async () => {
     await pool.query(processingJobsTable);
     await pool.query(chunkProcessingTable);
 
+    // Create job_steps table for detailed step tracking
+    const jobStepsTable = `
+      CREATE TABLE IF NOT EXISTS job_steps (
+        id BIGINT PRIMARY KEY AUTO_INCREMENT,
+        job_id BIGINT NOT NULL,
+        step_name VARCHAR(50) NOT NULL,
+        step_order INT NOT NULL,
+        status ENUM('pending', 'running', 'completed', 'failed', 'skipped') DEFAULT 'pending',
+        started_at TIMESTAMP NULL,
+        completed_at TIMESTAMP NULL,
+        duration_ms INT NULL,
+        error_message TEXT,
+        metadata JSON,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (job_id) REFERENCES processing_jobs(id) ON DELETE CASCADE,
+        INDEX idx_job_steps_job_id (job_id),
+        INDEX idx_job_steps_status (status),
+        UNIQUE KEY unique_job_step (job_id, step_name)
+      )
+    `;
+    await pool.query(jobStepsTable);
+
     // ============================================
     // MIGRATION OPERATIONS - Only run if enabled
     // ============================================

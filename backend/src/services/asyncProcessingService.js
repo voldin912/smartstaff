@@ -1,47 +1,16 @@
+/**
+ * Async Processing Service
+ * 
+ * Manages job and chunk lifecycle for audio processing.
+ * Delegates actual processing to the audioProcessing orchestrator.
+ */
+
 import { pool } from '../config/database.js';
-import axios from 'axios';
-import FormData from 'form-data';
-import fs from 'fs';
-import path from 'path';
-import ffmpeg from 'fluent-ffmpeg';
-import ffmpegPath from 'ffmpeg-static';
 import logger from '../utils/logger.js';
-import cache from '../utils/cache.js';
 import { addAudioProcessingJob } from '../queues/audioQueue.js';
-import { 
-  acquireJobLock,
-  updateHeartbeat, 
-  endJob as endJobHeartbeat,
-  startHeartbeatInterval,
-  stopHeartbeatInterval 
-} from './jobHeartbeat.js';
-import {
-  API_CONFIG,
-  ERROR_CODES,
-  isRetryableStatus,
-  categorizeError,
-  calculateBackoff,
-  sleep,
-} from '../config/axiosConfig.js';
 
-ffmpeg.setFfmpegPath(ffmpegPath);
-
-// Configuration (uses unified API_CONFIG for external API settings)
-const CONFIG = {
-  maxConcurrency: parseInt(process.env.CHUNK_CONCURRENCY || '10'),
-  maxRetries: API_CONFIG.dify.maxRetries,
-  maxChunkSize: 10 * 1024 * 1024,  // 10MB
-  minChunkSize: 1 * 1024 * 1024,   // 1MB
-  fallbackChunkSize: 4 * 1024 * 1024, // 4MB
-  maxChunkDuration: parseInt(process.env.MAX_CHUNK_DURATION || '180'), // 3 min target
-  maxChunkDurationHard: parseInt(process.env.MAX_CHUNK_DURATION_HARD || '210'), // 3.5 min absolute max
-  silenceThreshold: parseInt(process.env.SILENCE_THRESHOLD || '-40'), // dB
-  silenceDuration: parseFloat(process.env.SILENCE_DURATION || '0.5'), // seconds
-  difyTimeout: API_CONFIG.dify.workflowTimeout,
-  uploadTimeout: API_CONFIG.dify.uploadTimeout,
-  minChunkSuccessRate: API_CONFIG.minChunkSuccessRate,
-};
-
+// Import the orchestrator for processing
+import { processAudioJob as orchestratorProcessAudioJob } from './audioProcessing/orchestrator.js';
 
 // ============================================
 // Job Management Functions
@@ -62,7 +31,7 @@ export async function createProcessingJob(fileId, userId, companyId, staffId, lo
     logger.info('Processing job created', { jobId: result.insertId, fileId, userId });
     return result.insertId;
   } catch (error) {
-    logger.error('Error creating processing job', error);
+    logger.error('Error creating processing job', { error: error.message });
     throw error;
   }
 }
@@ -103,7 +72,7 @@ export async function updateJobStatus(jobId, status, progress = null, currentSte
     
     logger.debug('Job status updated', { jobId, status, progress, currentStep });
   } catch (error) {
-    logger.error('Error updating job status', error);
+    logger.error('Error updating job status', { jobId, error: error.message });
   }
 }
 
@@ -132,114 +101,92 @@ export async function updateJobChunkCounts(jobId, totalChunks = null, completedC
       params
     );
   } catch (error) {
-    logger.error('Error updating job chunk counts', error);
+    logger.error('Error updating chunk counts', { jobId, error: error.message });
   }
 }
 
 /**
- * Save STT result to job
+ * Get job status by ID
  */
-export async function saveJobSttResult(jobId, sttResult) {
-  try {
-    await pool.query(
-      'UPDATE processing_jobs SET stt_result = ?, updated_at = NOW() WHERE id = ?',
-      [sttResult, jobId]
-    );
-  } catch (error) {
-    logger.error('Error saving job STT result', error);
-  }
-}
-
-/**
- * Get job status for polling
- */
-export async function getJobStatus(jobId, userId = null, role = null) {
+export async function getJobStatus(jobId, userId, role) {
   try {
     let query = `
       SELECT 
-        id as jobId,
-        file_id as fileId,
-        user_id as userId,
-        company_id as companyId,
-        staff_id as staffId,
-        status,
-        progress,
-        current_step as currentStep,
-        total_chunks as totalChunks,
-        completed_chunks as completedChunks,
-        error_message as errorMessage,
-        created_at as createdAt,
-        updated_at as updatedAt,
-        completed_at as completedAt
-      FROM processing_jobs
-      WHERE id = ?
+        pj.*,
+        pj.local_file_path as localFilePath,
+        pj.file_id as fileId,
+        pj.user_id as userId,
+        pj.company_id as companyId,
+        pj.staff_id as staffId,
+        u.name as userName,
+        c.name as companyName
+      FROM processing_jobs pj
+      LEFT JOIN users u ON pj.user_id = u.id
+      LEFT JOIN companies c ON pj.company_id = c.id
+      WHERE pj.id = ?
     `;
     const params = [jobId];
     
-    // Apply role-based filtering
-    if (role === 'member' || role === 'company-manager') {
-      query += ' AND user_id = ?';
+    // Role-based access control
+    if (role !== 'admin') {
+      query += ' AND pj.user_id = ?';
       params.push(userId);
     }
-    // Admin can see all jobs
     
-    const [jobs] = await pool.query(query, params);
+    const [rows] = await pool.query(query, params);
     
-    if (jobs.length === 0) {
+    if (rows.length === 0) {
       return null;
     }
     
-    return jobs[0];
+    return rows[0];
   } catch (error) {
-    logger.error('Error getting job status', error);
+    logger.error('Error getting job status', { jobId, error: error.message });
     throw error;
   }
 }
 
 /**
- * Get all jobs for a user
+ * Get all jobs for a user/company with pagination
  */
 export async function getUserJobs(userId, companyId, role, status = null, limit = 20) {
   try {
     let query = `
       SELECT 
-        id as jobId,
-        file_id as fileId,
-        staff_id as staffId,
-        status,
-        progress,
-        current_step as currentStep,
-        total_chunks as totalChunks,
-        completed_chunks as completedChunks,
-        error_message as errorMessage,
-        created_at as createdAt,
-        completed_at as completedAt
-      FROM processing_jobs
+        pj.*,
+        u.name as userName,
+        c.name as companyName
+      FROM processing_jobs pj
+      LEFT JOIN users u ON pj.user_id = u.id
+      LEFT JOIN companies c ON pj.company_id = c.id
       WHERE 1=1
     `;
     const params = [];
     
-    if (role === 'member') {
-      query += ' AND user_id = ?';
-      params.push(userId);
-    } else if (role === 'company-manager') {
-      query += ' AND company_id = ?';
+    // Role-based filtering
+    if (role === 'admin') {
+      // Admin sees all jobs
+    } else if (role === 'company_admin' && companyId) {
+      query += ' AND pj.company_id = ?';
       params.push(companyId);
+    } else {
+      query += ' AND pj.user_id = ?';
+      params.push(userId);
     }
-    // Admin sees all
     
+    // Status filter
     if (status) {
-      query += ' AND status = ?';
+      query += ' AND pj.status = ?';
       params.push(status);
     }
     
-    query += ' ORDER BY created_at DESC LIMIT ?';
+    query += ' ORDER BY pj.created_at DESC LIMIT ?';
     params.push(limit);
     
-    const [jobs] = await pool.query(query, params);
-    return jobs;
+    const [rows] = await pool.query(query, params);
+    return rows;
   } catch (error) {
-    logger.error('Error getting user jobs', error);
+    logger.error('Error getting user jobs', { userId, error: error.message });
     throw error;
   }
 }
@@ -267,7 +214,7 @@ export async function registerChunks(jobId, chunkCount) {
     
     logger.debug('Chunks registered', { jobId, chunkCount });
   } catch (error) {
-    logger.error('Error registering chunks', error);
+    logger.error('Error registering chunks', { jobId, error: error.message });
     throw error;
   }
 }
@@ -309,7 +256,7 @@ export async function updateChunkStatus(jobId, chunkIndex, status, sttResult = n
       );
     }
   } catch (error) {
-    logger.error('Error updating chunk status', error);
+    logger.error('Error updating chunk status', { jobId, chunkIndex, error: error.message });
   }
 }
 
@@ -318,609 +265,31 @@ export async function updateChunkStatus(jobId, chunkIndex, status, sttResult = n
  */
 export async function getFailedChunks(jobId) {
   try {
-    const [chunks] = await pool.query(
-      'SELECT chunk_index, retry_count FROM chunk_processing WHERE job_id = ? AND status = ? AND retry_count < ?',
-      [jobId, 'failed', CONFIG.maxRetries]
+    const [rows] = await pool.query(
+      'SELECT * FROM chunk_processing WHERE job_id = ? AND status = ?',
+      [jobId, 'failed']
     );
-    return chunks;
+    return rows;
   } catch (error) {
-    logger.error('Error getting failed chunks', error);
+    logger.error('Error getting failed chunks', { jobId, error: error.message });
     return [];
   }
 }
 
-// ============================================
-// Audio Splitting with Silence Detection
-// ============================================
-
 /**
- * Detect silence points in audio file using ffmpeg
+ * Get chunk status for a job
  */
-export async function detectSilence(audioFilePath) {
-  return new Promise((resolve, reject) => {
-    const silencePoints = [];
-    let silenceStart = null;
-    
-    ffmpeg(audioFilePath)
-      .audioFilters(`silencedetect=noise=${CONFIG.silenceThreshold}dB:d=${CONFIG.silenceDuration}`)
-      .format('null')
-      .on('stderr', (stderrLine) => {
-        // Parse silence_start
-        const startMatch = stderrLine.match(/silence_start:\s*([\d.]+)/);
-        if (startMatch) {
-          silenceStart = parseFloat(startMatch[1]);
-        }
-        
-        // Parse silence_end
-        const endMatch = stderrLine.match(/silence_end:\s*([\d.]+)/);
-        if (endMatch && silenceStart !== null) {
-          const silenceEnd = parseFloat(endMatch[1]);
-          // Use midpoint of silence as split point
-          silencePoints.push({
-            start: silenceStart,
-            end: silenceEnd,
-            midpoint: (silenceStart + silenceEnd) / 2
-          });
-          silenceStart = null;
-        }
-      })
-      .on('end', () => {
-        logger.debug('Silence detection completed', { 
-          file: audioFilePath, 
-          silencePointsCount: silencePoints.length 
-        });
-        resolve(silencePoints);
-      })
-      .on('error', (err) => {
-        logger.warn('Silence detection failed, will use fallback', { error: err.message });
-        resolve([]); // Return empty array to trigger fallback
-      })
-      .output('pipe:1')
-      .run();
-  });
-}
-
-/**
- * Get audio duration using ffprobe
- */
-export async function getAudioDuration(audioFilePath) {
-  return new Promise((resolve, reject) => {
-    ffmpeg.ffprobe(audioFilePath, (err, metadata) => {
-      if (err) {
-        reject(err);
-        return;
-      }
-      resolve(metadata.format.duration);
-    });
-  });
-}
-
-/**
- * Split audio at specific time points
- */
-export async function splitAudioAtPoints(audioFilePath, splitPoints, outputDir) {
-  const chunks = [];
-  const ext = path.extname(audioFilePath);
-  const baseName = path.basename(audioFilePath, ext);
-  
-  for (let i = 0; i < splitPoints.length; i++) {
-    const startTime = i === 0 ? 0 : splitPoints[i - 1];
-    const endTime = splitPoints[i];
-    const duration = endTime - startTime;
-    
-    const chunkPath = path.join(outputDir, `${baseName}_chunk_${i}${ext}`);
-    
-    await new Promise((resolve, reject) => {
-      ffmpeg(audioFilePath)
-        .setStartTime(startTime)
-        .setDuration(duration)
-        .output(chunkPath)
-        .on('end', () => resolve())
-        .on('error', reject)
-        .run();
-    });
-    
-    chunks.push({
-      index: i,
-      path: chunkPath,
-      startTime,
-      endTime,
-      duration
-    });
-  }
-  
-  // Add final chunk (from last split point to end)
-  if (splitPoints.length > 0) {
-    const lastStartTime = splitPoints[splitPoints.length - 1];
-    const chunkPath = path.join(outputDir, `${baseName}_chunk_${splitPoints.length}${ext}`);
-    
-    await new Promise((resolve, reject) => {
-      ffmpeg(audioFilePath)
-        .setStartTime(lastStartTime)
-        .output(chunkPath)
-        .on('end', () => resolve())
-        .on('error', reject)
-        .run();
-    });
-    
-    chunks.push({
-      index: splitPoints.length,
-      path: chunkPath,
-      startTime: lastStartTime,
-      endTime: null, // To end of file
-      duration: null
-    });
-  }
-  
-  return chunks;
-}
-
-/**
- * Split audio with silence detection (improved method)
- */
-export async function splitAudioWithSilenceDetection(audioFilePath) {
+export async function getChunkStatus(jobId) {
   try {
-    // Get audio duration
-    const duration = await getAudioDuration(audioFilePath);
-    logger.debug('Audio duration', { duration, file: audioFilePath });
-    
-    // Detect silence points
-    const silencePoints = await detectSilence(audioFilePath);
-    
-    // Get file size
-    const stats = fs.statSync(audioFilePath);
-    const fileSize = stats.size;
-    
-    // Calculate approximate bytes per second
-    const bytesPerSecond = fileSize / duration;
-    
-    // Calculate target chunk duration based on max chunk size
-    const targetChunkDuration = CONFIG.maxChunkSize / bytesPerSecond;
-    
-    let splitPoints = [];
-    
-    if (silencePoints.length > 0) {
-      // Hybrid silence-based splitting with soft/hard duration limits
-      let lastSplitTime = 0;
-      let i = 0;
-      
-      while (i < silencePoints.length) {
-        const silence = silencePoints[i];
-        const timeSinceLastSplit = silence.midpoint - lastSplitTime;
-        const estimatedChunkSize = timeSinceLastSplit * bytesPerSecond;
-        
-        // Case 1: Chunk exceeds soft limit (3 min) or size limit - split at this silence
-        if (timeSinceLastSplit >= CONFIG.maxChunkDuration || 
-            estimatedChunkSize >= CONFIG.maxChunkSize * 0.8) {
-          splitPoints.push(silence.midpoint);
-          lastSplitTime = silence.midpoint;
-        }
-        // Case 2: Check if we need to force-split (hard limit exceeded with no silence)
-        else if (i === silencePoints.length - 1 || 
-                 silencePoints[i + 1].midpoint - lastSplitTime > CONFIG.maxChunkDurationHard) {
-          // Next silence would exceed hard limit, check if current chunk is too long
-          if (timeSinceLastSplit > CONFIG.maxChunkDuration * 0.5) {
-            // Current chunk is reasonably sized, split here
-            splitPoints.push(silence.midpoint);
-            lastSplitTime = silence.midpoint;
-          }
-        }
-        
-        i++;
-      }
-      
-      // Handle remaining audio after last silence point
-      const remainingDuration = duration - lastSplitTime;
-      if (remainingDuration > CONFIG.maxChunkDurationHard) {
-        // Need to add force-split points for the remaining audio
-        let currentTime = lastSplitTime + CONFIG.maxChunkDuration;
-        while (currentTime < duration - 5) {
-          splitPoints.push(currentTime);
-          currentTime += CONFIG.maxChunkDuration;
-        }
-        logger.debug('Added force-split points for remaining audio', {
-          remainingDuration,
-          forceSplitCount: splitPoints.length
-        });
-      }
-      
-      // Remove split points too close to the end
-      while (splitPoints.length > 0 && (duration - splitPoints[splitPoints.length - 1]) < 5) {
-        splitPoints.pop();
-      }
-      
-      logger.debug('Using silence-based splitting', { 
-        splitPointsCount: splitPoints.length,
-        silencePointsCount: silencePoints.length,
-        maxChunkDuration: CONFIG.maxChunkDuration,
-        maxChunkDurationHard: CONFIG.maxChunkDurationHard,
-        estimatedChunks: splitPoints.length + 1
-      });
-    }
-    
-    // Fallback to time-based splitting if no suitable silence points found
-    if (splitPoints.length === 0 && duration > CONFIG.maxChunkDuration) {
-      // No silence points - use fixed interval splitting based on maxChunkDuration
-      let currentTime = CONFIG.maxChunkDuration;
-      
-      while (currentTime < duration - 5) { // Leave at least 5 seconds for last chunk
-        splitPoints.push(currentTime);
-        currentTime += CONFIG.maxChunkDuration;
-      }
-      
-      logger.debug('Using fixed-interval fallback (no silence detected)', { 
-        splitPointsCount: splitPoints.length,
-        intervalDuration: CONFIG.maxChunkDuration
-      });
-    }
-    
-    // If file is small enough, no splitting needed
-    if (splitPoints.length === 0) {
-      logger.debug('No splitting needed, file is small enough');
-      return [{
-        index: 0,
-        path: audioFilePath,
-        startTime: 0,
-        endTime: duration,
-        duration: duration
-      }];
-    }
-    
-    // Create output directory for chunks
-    const outputDir = path.dirname(audioFilePath);
-    
-    // Split audio at the calculated points
-    return await splitAudioAtPoints(audioFilePath, splitPoints, outputDir);
-    
-  } catch (error) {
-    logger.error('Error in silence detection splitting, falling back to simple split', error);
-    return await splitAudioSimple(audioFilePath);
-  }
-}
-
-/**
- * Simple fallback split (binary splitting like original)
- */
-export async function splitAudioSimple(audioFilePath) {
-  const fileBuffer = fs.readFileSync(audioFilePath);
-  const chunks = [];
-  const chunkSize = CONFIG.fallbackChunkSize;
-  const ext = path.extname(audioFilePath);
-  const baseName = path.basename(audioFilePath, ext);
-  const outputDir = path.dirname(audioFilePath);
-  
-  for (let i = 0; i < fileBuffer.length; i += chunkSize) {
-    const chunk = fileBuffer.slice(i, i + chunkSize);
-    const chunkIndex = Math.floor(i / chunkSize);
-    const chunkPath = path.join(outputDir, `${baseName}_chunk_${chunkIndex}${ext}`);
-    
-    fs.writeFileSync(chunkPath, chunk);
-    
-    chunks.push({
-      index: chunkIndex,
-      path: chunkPath,
-      startTime: null,
-      endTime: null,
-      duration: null
-    });
-  }
-  
-  return chunks;
-}
-
-// ============================================
-// Dify API Integration
-// ============================================
-
-/**
- * Upload file to Dify with retry logic
- * @param {string} filePath - Path to the file to upload
- * @param {number} maxRetries - Maximum retry attempts
- * @returns {Promise<string>} - Dify file ID
- * @throws {Error} - With standardized error code
- */
-export async function uploadFileToDify(filePath, maxRetries = CONFIG.maxRetries) {
-  let lastError = null;
-  
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      const form = new FormData();
-      form.append('file', fs.createReadStream(filePath), {
-        filename: path.basename(filePath),
-        contentType: 'audio/mpeg',
-      });
-      form.append('type', 'audio');
-      form.append('purpose', 'workflow_input');
-      form.append('user', 'voldin012');
-
-      const response = await axios.post('https://api.dify.ai/v1/files/upload', form, {
-        headers: {
-          Authorization: `Bearer ${process.env.DIFY_SECRET_KEY}`,
-          ...form.getHeaders()
-        },
-        timeout: CONFIG.uploadTimeout
-      });
-
-      return response.data.id;
-    } catch (error) {
-      lastError = error;
-      const errorCode = categorizeError(error, 'upload');
-      const httpStatus = error.response?.status;
-      
-      logger.warn(`Dify upload attempt ${attempt}/${maxRetries} failed`, {
-        filePath,
-        errorCode,
-        httpStatus,
-        message: error.message
-      });
-      
-      // Check if we should retry
-      const shouldRetry = attempt < maxRetries && 
-        (isRetryableStatus(httpStatus) || !error.response);
-      
-      if (shouldRetry) {
-        const delay = calculateBackoff(attempt);
-        logger.debug(`Retrying upload in ${delay}ms`, { filePath, attempt });
-        await sleep(delay);
-      }
-    }
-  }
-  
-  // All retries exhausted
-  const errorCode = categorizeError(lastError, 'upload');
-  const errorMessage = `${errorCode}: ${lastError.message}`;
-  logger.error('Dify upload failed after all retries', { filePath, errorCode });
-  
-  const error = new Error(errorMessage);
-  error.code = errorCode;
-  error.httpStatus = lastError.response?.status;
-  throw error;
-}
-
-/**
- * Process chunk with Dify STT workflow
- * @param {string} chunkPath - Path to the audio chunk
- * @returns {Promise<string>} - STT result text
- * @throws {Error} - With standardized error code
- */
-export async function processChunkWithDify(chunkPath) {
-  // Upload file to Dify (has its own retry logic)
-  const fileId = await uploadFileToDify(chunkPath);
-  
-  // Call STT workflow with retry
-  let lastError = null;
-  
-  for (let attempt = 1; attempt <= CONFIG.maxRetries; attempt++) {
-    try {
-      const response = await axios.post(
-        'https://api.dify.ai/v1/workflows/run',
-        {
-          inputs: {
-            "audioFile": {
-              "transfer_method": "local_file",
-              "upload_file_id": fileId,
-              "type": "audio"
-            }
-          },
-          user: 'voldin012'
-        },
-        {
-          headers: {
-            'Authorization': `Bearer ${process.env.DIFY_SECRET_KEY_STT}`,
-            'Content-Type': 'application/json'
-          },
-          timeout: CONFIG.difyTimeout
-        }
-      );
-      
-      return response.data.data.outputs.stt;
-    } catch (error) {
-      lastError = error;
-      const errorCode = categorizeError(error, 'workflow');
-      const httpStatus = error.response?.status;
-      
-      logger.warn(`Dify STT workflow attempt ${attempt}/${CONFIG.maxRetries} failed`, {
-        chunkPath,
-        errorCode,
-        httpStatus,
-        message: error.message
-      });
-      
-      // Check if we should retry
-      const shouldRetry = attempt < CONFIG.maxRetries && 
-        (isRetryableStatus(httpStatus) || !error.response);
-      
-      if (shouldRetry) {
-        const delay = calculateBackoff(attempt);
-        logger.debug(`Retrying STT workflow in ${delay}ms`, { chunkPath, attempt });
-        await sleep(delay);
-      }
-    }
-  }
-  
-  // All retries exhausted
-  const errorCode = categorizeError(lastError, 'workflow');
-  const errorMessage = `${errorCode}: ${lastError.message}`;
-  logger.error('Dify STT workflow failed after all retries', { chunkPath, errorCode });
-  
-  const error = new Error(errorMessage);
-  error.code = errorCode;
-  error.httpStatus = lastError.response?.status;
-  throw error;
-}
-
-/**
- * Execute main Dify workflow (skill sheet, lor, salesforce)
- */
-export async function executeDifyWorkflow(combinedText) {
-  // Save combined text to temp file
-  const tempFilePath = path.join('uploads/audio', `temp_${Date.now()}.csv`);
-  fs.writeFileSync(tempFilePath, combinedText);
-  
-  try {
-    // Upload text file to Dify
-    const form = new FormData();
-    form.append('file', fs.createReadStream(tempFilePath), {
-      filename: path.basename(tempFilePath),
-      contentType: 'text/csv',
-    });
-    form.append('type', 'document');
-    form.append('purpose', 'workflow_input');
-    form.append('user', 'voldin012');
-
-    const uploadResponse = await axios.post('https://api.dify.ai/v1/files/upload', form, {
-      headers: {
-        Authorization: `Bearer ${process.env.DIFY_SECRET_KEY}`,
-        ...form.getHeaders()
-      },
-      timeout: CONFIG.uploadTimeout
-    });
-    
-    const txtFileId = uploadResponse.data.id;
-    
-    // Call main workflow
-    const response = await axios.post(
-      'https://api.dify.ai/v1/workflows/run',
-      {
-        inputs: {
-          "txtFile": {
-            "transfer_method": "local_file",
-            "upload_file_id": txtFileId,
-            "type": "document"
-          }
-        },
-        user: 'voldin012'
-      },
-      {
-        headers: {
-          'Authorization': `Bearer ${process.env.DIFY_SECRET_KEY}`,
-          'Content-Type': 'application/json'
-        },
-        timeout: CONFIG.difyTimeout
-      }
+    const [rows] = await pool.query(
+      'SELECT chunk_index, status, error_message FROM chunk_processing WHERE job_id = ? ORDER BY chunk_index',
+      [jobId]
     );
-    
-    return response.data.data;
-  } finally {
-    // Clean up temp file
-    if (fs.existsSync(tempFilePath)) {
-      try {
-        fs.unlinkSync(tempFilePath);
-        logger.debug('Temp file deleted', { tempFilePath });
-      } catch (error) {
-        logger.warn('Failed to delete temp file', { tempFilePath, error: error.message });
-        // Continue - cleanup failure should not affect job status
-      }
-    }
+    return rows;
+  } catch (error) {
+    logger.error('Error getting chunk status', { jobId, error: error.message });
+    return [];
   }
-}
-
-// ============================================
-// Parallel Processing with Retry
-// ============================================
-
-/**
- * Process a single chunk with retry logic
- */
-export async function processChunkWithRetry(jobId, chunk, maxRetries = CONFIG.maxRetries) {
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      await updateChunkStatus(jobId, chunk.index, 'processing');
-      
-      logger.debug('Processing chunk', { jobId, chunkIndex: chunk.index, attempt });
-      
-      const sttResult = await processChunkWithDify(chunk.path);
-      
-      await updateChunkStatus(jobId, chunk.index, 'completed', sttResult);
-      
-      return {
-        index: chunk.index,
-        stt: sttResult,
-        success: true
-      };
-    } catch (error) {
-      logger.warn(`Chunk ${chunk.index} processing attempt ${attempt} failed`, { 
-        error: error.message,
-        jobId
-      });
-      
-      if (attempt === maxRetries) {
-        await updateChunkStatus(jobId, chunk.index, 'failed', null, error.message);
-        return {
-          index: chunk.index,
-          stt: '',
-          success: false,
-          error: error.message
-        };
-      }
-      
-      // Exponential backoff
-      const waitTime = Math.pow(2, attempt) * 1000;
-      logger.debug(`Waiting ${waitTime}ms before retry`, { jobId, chunkIndex: chunk.index });
-      await new Promise(resolve => setTimeout(resolve, waitTime));
-    }
-  }
-}
-
-/**
- * Process multiple chunks in parallel with concurrency control
- */
-export async function processChunksInParallel(jobId, chunks, maxConcurrency = CONFIG.maxConcurrency) {
-  const results = new Array(chunks.length);
-  const processing = [];
-  let completedCount = 0;
-  
-  const totalChunks = chunks.length;
-  
-  for (let i = 0; i < chunks.length; i++) {
-    const chunk = chunks[i];
-    
-    const chunkPromise = processChunkWithRetry(jobId, chunk)
-      .then(result => {
-        results[result.index] = result;
-        completedCount++;
-        
-        // Update progress
-        const progress = Math.floor((completedCount / totalChunks) * 70) + 10; // 10-80% for chunk processing
-        updateJobStatus(jobId, 'processing', progress, `STT処理中 (${completedCount}/${totalChunks})`);
-        
-        return result;
-      });
-    
-    processing.push(chunkPromise);
-    
-    // Concurrency control: wait if we've reached max concurrent processing
-    if (processing.length >= maxConcurrency) {
-      await Promise.race(processing);
-      // Remove completed promises
-      const completedIndices = [];
-      for (let j = 0; j < processing.length; j++) {
-        const status = await Promise.race([processing[j], Promise.resolve('pending')]);
-        if (status !== 'pending') {
-          completedIndices.push(j);
-        }
-      }
-      // Remove from end to avoid index issues
-      for (let j = completedIndices.length - 1; j >= 0; j--) {
-        processing.splice(completedIndices[j], 1);
-      }
-    }
-  }
-  
-  // Wait for all remaining chunks
-  await Promise.allSettled(processing);
-  
-  // Check for failures
-  const failedChunks = results.filter(r => r && !r.success);
-  if (failedChunks.length > 0) {
-    logger.warn('Some chunks failed', { 
-      jobId, 
-      failedCount: failedChunks.length,
-      failedIndices: failedChunks.map(c => c.index)
-    });
-  }
-  
-  return results;
 }
 
 // ============================================
@@ -929,254 +298,55 @@ export async function processChunksInParallel(jobId, chunks, maxConcurrency = CO
 
 /**
  * Main async processing function for audio job
- * Includes heartbeat monitoring for timeout detection
- * Uses atomic lock acquisition to prevent duplicate execution
+ * Delegates to the orchestrator for modular step execution
+ * 
+ * @param {number} jobId - Job ID
+ * @param {string} audioFilePath - Path to audio file
+ * @param {string} fileId - File ID
+ * @param {number} userId - User ID
+ * @param {number} companyId - Company ID
+ * @param {string} staffId - Staff ID
+ * @returns {Promise<{success: boolean, recordId?: number, error?: string}>}
  */
 export async function processAudioJob(jobId, audioFilePath, fileId, userId, companyId, staffId) {
-  // Acquire exclusive lock on the job (atomic operation)
-  const lockResult = await acquireJobLock(jobId);
-  
-  if (!lockResult.acquired) {
-    logger.warn('Failed to acquire job lock - job may already be processing', { 
-      jobId, 
-      reason: lockResult.reason 
-    });
-    // Return without processing - another worker has the job
-    return { 
-      success: false, 
-      reason: lockResult.reason || 'lock_not_acquired',
-      jobId 
-    };
-  }
-  
-  // Start automatic heartbeat interval for continuous monitoring
-  startHeartbeatInterval(jobId);
+  logger.info('Starting audio processing job', { jobId, audioFilePath });
   
   try {
-    // Update status to processing
-    await updateJobStatus(jobId, 'processing', 5, '処理を開始しています...');
-    
-    // Step 1: Split audio with silence detection
-    await updateJobStatus(jobId, 'processing', 10, '音声ファイルを分割しています...');
-    await updateHeartbeat(jobId); // Heartbeat before potentially long operation
-    const chunks = await splitAudioWithSilenceDetection(audioFilePath);
-    await updateHeartbeat(jobId); // Heartbeat after operation
-    
-    logger.info('Audio split completed', { jobId, chunkCount: chunks.length });
-    
-    // Step 2: Register chunks in database
-    await registerChunks(jobId, chunks.length);
-    await updateJobStatus(jobId, 'processing', 15, `${chunks.length}チャンクに分割完了`);
-    await updateHeartbeat(jobId);
-    
-    // Step 3: Process chunks in parallel (long operation - heartbeat interval handles this)
-    await updateJobStatus(jobId, 'processing', 20, 'STT処理を開始しています...');
-    await updateHeartbeat(jobId);
-    const chunkResults = await processChunksInParallel(jobId, chunks);
-    await updateHeartbeat(jobId);
-    
-    // Step 4: Calculate success rate and check quality threshold
-    await updateJobStatus(jobId, 'processing', 80, '結果をマージしています...');
-    await updateHeartbeat(jobId);
-    
-    const successfulChunks = chunkResults.filter(r => r && r.success);
-    const failedChunks = chunkResults.filter(r => r && !r.success);
-    const totalChunks = chunks.length;
-    const chunkSuccessRate = totalChunks > 0 ? successfulChunks.length / totalChunks : 0;
-    
-    logger.info('Chunk processing summary', {
+    // Delegate to orchestrator with required callbacks
+    const result = await orchestratorProcessAudioJob(
       jobId,
-      totalChunks,
-      successfulCount: successfulChunks.length,
-      failedCount: failedChunks.length,
-      successRate: (chunkSuccessRate * 100).toFixed(1) + '%'
-    });
-    
-    // Build warnings for failed chunks
-    const processingWarnings = failedChunks.map(chunk => ({
-      code: ERROR_CODES.CHUNK_PROCESS_FAILED,
-      chunk_index: chunk.index,
-      error: chunk.error || 'Unknown error'
-    }));
-    
-    // Determine quality status
-    const qualityStatus = failedChunks.length > 0 ? 'partial' : 'complete';
-    
-    // Check minimum success rate threshold
-    if (chunkSuccessRate < CONFIG.minChunkSuccessRate) {
-      const errorMsg = `${ERROR_CODES.INSUFFICIENT_SUCCESS_RATE}: Success rate ${(chunkSuccessRate * 100).toFixed(1)}% is below minimum ${(CONFIG.minChunkSuccessRate * 100).toFixed(0)}%`;
-      logger.error('Job failed due to insufficient chunk success rate', {
-        jobId,
-        successRate: chunkSuccessRate,
-        minRequired: CONFIG.minChunkSuccessRate,
-        failedChunks: failedChunks.map(c => c.index)
-      });
-      throw new Error(errorMsg);
-    }
-    
-    // Merge successful results
-    const combinedText = successfulChunks
-      .sort((a, b) => a.index - b.index)
-      .map(r => r.stt)
-      .join('\n');
-    
-    if (!combinedText) {
-      throw new Error('STT処理に失敗しました。全てのチャンクでエラーが発生しました。');
-    }
-    
-    // Log warning if partial success
-    if (qualityStatus === 'partial') {
-      logger.warn('Job completing with partial data', {
-        jobId,
-        successRate: (chunkSuccessRate * 100).toFixed(1) + '%',
-        missingChunks: failedChunks.map(c => c.index)
-      });
-    }
-    
-    // Save combined STT result
-    await saveJobSttResult(jobId, combinedText);
-    await updateHeartbeat(jobId);
-    
-    // Save text file for reference
-    const txtFilePath = audioFilePath.replace(/\.(mp3|wav|m4a|flac|aac)$/i, '.csv');
-    fs.writeFileSync(txtFilePath, combinedText);
-    
-    // Step 5: Execute Dify workflow (potentially long API call)
-    await updateJobStatus(jobId, 'processing', 85, 'AIワークフローを実行しています...');
-    await updateHeartbeat(jobId);
-    const difyResult = await executeDifyWorkflow(combinedText);
-    await updateHeartbeat(jobId);
-    
-    if (difyResult.status !== 'succeeded') {
-      throw new Error('Difyワークフローの実行に失敗しました。');
-    }
-    
-    const { outputs } = difyResult;
-    
-    // Step 6: Parse and save to records
-    await updateJobStatus(jobId, 'processing', 95, 'データベースに保存しています...');
-    await updateHeartbeat(jobId);
-    
-    // Clean and parse skillsheet
-    let skillsheetData = {};
-    const cleanSkillsheet = typeof outputs.skillsheet === 'string'
-      ? outputs.skillsheet.replace(/```json\n?|\n?```/g, '').trim()
-      : outputs.skillsheet;
-    
-    if (typeof cleanSkillsheet === "string") {
-      try {
-        skillsheetData = JSON.parse(cleanSkillsheet);
-      } catch (e) {
-        logger.error('Invalid JSON in skillsheet', e);
-        skillsheetData = {};
-      }
-    } else {
-      skillsheetData = cleanSkillsheet;
-    }
-    
-    // Extract work content array
-    const workContentArray = Object.values(skillsheetData).map(career => career['summary']);
-    
-    // Insert record with job_id for idempotency (prevents duplicate records)
-    // ON DUPLICATE KEY UPDATE ensures we get the existing record if job was already processed
-    // Include quality tracking columns
-    const warningsJson = processingWarnings.length > 0 ? JSON.stringify(processingWarnings) : null;
-    const successRatePercent = parseFloat((chunkSuccessRate * 100).toFixed(2));
-    
-    const [recordResult] = await pool.query(
-      `INSERT INTO records 
-       (job_id, file_id, user_id, company_id, staff_id, audio_file_path, stt, skill_sheet, lor, salesforce, skills, hope, quality_status, chunk_success_rate, processing_warnings, date)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
-       ON DUPLICATE KEY UPDATE 
-         updated_at = NOW(),
-         quality_status = VALUES(quality_status),
-         chunk_success_rate = VALUES(chunk_success_rate),
-         processing_warnings = VALUES(processing_warnings),
-         id = LAST_INSERT_ID(id)`,
-      [
-        jobId,
-        fileId,
-        userId,
-        companyId,
-        staffId,
-        audioFilePath,
-        combinedText,
-        outputs.skillsheet,
-        outputs.lor,
-        JSON.stringify(workContentArray),
-        outputs.skills,
-        outputs.hope,
-        qualityStatus,
-        successRatePercent,
-        warningsJson
-      ]
-    );
-    
-    const recordId = recordResult.insertId;
-    
-    // Update processing_jobs with the record_id for reference
-    await pool.query(
-      'UPDATE processing_jobs SET record_id = ? WHERE id = ?',
-      [recordId, jobId]
-    );
-    
-    await updateHeartbeat(jobId);
-    
-    // Invalidate cache
-    if (companyId) {
-      cache.invalidatePattern(`records:company:${companyId}:*`);
-      cache.invalidatePattern(`dashboard:stats:company:${companyId}`);
-    }
-    
-    // Step 7: Clean up chunk files
-    for (const chunk of chunks) {
-      if (chunk.path !== audioFilePath && fs.existsSync(chunk.path)) {
-        try {
-          fs.unlinkSync(chunk.path);
-        } catch (e) {
-          logger.warn('Failed to clean up chunk file', { path: chunk.path });
-        }
-      }
-    }
-    
-    // Stop heartbeat interval and mark job as completed
-    stopHeartbeatInterval(jobId);
-    await endJobHeartbeat(jobId, 'completed', 'none');
-    
-    // Set completion message based on quality status
-    const completionMessage = qualityStatus === 'partial' 
-      ? `処理が完了しました（一部データ欠損あり: 成功率${successRatePercent}%）`
-      : '処理が完了しました';
-    await updateJobStatus(jobId, 'completed', 100, completionMessage);
-    
-    logger.info('Audio job completed successfully', { 
-      jobId, 
-      recordId,
+      audioFilePath,
       fileId,
-      qualityStatus,
-      chunkSuccessRate: successRatePercent + '%',
-      warningsCount: processingWarnings.length
+      userId,
+      companyId,
+      staffId,
+      updateJobStatus,
+      registerChunks,
+      updateChunkStatus
+    );
+    
+    if (!result.success) {
+      logger.error('Audio processing failed', { jobId, error: result.error });
+      throw new Error(result.error || 'Processing failed');
+    }
+    
+    logger.info('Audio processing completed', { 
+      jobId, 
+      recordId: result.recordId,
+      qualityStatus: result.qualityStatus
     });
     
-    return {
-      success: true,
-      recordId,
-      qualityStatus,
-      chunkSuccessRate: successRatePercent,
-      warnings: processingWarnings
-    };
+    return result;
     
   } catch (error) {
-    // Stop heartbeat interval and mark job as failed
-    stopHeartbeatInterval(jobId);
-    await endJobHeartbeat(jobId, 'failed', 'none', error.message);
-    
-    logger.error('Error processing audio job', { jobId, error: error.message });
-    await updateJobStatus(jobId, 'failed', null, 'エラーが発生しました', error.message);
-    
+    logger.error('Error in processAudioJob', { jobId, error: error.message });
     throw error;
   }
 }
+
+// ============================================
+// Job Retry and Cleanup
+// ============================================
 
 /**
  * Retry a failed job
@@ -1257,7 +427,33 @@ export async function cleanupOldJobs(daysToKeep = 7) {
     logger.info('Old jobs cleaned up', { deletedCount: result.affectedRows });
     return result.affectedRows;
   } catch (error) {
-    logger.error('Error cleaning up old jobs', error);
+    logger.error('Error cleaning up old jobs', { error: error.message });
     return 0;
   }
 }
+
+// ============================================
+// Exports
+// ============================================
+
+export default {
+  // Job management
+  createProcessingJob,
+  updateJobStatus,
+  updateJobChunkCounts,
+  getJobStatus,
+  getUserJobs,
+  
+  // Chunk management
+  registerChunks,
+  updateChunkStatus,
+  getFailedChunks,
+  getChunkStatus,
+  
+  // Processing
+  processAudioJob,
+  
+  // Retry and cleanup
+  retryFailedJob,
+  cleanupOldJobs,
+};
