@@ -8,6 +8,13 @@ import ffmpegPath from 'ffmpeg-static';
 import logger from '../utils/logger.js';
 import cache from '../utils/cache.js';
 import { addAudioProcessingJob } from '../queues/audioQueue.js';
+import { 
+  startJob as startJobHeartbeat, 
+  updateHeartbeat, 
+  endJob as endJobHeartbeat,
+  startHeartbeatInterval,
+  stopHeartbeatInterval 
+} from './jobHeartbeat.js';
 
 ffmpeg.setFfmpegPath(ffmpegPath);
 
@@ -826,28 +833,44 @@ export async function processChunksInParallel(jobId, chunks, maxConcurrency = CO
 
 /**
  * Main async processing function for audio job
+ * Includes heartbeat monitoring for timeout detection
  */
 export async function processAudioJob(jobId, audioFilePath, fileId, userId, companyId, staffId) {
+  // Start heartbeat monitoring
+  const heartbeatResult = await startJobHeartbeat(jobId);
+  if (!heartbeatResult.success) {
+    logger.error('Failed to start job heartbeat', { jobId });
+  }
+  
+  // Start automatic heartbeat interval for continuous monitoring
+  startHeartbeatInterval(jobId);
+  
   try {
     // Update status to processing
     await updateJobStatus(jobId, 'processing', 5, '処理を開始しています...');
     
     // Step 1: Split audio with silence detection
     await updateJobStatus(jobId, 'processing', 10, '音声ファイルを分割しています...');
+    await updateHeartbeat(jobId); // Heartbeat before potentially long operation
     const chunks = await splitAudioWithSilenceDetection(audioFilePath);
+    await updateHeartbeat(jobId); // Heartbeat after operation
     
     logger.info('Audio split completed', { jobId, chunkCount: chunks.length });
     
     // Step 2: Register chunks in database
     await registerChunks(jobId, chunks.length);
     await updateJobStatus(jobId, 'processing', 15, `${chunks.length}チャンクに分割完了`);
+    await updateHeartbeat(jobId);
     
-    // Step 3: Process chunks in parallel
+    // Step 3: Process chunks in parallel (long operation - heartbeat interval handles this)
     await updateJobStatus(jobId, 'processing', 20, 'STT処理を開始しています...');
+    await updateHeartbeat(jobId);
     const chunkResults = await processChunksInParallel(jobId, chunks);
+    await updateHeartbeat(jobId);
     
     // Step 4: Merge results
     await updateJobStatus(jobId, 'processing', 80, '結果をマージしています...');
+    await updateHeartbeat(jobId);
     const combinedText = chunkResults
       .filter(r => r && r.success)
       .sort((a, b) => a.index - b.index)
@@ -860,14 +883,17 @@ export async function processAudioJob(jobId, audioFilePath, fileId, userId, comp
     
     // Save combined STT result
     await saveJobSttResult(jobId, combinedText);
+    await updateHeartbeat(jobId);
     
     // Save text file for reference
     const txtFilePath = audioFilePath.replace(/\.(mp3|wav|m4a|flac|aac)$/i, '.csv');
     fs.writeFileSync(txtFilePath, combinedText);
     
-    // Step 5: Execute Dify workflow
+    // Step 5: Execute Dify workflow (potentially long API call)
     await updateJobStatus(jobId, 'processing', 85, 'AIワークフローを実行しています...');
+    await updateHeartbeat(jobId);
     const difyResult = await executeDifyWorkflow(combinedText);
+    await updateHeartbeat(jobId);
     
     if (difyResult.status !== 'succeeded') {
       throw new Error('Difyワークフローの実行に失敗しました。');
@@ -877,6 +903,7 @@ export async function processAudioJob(jobId, audioFilePath, fileId, userId, comp
     
     // Step 6: Parse and save to records
     await updateJobStatus(jobId, 'processing', 95, 'データベースに保存しています...');
+    await updateHeartbeat(jobId);
     
     // Clean and parse skillsheet
     let skillsheetData = {};
@@ -917,6 +944,7 @@ export async function processAudioJob(jobId, audioFilePath, fileId, userId, comp
         outputs.hope
       ]
     );
+    await updateHeartbeat(jobId);
     
     // Invalidate cache
     if (companyId) {
@@ -935,7 +963,9 @@ export async function processAudioJob(jobId, audioFilePath, fileId, userId, comp
       }
     }
     
-    // Mark job as completed
+    // Stop heartbeat interval and mark job as completed
+    stopHeartbeatInterval(jobId);
+    await endJobHeartbeat(jobId, 'completed', 'none');
     await updateJobStatus(jobId, 'completed', 100, '処理が完了しました');
     
     logger.info('Audio job completed successfully', { 
@@ -950,6 +980,10 @@ export async function processAudioJob(jobId, audioFilePath, fileId, userId, comp
     };
     
   } catch (error) {
+    // Stop heartbeat interval and mark job as failed
+    stopHeartbeatInterval(jobId);
+    await endJobHeartbeat(jobId, 'failed', 'none', error.message);
+    
     logger.error('Error processing audio job', { jobId, error: error.message });
     await updateJobStatus(jobId, 'failed', null, 'エラーが発生しました', error.message);
     

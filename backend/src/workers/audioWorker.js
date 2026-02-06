@@ -2,6 +2,8 @@ import 'dotenv/config';
 import { Worker } from 'bullmq';
 import { createRedisConnection } from '../config/redis.js';
 import { processAudioJob, updateJobStatus } from '../services/asyncProcessingService.js';
+import { startReaper, stopReaper, REAPER_CONFIG } from '../services/jobReaper.js';
+import { stopAllHeartbeats, HEARTBEAT_CONFIG } from '../services/jobHeartbeat.js';
 import logger from '../utils/logger.js';
 
 /**
@@ -11,10 +13,11 @@ import logger from '../utils/logger.js';
  * Run separately from the API server: npm run worker
  * 
  * Features:
- * - Stalled job detection and recovery
+ * - Stalled job detection and recovery (BullMQ + DB heartbeat reaper)
  * - Graceful shutdown on SIGTERM/SIGINT
  * - Configurable concurrency
  * - Automatic retries with exponential backoff
+ * - Heartbeat monitoring for hung API calls
  */
 
 const QUEUE_NAME = 'audio-processing';
@@ -149,6 +152,12 @@ const shutdown = async (signal) => {
   isShuttingDown = true;
   logger.info(`Worker: Received ${signal}, starting graceful shutdown...`);
   
+  // Stop the job reaper
+  stopReaper();
+  
+  // Stop all active heartbeat intervals
+  stopAllHeartbeats();
+  
   if (worker) {
     try {
       // Close worker - waits for current jobs to complete
@@ -181,4 +190,13 @@ logger.info('='.repeat(50));
 logger.info('Audio Processing Worker Starting...');
 logger.info('='.repeat(50));
 
+// Log configuration
+logger.info('Heartbeat Config:', HEARTBEAT_CONFIG);
+logger.info('Reaper Config:', REAPER_CONFIG);
+
+// Start the BullMQ worker
 startWorker();
+
+// Start the job reaper (detects and handles stalled jobs)
+startReaper();
+logger.info('Job reaper started');
