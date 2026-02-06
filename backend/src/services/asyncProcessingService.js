@@ -7,6 +7,7 @@ import ffmpeg from 'fluent-ffmpeg';
 import ffmpegPath from 'ffmpeg-static';
 import logger from '../utils/logger.js';
 import cache from '../utils/cache.js';
+import { addAudioProcessingJob } from '../queues/audioQueue.js';
 
 ffmpeg.setFfmpegPath(ffmpegPath);
 
@@ -987,15 +988,17 @@ export async function retryFailedJob(jobId, userId, companyId, role) {
       [jobId]
     );
     
-    // Start processing in background
-    setImmediate(() => {
-      processAudioJob(jobId, job.localFilePath, job.fileId, job.userId, job.companyId, job.staffId)
-        .catch(error => {
-          logger.error('Error retrying job', { jobId, error: error.message });
-        });
+    // Add job to persistent queue for retry
+    await addAudioProcessingJob({
+      jobId,
+      audioFilePath: job.localFilePath,
+      fileId: job.fileId,
+      userId: job.userId,
+      companyId: job.companyId,
+      staffId: job.staffId,
     });
     
-    return { success: true, message: 'Job retry started' };
+    return { success: true, message: 'Job retry queued' };
   } catch (error) {
     logger.error('Error retrying failed job', error);
     throw error;

@@ -15,11 +15,11 @@ import { withLock, shouldRunJob, recordJobRun } from '../utils/jobLock.js';
 import { 
   createProcessingJob, 
   updateJobStatus, 
-  processAudioJob,
   getJobStatus,
   getUserJobs,
   retryFailedJob
 } from '../services/asyncProcessingService.js';
+import { addAudioProcessingJob } from '../queues/audioQueue.js';
 
 
 // Transcription Queue Manager
@@ -353,16 +353,14 @@ const uploadAudio = async (req, res) => {
       audioFilePath
     });
 
-    // Start async processing (non-blocking)
-    setImmediate(() => {
-      processAudioJob(jobId, audioFilePath, fileId, userId, companyId, staffId)
-        .catch(error => {
-          logger.error('Error in async audio processing', { 
-            jobId, 
-            error: error.message 
-          });
-          // Status is already updated to 'failed' in processAudioJob
-        });
+    // Add job to persistent queue (non-blocking, survives restarts)
+    await addAudioProcessingJob({
+      jobId,
+      audioFilePath,
+      fileId,
+      userId,
+      companyId,
+      staffId,
     });
 
     // Return job ID immediately (non-blocking response)
