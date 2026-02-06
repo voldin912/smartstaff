@@ -9,7 +9,7 @@ import logger from '../utils/logger.js';
 import cache from '../utils/cache.js';
 import { addAudioProcessingJob } from '../queues/audioQueue.js';
 import { 
-  startJob as startJobHeartbeat, 
+  acquireJobLock,
   updateHeartbeat, 
   endJob as endJobHeartbeat,
   startHeartbeatInterval,
@@ -834,12 +834,23 @@ export async function processChunksInParallel(jobId, chunks, maxConcurrency = CO
 /**
  * Main async processing function for audio job
  * Includes heartbeat monitoring for timeout detection
+ * Uses atomic lock acquisition to prevent duplicate execution
  */
 export async function processAudioJob(jobId, audioFilePath, fileId, userId, companyId, staffId) {
-  // Start heartbeat monitoring
-  const heartbeatResult = await startJobHeartbeat(jobId);
-  if (!heartbeatResult.success) {
-    logger.error('Failed to start job heartbeat', { jobId });
+  // Acquire exclusive lock on the job (atomic operation)
+  const lockResult = await acquireJobLock(jobId);
+  
+  if (!lockResult.acquired) {
+    logger.warn('Failed to acquire job lock - job may already be processing', { 
+      jobId, 
+      reason: lockResult.reason 
+    });
+    // Return without processing - another worker has the job
+    return { 
+      success: false, 
+      reason: lockResult.reason || 'lock_not_acquired',
+      jobId 
+    };
   }
   
   // Start automatic heartbeat interval for continuous monitoring
@@ -925,12 +936,17 @@ export async function processAudioJob(jobId, audioFilePath, fileId, userId, comp
     // Extract work content array
     const workContentArray = Object.values(skillsheetData).map(career => career['summary']);
     
-    // Insert record
+    // Insert record with job_id for idempotency (prevents duplicate records)
+    // ON DUPLICATE KEY UPDATE ensures we get the existing record if job was already processed
     const [recordResult] = await pool.query(
       `INSERT INTO records 
-       (file_id, user_id, company_id, staff_id, audio_file_path, stt, skill_sheet, lor, salesforce, skills, hope, date)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+       (job_id, file_id, user_id, company_id, staff_id, audio_file_path, stt, skill_sheet, lor, salesforce, skills, hope, date)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+       ON DUPLICATE KEY UPDATE 
+         updated_at = NOW(),
+         id = LAST_INSERT_ID(id)`,
       [
+        jobId,
         fileId,
         userId,
         companyId,
@@ -944,6 +960,15 @@ export async function processAudioJob(jobId, audioFilePath, fileId, userId, comp
         outputs.hope
       ]
     );
+    
+    const recordId = recordResult.insertId;
+    
+    // Update processing_jobs with the record_id for reference
+    await pool.query(
+      'UPDATE processing_jobs SET record_id = ? WHERE id = ?',
+      [recordId, jobId]
+    );
+    
     await updateHeartbeat(jobId);
     
     // Invalidate cache
@@ -970,13 +995,13 @@ export async function processAudioJob(jobId, audioFilePath, fileId, userId, comp
     
     logger.info('Audio job completed successfully', { 
       jobId, 
-      recordId: recordResult.insertId,
+      recordId,
       fileId
     });
     
     return {
       success: true,
-      recordId: recordResult.insertId
+      recordId
     };
     
   } catch (error) {
@@ -993,28 +1018,42 @@ export async function processAudioJob(jobId, audioFilePath, fileId, userId, comp
 
 /**
  * Retry a failed job
+ * Uses atomic UPDATE to prevent race conditions
  */
 export async function retryFailedJob(jobId, userId, companyId, role) {
   try {
-    // Get job details
+    // Get job details for queue data (access check)
     const job = await getJobStatus(jobId, userId, role);
     
     if (!job) {
-      throw new Error('Job not found or access denied');
+      const error = new Error('Job not found or access denied');
+      error.statusCode = 404;
+      throw error;
     }
     
-    if (job.status !== 'failed') {
-      throw new Error('Only failed jobs can be retried');
-    }
-    
-    // Reset job status
-    await pool.query(
+    // Atomic UPDATE with status check - only allow retry if job is in 'failed' status
+    const [result] = await pool.query(
       `UPDATE processing_jobs 
-       SET status = 'pending', progress = 0, current_step = 'リトライ準備中', 
-           error_message = NULL, completed_at = NULL, updated_at = NOW()
-       WHERE id = ?`,
+       SET status = 'pending', 
+           progress = 0, 
+           current_step = 'リトライ準備中', 
+           error_message = NULL, 
+           completed_at = NULL,
+           started_at = NULL,
+           heartbeat_at = NULL,
+           timeout_at = NULL,
+           timeout_reason = 'none',
+           updated_at = NOW()
+       WHERE id = ? AND status = 'failed'`,
       [jobId]
     );
+    
+    // If no rows affected, job is not in retryable state
+    if (result.affectedRows === 0) {
+      const error = new Error(`Job cannot be retried: current status is '${job.status}', expected 'failed'`);
+      error.statusCode = 409; // Conflict
+      throw error;
+    }
     
     // Reset chunk statuses
     await pool.query(
@@ -1032,9 +1071,11 @@ export async function retryFailedJob(jobId, userId, companyId, role) {
       staffId: job.staffId,
     });
     
+    logger.info('Job retry queued', { jobId, previousStatus: job.status });
+    
     return { success: true, message: 'Job retry queued' };
   } catch (error) {
-    logger.error('Error retrying failed job', error);
+    logger.error('Error retrying failed job', { jobId, error: error.message });
     throw error;
   }
 }

@@ -107,25 +107,36 @@ async function markJobAsFailed(job, reason) {
 
 /**
  * Re-queue a failed job for retry
+ * Uses atomic UPDATE with status check to prevent race conditions
  * 
  * @param {Object} job - The job to re-queue
  * @returns {Promise<boolean>}
  */
 async function requeueJob(job) {
   try {
-    // Reset job status to pending for re-processing
-    await pool.query(`
+    // Atomic UPDATE with status check - only requeue if job is in 'failed' status
+    // This prevents race conditions where another process might have already requeued the job
+    const [result] = await pool.query(`
       UPDATE processing_jobs 
       SET status = 'pending',
           progress = 0,
-          current_step = 'リトライ待機中',
+          current_step = 'リトライ待機中（タイムアウトから復旧）',
           timeout_reason = 'none',
           started_at = NULL,
           heartbeat_at = NULL,
           timeout_at = NULL,
           updated_at = NOW()
-      WHERE id = ?
+      WHERE id = ? AND status = 'failed'
     `, [job.id]);
+    
+    // If no rows affected, job status has changed (another process handled it)
+    if (result.affectedRows === 0) {
+      logger.warn('Job requeue skipped - status may have changed', {
+        jobId: job.id,
+        expectedStatus: 'failed',
+      });
+      return false;
+    }
     
     // Reset chunk statuses
     await pool.query(`

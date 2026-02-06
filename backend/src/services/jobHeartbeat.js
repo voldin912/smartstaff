@@ -21,6 +21,84 @@ const CONFIG = {
 const activeHeartbeats = new Map();
 
 /**
+ * Acquire exclusive lock on a job using atomic conditional UPDATE
+ * Only succeeds if job is in an allowed state (pending or failed)
+ * This prevents duplicate execution by multiple workers
+ * 
+ * @param {number} jobId - The job ID
+ * @returns {Promise<{acquired: boolean, attempts: number, reason?: string}>}
+ */
+export async function acquireJobLock(jobId) {
+  try {
+    const timeoutMinutes = CONFIG.maxDurationMinutes;
+    
+    // Atomic UPDATE with status check - only one worker can succeed
+    const [result] = await pool.query(
+      `UPDATE processing_jobs 
+       SET status = 'processing',
+           started_at = NOW(), 
+           heartbeat_at = NOW(), 
+           timeout_at = DATE_ADD(NOW(), INTERVAL ? MINUTE),
+           attempts = attempts + 1,
+           timeout_reason = 'none',
+           updated_at = NOW()
+       WHERE id = ? 
+         AND status IN ('pending', 'failed')`,
+      [timeoutMinutes, jobId]
+    );
+    
+    // If affectedRows is 0, someone else grabbed the job or it's in wrong state
+    if (result.affectedRows === 0) {
+      // Check why we couldn't acquire the lock
+      const [rows] = await pool.query(
+        'SELECT status, attempts FROM processing_jobs WHERE id = ?',
+        [jobId]
+      );
+      
+      if (rows.length === 0) {
+        logger.error('Job not found for acquireJobLock', { jobId });
+        return { acquired: false, attempts: 0, reason: 'job_not_found' };
+      }
+      
+      const currentStatus = rows[0].status;
+      logger.warn('Failed to acquire job lock', { 
+        jobId, 
+        currentStatus,
+        reason: currentStatus === 'processing' ? 'already_processing' : 'invalid_status'
+      });
+      
+      return { 
+        acquired: false, 
+        attempts: rows[0].attempts || 0, 
+        reason: currentStatus === 'processing' ? 'already_processing' : 'invalid_status'
+      };
+    }
+    
+    // Successfully acquired lock - get the updated attempts count
+    const [rows] = await pool.query(
+      'SELECT attempts, max_attempts FROM processing_jobs WHERE id = ?',
+      [jobId]
+    );
+    
+    const attempts = rows[0]?.attempts || 1;
+    const maxAttempts = rows[0]?.max_attempts || CONFIG.maxAttempts;
+    
+    logger.info('Job lock acquired', { 
+      jobId, 
+      attempts, 
+      maxAttempts,
+      timeoutMinutes 
+    });
+    
+    return { acquired: true, attempts };
+  } catch (error) {
+    logger.error('Error acquiring job lock', { jobId, error: error.message });
+    return { acquired: false, attempts: 0, reason: 'error' };
+  }
+}
+
+/**
+ * @deprecated Use acquireJobLock() instead for atomic lock acquisition
  * Start a job - sets started_at, heartbeat_at, calculates timeout_at, increments attempts
  * Call this at the beginning of job processing
  * 
@@ -28,51 +106,9 @@ const activeHeartbeats = new Map();
  * @returns {Promise<{success: boolean, attempts: number}>}
  */
 export async function startJob(jobId) {
-  try {
-    // Get current attempts
-    const [rows] = await pool.query(
-      'SELECT attempts, max_attempts FROM processing_jobs WHERE id = ?',
-      [jobId]
-    );
-    
-    if (rows.length === 0) {
-      logger.error('Job not found for startJob', { jobId });
-      return { success: false, attempts: 0 };
-    }
-    
-    const currentAttempts = rows[0].attempts || 0;
-    const maxAttempts = rows[0].max_attempts || CONFIG.maxAttempts;
-    const newAttempts = currentAttempts + 1;
-    
-    // Calculate timeout deadline
-    const timeoutMinutes = CONFIG.maxDurationMinutes;
-    
-    await pool.query(
-      `UPDATE processing_jobs 
-       SET started_at = NOW(), 
-           heartbeat_at = NOW(), 
-           timeout_at = DATE_ADD(NOW(), INTERVAL ? MINUTE),
-           attempts = ?,
-           max_attempts = ?,
-           timeout_reason = 'none',
-           status = 'processing',
-           updated_at = NOW()
-       WHERE id = ?`,
-      [timeoutMinutes, newAttempts, maxAttempts, jobId]
-    );
-    
-    logger.info('Job started with heartbeat', { 
-      jobId, 
-      attempts: newAttempts, 
-      maxAttempts,
-      timeoutMinutes 
-    });
-    
-    return { success: true, attempts: newAttempts };
-  } catch (error) {
-    logger.error('Error starting job heartbeat', { jobId, error: error.message });
-    return { success: false, attempts: 0 };
-  }
+  // Delegate to acquireJobLock for backwards compatibility
+  const result = await acquireJobLock(jobId);
+  return { success: result.acquired, attempts: result.attempts };
 }
 
 /**
@@ -244,6 +280,7 @@ export async function canRetryJob(jobId) {
 export const HEARTBEAT_CONFIG = CONFIG;
 
 export default {
+  acquireJobLock,
   startJob,
   updateHeartbeat,
   endJob,
