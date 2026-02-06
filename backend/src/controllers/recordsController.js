@@ -20,6 +20,7 @@ import {
   retryFailedJob
 } from '../services/asyncProcessingService.js';
 import { addAudioProcessingJob } from '../queues/audioQueue.js';
+import { API_CONFIG } from '../config/axiosConfig.js';
 
 
 // Transcription Queue Manager
@@ -262,7 +263,7 @@ const uploadFile = async (filePath) => {
       Authorization: `Bearer ${process.env.DIFY_SECRET_KEY}`,
       ...form.getHeaders()
     },
-    timeout: 300000 // 5 minutes timeout for file uploads
+    timeout: API_CONFIG.dify.uploadTimeout
   });
 
   logger.debug('API response', { data: response.data });
