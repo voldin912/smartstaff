@@ -197,12 +197,19 @@ export const initializeDatabase = async () => {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         completed_at TIMESTAMP NULL,
+        started_at TIMESTAMP NULL,
+        heartbeat_at TIMESTAMP NULL,
+        timeout_at TIMESTAMP NULL,
+        attempts INT DEFAULT 0,
+        max_attempts INT DEFAULT 3,
+        timeout_reason ENUM('none', 'heartbeat_timeout', 'max_duration', 'manual') DEFAULT 'none',
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
         FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE SET NULL,
         INDEX idx_status (status),
         INDEX idx_user_id (user_id),
         INDEX idx_company_id (company_id),
-        INDEX idx_created_at (created_at DESC)
+        INDEX idx_created_at (created_at DESC),
+        INDEX idx_heartbeat_status (status, heartbeat_at)
       )
     `;
 
@@ -354,6 +361,9 @@ export const runMigrations = async () => {
     // Migration: Optimize sort columns (add NOT NULL, backfill NULLs, update indexes)
     await optimizeSortColumns();
     await renameFollowsColumns();
+    
+    // Migration: Add heartbeat columns to processing_jobs
+    await addHeartbeatColumns();
 
     logger.info('Database migrations completed successfully');
   } catch (error) {
@@ -790,6 +800,84 @@ const optimizeSortColumns = async () => {
     logger.info('Sort column optimization completed');
   } catch (error) {
     logger.error('Error optimizing sort columns', error);
+    // Don't throw - allow initialization to continue
+  }
+};
+
+// Migration function: Add heartbeat columns to processing_jobs table
+const addHeartbeatColumns = async () => {
+  try {
+    const dbName = DB_NAME;
+    
+    // Helper function to check if column exists
+    const columnExists = async (tableName, columnName) => {
+      const [columns] = await pool.query(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = ? 
+        AND TABLE_NAME = ? 
+        AND COLUMN_NAME = ?
+      `, [dbName, tableName, columnName]);
+      return columns.length > 0;
+    };
+    
+    // Helper function to check if index exists
+    const indexExists = async (tableName, indexName) => {
+      const [indexes] = await pool.query(`
+        SELECT INDEX_NAME 
+        FROM INFORMATION_SCHEMA.STATISTICS 
+        WHERE TABLE_SCHEMA = ? 
+        AND TABLE_NAME = ? 
+        AND INDEX_NAME = ?
+      `, [dbName, tableName, indexName]);
+      return indexes.length > 0;
+    };
+    
+    // Add started_at column
+    if (!await columnExists('processing_jobs', 'started_at')) {
+      await pool.query('ALTER TABLE processing_jobs ADD COLUMN started_at TIMESTAMP NULL AFTER completed_at');
+      logger.info('Added started_at column to processing_jobs');
+    }
+    
+    // Add heartbeat_at column
+    if (!await columnExists('processing_jobs', 'heartbeat_at')) {
+      await pool.query('ALTER TABLE processing_jobs ADD COLUMN heartbeat_at TIMESTAMP NULL AFTER started_at');
+      logger.info('Added heartbeat_at column to processing_jobs');
+    }
+    
+    // Add timeout_at column
+    if (!await columnExists('processing_jobs', 'timeout_at')) {
+      await pool.query('ALTER TABLE processing_jobs ADD COLUMN timeout_at TIMESTAMP NULL AFTER heartbeat_at');
+      logger.info('Added timeout_at column to processing_jobs');
+    }
+    
+    // Add attempts column
+    if (!await columnExists('processing_jobs', 'attempts')) {
+      await pool.query('ALTER TABLE processing_jobs ADD COLUMN attempts INT DEFAULT 0 AFTER timeout_at');
+      logger.info('Added attempts column to processing_jobs');
+    }
+    
+    // Add max_attempts column
+    if (!await columnExists('processing_jobs', 'max_attempts')) {
+      await pool.query('ALTER TABLE processing_jobs ADD COLUMN max_attempts INT DEFAULT 3 AFTER attempts');
+      logger.info('Added max_attempts column to processing_jobs');
+    }
+    
+    // Add timeout_reason column
+    if (!await columnExists('processing_jobs', 'timeout_reason')) {
+      await pool.query(`ALTER TABLE processing_jobs ADD COLUMN timeout_reason ENUM('none', 'heartbeat_timeout', 'max_duration', 'manual') DEFAULT 'none' AFTER max_attempts`);
+      logger.info('Added timeout_reason column to processing_jobs');
+    }
+    
+    // Add index for heartbeat status queries
+    if (!await indexExists('processing_jobs', 'idx_heartbeat_status')) {
+      await pool.query('CREATE INDEX idx_heartbeat_status ON processing_jobs (status, heartbeat_at)');
+      logger.info('Added idx_heartbeat_status index to processing_jobs');
+    }
+    
+    logger.info('Heartbeat columns migration completed');
+  } catch (error) {
+    logger.error('Error adding heartbeat columns', error);
     // Don't throw - allow initialization to continue
   }
 };
