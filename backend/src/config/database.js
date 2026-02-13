@@ -143,18 +143,19 @@ export const initializeDatabase = async () => {
         id INT PRIMARY KEY AUTO_INCREMENT,
         file_id VARCHAR(255),
         user_id INT,
+        company_id INT,
         staff_id VARCHAR(255),
+        staff_name VARCHAR(255) DEFAULT '',
         audio_file_path VARCHAR(500),
         stt TEXT,
-        skill_sheet LONGTEXT,
-        lor LONGTEXT,
-        salesforce LONGTEXT,
-        skills LONGTEXT,
-        hope LONGTEXT,
+        summary TEXT,
         date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+        FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE SET NULL,
+        INDEX idx_follows_company_id (company_id),
+        INDEX idx_follows_company_created (company_id, created_at DESC),
         INDEX idx_follows_user_created (user_id, created_at DESC)
       )
     `;
@@ -398,6 +399,9 @@ export const runMigrations = async () => {
     
     // Migration: Add quality tracking columns to records table
     await addQualityTrackingColumns();
+
+    // Migration: Update follows table schema (add company_id, staff_name, summary; drop old columns)
+    await migrateFollowsTable();
 
     logger.info('Database migrations completed successfully');
   } catch (error) {
@@ -1013,6 +1017,128 @@ const addQualityTrackingColumns = async () => {
     logger.info('Quality tracking columns migration completed');
   } catch (error) {
     logger.error('Error adding quality tracking columns', error);
+    // Don't throw - allow initialization to continue
+  }
+};
+
+// Migration function: Update follows table schema
+// Phase 1: Add new columns (non-destructive)
+// Phase 2: Drop old columns (destructive, with data-existence warnings)
+const migrateFollowsTable = async () => {
+  try {
+    const dbName = DB_NAME;
+
+    // Helper function to check if column exists
+    const columnExists = async (tableName, columnName) => {
+      const [columns] = await pool.query(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = ? 
+        AND TABLE_NAME = ? 
+        AND COLUMN_NAME = ?
+      `, [dbName, tableName, columnName]);
+      return columns.length > 0;
+    };
+
+    // Helper function to check if index exists
+    const indexExists = async (tableName, indexName) => {
+      const [indexes] = await pool.query(`
+        SELECT INDEX_NAME 
+        FROM INFORMATION_SCHEMA.STATISTICS 
+        WHERE TABLE_SCHEMA = ? 
+        AND TABLE_NAME = ? 
+        AND INDEX_NAME = ?
+      `, [dbName, tableName, indexName]);
+      return indexes.length > 0;
+    };
+
+    logger.info('Starting follows table migration...');
+
+    // ============================================
+    // Phase 1: Expand (safe, non-destructive)
+    // ============================================
+
+    // Add company_id column
+    if (!await columnExists('follows', 'company_id')) {
+      await pool.query('ALTER TABLE follows ADD COLUMN company_id INT AFTER user_id');
+      logger.info('Added company_id column to follows table');
+
+      // Add foreign key
+      try {
+        await pool.query('ALTER TABLE follows ADD FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE SET NULL');
+        logger.info('Added company_id foreign key to follows table');
+      } catch (fkError) {
+        logger.warn('Failed to add company_id foreign key (may already exist)', { error: fkError.message });
+      }
+
+      // Add indexes
+      if (!await indexExists('follows', 'idx_follows_company_id')) {
+        await pool.query('ALTER TABLE follows ADD INDEX idx_follows_company_id (company_id)');
+        logger.info('Added idx_follows_company_id index');
+      }
+      if (!await indexExists('follows', 'idx_follows_company_created')) {
+        await pool.query('ALTER TABLE follows ADD INDEX idx_follows_company_created (company_id, created_at DESC)');
+        logger.info('Added idx_follows_company_created index');
+      }
+    }
+
+    // Add staff_name column
+    if (!await columnExists('follows', 'staff_name')) {
+      await pool.query("ALTER TABLE follows ADD COLUMN staff_name VARCHAR(255) DEFAULT '' AFTER staff_id");
+      logger.info('Added staff_name column to follows table');
+    }
+
+    // Add summary column
+    if (!await columnExists('follows', 'summary')) {
+      await pool.query('ALTER TABLE follows ADD COLUMN summary TEXT AFTER stt');
+      logger.info('Added summary column to follows table');
+    }
+
+    // Backfill company_id from users table
+    const [backfilled] = await pool.query(`
+      UPDATE follows f JOIN users u ON f.user_id = u.id
+      SET f.company_id = u.company_id
+      WHERE f.company_id IS NULL AND f.user_id IS NOT NULL
+    `);
+    if (backfilled.affectedRows > 0) {
+      logger.info('Backfilled company_id for follows', { rowsAffected: backfilled.affectedRows });
+    }
+
+    // Detect orphaned records (user_id is NULL or references deleted user)
+    const [orphans] = await pool.query(`
+      SELECT f.id, f.user_id FROM follows f
+      WHERE f.company_id IS NULL
+    `);
+    if (orphans.length > 0) {
+      logger.warn('Follows records with NULL company_id (orphaned - user deleted or NULL)', {
+        count: orphans.length,
+        ids: orphans.map(r => r.id)
+      });
+    }
+
+    // ============================================
+    // Phase 2: Contract (destructive)
+    // Drop old columns that are no longer used
+    // ============================================
+
+    const oldColumns = ['skill_sheet', 'lor', 'salesforce', 'skills', 'hope'];
+    for (const col of oldColumns) {
+      if (await columnExists('follows', col)) {
+        // Log if column has non-null data before dropping
+        const [dataCheck] = await pool.query(
+          `SELECT COUNT(*) as cnt FROM follows WHERE \`${col}\` IS NOT NULL AND \`${col}\` != ''`
+        );
+        if (dataCheck[0].cnt > 0) {
+          logger.warn(`Dropping follows.${col} which has ${dataCheck[0].cnt} non-empty rows`);
+        }
+        await pool.query(`ALTER TABLE follows DROP COLUMN \`${col}\``);
+        logger.info(`Dropped column follows.${col}`);
+      }
+    }
+
+    logger.info('Follows table migration completed');
+  } catch (error) {
+    logger.error('Error migrating follows table', error);
     // Don't throw - allow initialization to continue
   }
 };
