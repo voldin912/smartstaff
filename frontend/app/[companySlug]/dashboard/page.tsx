@@ -526,7 +526,10 @@ export default function DashboardPage() {
         <SalesforceSyncModal
           isOpen={showSalesforceModal}
           staffId={modalStaffId}
-          onClose={() => setShowSalesforceModal(false)}
+          onClose={() => {
+            setShowSalesforceModal(false);
+            setModalType(null);
+          }}
           onConfirm={handleSalesforceSync}
         />
         <DeleteModal
