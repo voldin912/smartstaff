@@ -5,20 +5,7 @@ import Image from "next/image";
 import Layout from "@/components/Layout";
 import Pagination from "@/components/molecules/pagination";
 import { useAuth } from "@/contexts/AuthContext";
-import SkillSheetSidebar from "@/components/SkillSheetSidebar";
-import SalesforceSidebar from "@/components/SalesforceSidebar";
-import LoRSidebar from "@/components/LoRSidebar";
 import { toast } from 'sonner';
-
-// Function to generate a random string of specified length
-const generateRandomString = (length: number) => {
-  const chars = 'abcdefghijklmnopqrstuvwxyz';
-  let result = '';
-  for (let i = 0; i < length; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return result;
-};
 
 // Function to generate a file ID in the format originalname-YYYYMMDDHHMMSS
 const generateFileId = (originalName: string) => {
@@ -32,19 +19,25 @@ const generateFileId = (originalName: string) => {
   return `${originalName}-${dateStr}`;
 };
 
-interface Record {
+interface FollowRecord {
   id: number;
+  ownerId?: number;
   date: string;
   fileId: string;
   staffId: string;
+  staffName: string;
+  summary: string | null;
+  companyId?: number;
   userName?: string;
-  skillSheet: string | { [key: string]: any } | null;
-  salesforce: string[] | null;
-  lor: string | null;
-  stt: boolean;
-  bulk: boolean;
-  skills?: string[];
-  hope?: string | null;
+}
+
+interface PaginationInfo {
+  total: number;
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+  currentPage: number;
+  totalPages: number;
 }
 
 // Add new interface for upload status
@@ -55,86 +48,78 @@ interface UploadStatus {
   estimatedTime?: string;
 }
 
-type SortField = 'date' | 'fileId';
+type SortField = 'date' | 'staffId';
 type SortOrder = 'asc' | 'desc';
 
-const convertToArray = (data: any): string[] => {
-  if (Array.isArray(data)) return data;
-  if (typeof data === 'string') {
-    try {
-      const parsed = JSON.parse(data);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [data];
-    }
-  }
-  return [];
-};
-
-export default function AdminFollowPage() {
+export default function FollowPage() {
   const { user } = useAuth();
-  const [records, setRecords] = useState<Record[]>([]);
+  const [records, setRecords] = useState<FollowRecord[]>([]);
+  const [pagination, setPagination] = useState<PaginationInfo | null>(null);
   const [loading, setLoading] = useState(true);
-  const [editingStaffId, setEditingStaffId] = useState<number | null>(null);
-  const [staffIdInput, setStaffIdInput] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [sortField, setSortField] = useState<SortField>('date');
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
   const [sortIconDate, setSortIconDate] = useState<'↑' | '↓'>('↓');
-  const [sortIconFileId, setSortIconFileId] = useState<'↑' | '↓'>('↓');
-  const inputRef = useRef<HTMLInputElement | null>(null);
-  const [isUploading, setIsUploading] = useState(false);
-  const [alertMessage, setAlertMessage] = useState<{ type: 'success' | 'error', message: string } | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const [isSkillSheetOpen, setIsSkillSheetOpen] = useState(false);
-  const [selectedRecord, setSelectedRecord] = useState<Record | null>(null);
-  const [isSalesforceOpen, setIsSalesforceOpen] = useState(false);
-  const [selectedSalesforceRecord, setSelectedSalesforceRecord] = useState<Record | null>(null);
+  const [sortIconStaffId, setSortIconStaffId] = useState<'↑' | '↓'>('↓');
   const [searchTerm, setSearchTerm] = useState('');
+  const [alertMessage, setAlertMessage] = useState<{ type: 'success' | 'error', message: string } | null>(null);
+
+  // Inline editing states
+  const [editingStaffId, setEditingStaffId] = useState<number | null>(null);
+  const [staffIdInput, setStaffIdInput] = useState("");
+  const [editingStaffName, setEditingStaffName] = useState<number | null>(null);
+  const [staffNameInput, setStaffNameInput] = useState("");
+  const [editingSummary, setEditingSummary] = useState<number | null>(null);
+  const [summaryInput, setSummaryInput] = useState("");
+
+  const staffIdInputRef = useRef<HTMLInputElement | null>(null);
+  const staffNameInputRef = useRef<HTMLInputElement | null>(null);
+  const summaryInputRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // Upload states
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isUploading, setIsUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<UploadStatus>({
     isUploading: false,
     progress: 'uploading',
     message: '',
   });
-  const [isLoROpen, setIsLoROpen] = useState(false);
-  const [selectedLoRRecord, setSelectedLoRRecord] = useState<Record | null>(null);
-  const [showSalesforceModal, setShowSalesforceModal] = useState(false);
-  const [modalStaffId, setModalStaffId] = useState<string | null>(null);
-  const [modalType, setModalType] = useState<'skillSheet' | 'salesforce' | null>(null);
-  const [modalData, setModalData] = useState<any>(null);
-  const [staffMemo, setStaffMemo] = useState('');
-  const [showPromptModal, setShowPromptModal] = useState(false);
-  const [isEditingPrompt, setIsEditingPrompt] = useState(false);
-  const [promptText, setPromptText] = useState('');
+
+  // Delete states
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [recordToDelete, setRecordToDelete] = useState<FollowRecord | null>(null);
 
   useEffect(() => {
     fetchRecords();
-  }, []);
+  }, [currentPage, rowsPerPage]);
 
   const fetchRecords = async () => {
     setLoading(true);
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow`, {
+      const offset = (currentPage - 1) * rowsPerPage;
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow?limit=${rowsPerPage}&offset=${offset}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) {
         const data = await res.json();
-        console.log("data",data)
-        setRecords(data);
+        setRecords(data.records);
+        setPagination(data.pagination);
       }
     } catch (e) {
-      // handle error
+      console.error('Error fetching follow records:', e);
     } finally {
       setLoading(false);
     }
   };
 
+  // ---- Inline editing handlers ----
+
   const handleEditStaffId = (id: number, currentStaffId: string) => {
     setEditingStaffId(id);
     setStaffIdInput(currentStaffId || '');
-    setTimeout(() => inputRef.current?.focus(), 0);
+    setTimeout(() => staffIdInputRef.current?.focus(), 0);
   };
 
   const handleStaffIdBlur = async (id: number) => {
@@ -145,28 +130,106 @@ export default function AdminFollowPage() {
       const token = localStorage.getItem("token");
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow/${id}/staff-id`, {
         method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ staffId: trimmedInput }),
       });
       if (res.ok) {
+        toast.success('スタッフIDを更新しました。');
         fetchRecords();
+      } else {
+        const data = await res.json();
+        toast.error(data.error || 'スタッフIDの更新に失敗しました。');
       }
     } catch (e) {
-      // handle error
+      toast.error('スタッフIDの更新に失敗しました。');
     }
   };
 
-  const handlePageChange = (page: number) => {
-    setCurrentPage(page);
+  const handleEditStaffName = (id: number, currentStaffName: string) => {
+    setEditingStaffName(id);
+    setStaffNameInput(currentStaffName || '');
+    setTimeout(() => staffNameInputRef.current?.focus(), 0);
   };
 
-  const handleRowsPerPageChange = (rows: number) => {
-    setRowsPerPage(rows);
-    setCurrentPage(1); // Reset to first page when changing rows per page
+  const handleStaffNameBlur = async (id: number) => {
+    setEditingStaffName(null);
+    const trimmedInput = staffNameInput?.trim() || '';
+    if (!trimmedInput) return;
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow/${id}/staff-name`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ staffName: trimmedInput }),
+      });
+      if (res.ok) {
+        toast.success('スタッフ名を更新しました。');
+        fetchRecords();
+      } else {
+        const data = await res.json();
+        toast.error(data.error || 'スタッフ名の更新に失敗しました。');
+      }
+    } catch (e) {
+      toast.error('スタッフ名の更新に失敗しました。');
+    }
   };
+
+  const handleEditSummary = (id: number, currentSummary: string | null) => {
+    setEditingSummary(id);
+    setSummaryInput(currentSummary || '');
+    setTimeout(() => summaryInputRef.current?.focus(), 0);
+  };
+
+  const handleSummaryBlur = async (id: number) => {
+    setEditingSummary(null);
+    const trimmedInput = summaryInput?.trim() || '';
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow/${id}/summary`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ summary: trimmedInput }),
+      });
+      if (res.ok) {
+        toast.success('要約を更新しました。');
+        fetchRecords();
+      } else {
+        const data = await res.json();
+        toast.error(data.error || '要約の更新に失敗しました。');
+      }
+    } catch (e) {
+      toast.error('要約の更新に失敗しました。');
+    }
+  };
+
+  const handleCopySummary = async (summary: string | null) => {
+    if (!summary) {
+      toast.error('要約がありません。');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(summary);
+      toast.success('要約をクリップボードにコピーしました。');
+    } catch (error) {
+      // Fallback for non-secure contexts
+      const textArea = document.createElement('textarea');
+      textArea.value = summary;
+      textArea.style.position = 'fixed';
+      textArea.style.left = '-999999px';
+      document.body.appendChild(textArea);
+      textArea.select();
+      try {
+        document.execCommand('copy');
+        toast.success('要約をクリップボードにコピーしました。');
+      } catch {
+        toast.error('コピーに失敗しました。');
+      } finally {
+        document.body.removeChild(textArea);
+      }
+    }
+  };
+
+  // ---- Upload handlers ----
 
   const handleUploadClick = () => {
     fileInputRef.current?.click();
@@ -177,35 +240,23 @@ export default function AdminFollowPage() {
     if (!file) return;
 
     if (!user?.id) {
-      setAlertMessage({
-        type: 'error',
-        message: 'ユーザー情報の取得に失敗しました。再度ログインしてください。'
-      });
+      toast.error('ユーザー情報の取得に失敗しました。再度ログインしてください。');
       return;
     }
 
-    // Check if file is an audio file
     if (!file.type.startsWith('audio/')) {
-      setAlertMessage({
-        type: 'error',
-        message: '音声ファイルのみアップロード可能です。'
-      });
+      toast.error('音声ファイルのみアップロード可能です。');
       return;
     }
 
-    // Check file size (e.g., max 100MB)
-    const maxSize = 100 * 1024 * 1024; // 100MB in bytes
+    const maxSize = 100 * 1024 * 1024;
     if (file.size > maxSize) {
-      setAlertMessage({
-        type: 'error',
-        message: 'ファイルサイズは100MB以下にしてください。'
-      });
+      toast.error('ファイルサイズは100MB以下にしてください。');
       return;
     }
 
-    // Calculate estimated processing time based on file size
     const fileSizeInMB = file.size / (1024 * 1024);
-    const estimatedMinutes = Math.ceil(fileSizeInMB * 1.5); // Rough estimate: 0.5 minutes per MB
+    const estimatedMinutes = Math.ceil(fileSizeInMB * 1.5);
     const estimatedTime = estimatedMinutes > 1 ? `${estimatedMinutes}分程度` : '1分程度';
 
     setUploadStatus({
@@ -214,7 +265,7 @@ export default function AdminFollowPage() {
       message: 'ファイルをアップロード中です...',
       estimatedTime
     });
-    console.log("file.name.split('.')[0]", file.name.split('.')[0]);
+
     const formData = new FormData();
     formData.append('audio', file);
     formData.append('fileId', generateFileId(file.name.split('.')[0]));
@@ -222,8 +273,7 @@ export default function AdminFollowPage() {
 
     try {
       const token = localStorage.getItem("token");
-      
-      // Update status to transcribing
+
       setUploadStatus(prev => ({
         ...prev,
         progress: 'transcribing',
@@ -232,50 +282,23 @@ export default function AdminFollowPage() {
 
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow/upload`, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { Authorization: `Bearer ${token}` },
         body: formData,
       });
 
       const data = await response.json();
 
       if (response.ok) {
-        setUploadStatus({
-          isUploading: false,
-          progress: 'complete',
-          message: 'ファイルの処理が完了しました。'
-        });
-        
-        setAlertMessage({
-          type: 'success',
-          message: 'ファイルの処理が完了しました。'
-        });
-        
+        setUploadStatus({ isUploading: false, progress: 'complete', message: 'ファイルの処理が完了しました。' });
+        toast.success('ファイルの処理が完了しました。');
         fetchRecords();
       } else {
-        setUploadStatus({
-          isUploading: false,
-          progress: 'error',
-          message: data.message || 'アップロードに失敗しました。'
-        });
-        
-        setAlertMessage({
-          type: 'error',
-          message: data.message || 'アップロードに失敗しました。'
-        });
+        setUploadStatus({ isUploading: false, progress: 'error', message: data.message || 'アップロードに失敗しました。' });
+        toast.error(data.message || 'アップロードに失敗しました。');
       }
     } catch (error) {
-      setUploadStatus({
-        isUploading: false,
-        progress: 'error',
-        message: 'アップロード中にエラーが発生しました。'
-      });
-      
-      setAlertMessage({
-        type: 'error',
-        message: 'アップロード中にエラーが発生しました。'
-      });
+      setUploadStatus({ isUploading: false, progress: 'error', message: 'アップロード中にエラーが発生しました。' });
+      toast.error('アップロード中にエラーが発生しました。');
     } finally {
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
@@ -283,595 +306,154 @@ export default function AdminFollowPage() {
     }
   };
 
-  const handleSkillSheetEdit = (record: Record) => {
-    setSelectedRecord(record);
-    setIsSkillSheetOpen(true);
-  };
+  // ---- STT Download ----
 
-  const handleSkillSheetSave = async (data: any) => {
-    if (!selectedRecord) return;
-    console.log("data", data);
-    try {
-      const token = localStorage.getItem("token");
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow/${selectedRecord.id}/skill-sheet`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(data),
-      });
-
-      if (response.ok) {
-        setAlertMessage({
-          type: 'success',
-          message: 'スキルシートを更新しました。'
-        });
-        fetchRecords();
-        setIsSkillSheetOpen(false);
-      } else {
-        setAlertMessage({
-          type: 'error',
-          message: 'スキルシートの更新に失敗しました。'
-        });
-      }
-    } catch (error) {
-      setAlertMessage({
-        type: 'error',
-        message: 'スキルシートの更新中にエラーが発生しました。'
-      });
-    }
-  };
-
-  const handleSkillSheetDownload = async (record: Record) => {
-    try {
-      const token = localStorage.getItem("token");
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow/${record.id}/skill-sheet`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-
-      if (response.ok) {
-        // Get the blob from the response
-        const blob = await response.blob();
-        
-        // Create a URL for the blob
-        const url = window.URL.createObjectURL(blob);
-        
-        // Create a temporary link element
-        const link = document.createElement('a');
-        link.href = url;
-        
-        // Set the filename using the record's fileId
-        link.download = `skill-sheet-${record.fileId}.pdf`;
-        
-        // Append to body, click, and remove
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        
-        // Clean up the URL
-        window.URL.revokeObjectURL(url);
-
-        setAlertMessage({
-          type: 'success',
-          message: 'スキルシートのダウンロードが完了しました。'
-        });
-      } else {
-        setAlertMessage({
-          type: 'error',
-          message: 'スキルシートのダウンロードに失敗しました。'
-        });
-      }
-    } catch (error) {
-      setAlertMessage({
-        type: 'error',
-        message: 'スキルシートのダウンロード中にエラーが発生しました。'
-      });
-    }
-  };
-
-  const handleSalesforceEdit = (record: Record) => {
-    setSelectedSalesforceRecord(record);
-    setIsSalesforceOpen(true);
-  };
-
-  const handleSalesforceSave = async (data: string[], hope: string) => {
-    if (!selectedSalesforceRecord) return;
-
-    try {
-      const token = localStorage.getItem("token");
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow/${selectedSalesforceRecord.id}/salesforce`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ salesforceData: data, hope: hope }),
-      });
-
-      if (response.ok) {
-        setAlertMessage({
-          type: 'success',
-          message: 'Salesforceデータを更新しました。'
-        });
-        fetchRecords();
-        setIsSalesforceOpen(false);
-      } else {
-        setAlertMessage({
-          type: 'error',
-          message: 'Salesforceデータの更新に失敗しました。'
-        });
-      }
-    } catch (error) {
-      setAlertMessage({
-        type: 'error',
-        message: 'Salesforceデータの更新中にエラーが発生しました。'
-      });
-    }
-  };
-
-  const handleSalesforceDownload = async (record: Record) => {
-    try {
-      const token = localStorage.getItem("token");
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow/${record.id}/salesforce-pdf`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-
-      if (response.ok) {
-        // Get the blob from the response
-        const blob = await response.blob();
-        
-        // Create a URL for the blob
-        const url = window.URL.createObjectURL(blob);
-        
-        // Create a temporary link element
-        const link = document.createElement('a');
-        link.href = url;
-        
-        // Set the filename using the record's fileId
-        link.download = `salesforce-${record.fileId}.pdf`;
-        
-        // Append to body, click, and remove
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        
-        // Clean up the URL
-        window.URL.revokeObjectURL(url);
-
-        setAlertMessage({
-          type: 'success',
-          message: 'Salesforceデータのダウンロードが完了しました。'
-        });
-      } else {
-        setAlertMessage({
-          type: 'error',
-          message: 'Salesforceデータのダウンロードに失敗しました。'
-        });
-      }
-    } catch (error) {
-      setAlertMessage({
-        type: 'error',
-        message: 'Salesforceデータのダウンロード中にエラーが発生しました。'
-      });
-    }
-  };
-
-  const handleLoRCopy = async (record: Record) => {
-    try {
-      if (!record.lor) {
-        setAlertMessage({
-          type: 'error',
-          message: '推薦文がありません。'
-        });
-        return;
-      }
-
-      // Create a temporary textarea element
-      const textArea = document.createElement('textarea');
-      textArea.value = record.lor ?? '';
-      
-      // Make the textarea out of viewport
-      textArea.style.position = 'fixed';
-      textArea.style.left = '-999999px';
-      textArea.style.top = '-999999px';
-      document.body.appendChild(textArea);
-      
-      // Select and copy the text
-      textArea.focus();
-      textArea.select();
-      
-      try {
-        const successful = document.execCommand('copy');
-        if (successful) {
-          setAlertMessage({
-            type: 'success',
-            message: '推薦文をクリップボードにコピーしました。'
-          });
-        } else {
-          throw new Error('Copy command failed');
-        }
-      } catch (err) {
-        // Fallback to clipboard API if available
-        if (navigator.clipboard && window.isSecureContext) {
-          await navigator.clipboard.writeText(record.lor ?? '');
-          setAlertMessage({
-            type: 'success',
-            message: '推薦文をクリップボードにコピーしました。'
-          });
-        } else {
-          throw new Error('Clipboard API not available');
-        }
-      } finally {
-        // Clean up
-        document.body.removeChild(textArea);
-      }
-    } catch (error) {
-      console.error('Error copying LOR:', error);
-      setAlertMessage({
-        type: 'error',
-        message: '推薦文のコピーに失敗しました。ブラウザの設定を確認してください。'
-      });
-    }
-  };
-
-  const handleLoREdit = (record: Record) => {
-    setSelectedLoRRecord(record);
-    setIsLoROpen(true);
-  };
-
-  const handleLoRSave = async (data: string) => {
-    if (!selectedLoRRecord) return;
-
-    try {
-      const token = localStorage.getItem("token");
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow/${selectedLoRRecord.id}/lor`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ lor: data }),
-      });
-
-      if (response.ok) {
-        setAlertMessage({
-          type: 'success',
-          message: '推薦文を更新しました。'
-        });
-        fetchRecords();
-        setIsLoROpen(false);
-      } else {
-        setAlertMessage({
-          type: 'error',
-          message: '推薦文の更新に失敗しました。'
-        });
-      }
-    } catch (error) {
-      setAlertMessage({
-        type: 'error',
-        message: '推薦文の更新中にエラーが発生しました。'
-      });
-    }
-  };
-
-  const handleSTTDownload = async (record: Record) => {
+  const handleSTTDownload = async (record: FollowRecord) => {
     try {
       const token = localStorage.getItem("token");
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow/${record.id}/stt`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { Authorization: `Bearer ${token}` },
       });
 
       if (response.ok) {
-        // Get the blob from the response
         const blob = await response.blob();
-        
-        // Create a URL for the blob
         const url = window.URL.createObjectURL(blob);
-        
-        // Create a temporary link element
         const link = document.createElement('a');
         link.href = url;
-        
-        // Set the filename using the record's fileId
         link.download = `stt-${record.fileId}.pdf`;
-        
-        // Append to body, click, and remove
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
-        
-        // Clean up the URL
         window.URL.revokeObjectURL(url);
-
-        setAlertMessage({
-          type: 'success',
-          message: 'STTのダウンロードが完了しました。'
-        });
+        toast.success('STTデータのダウンロードが完了しました。');
       } else {
-        setAlertMessage({
-          type: 'error',
-          message: 'STTのダウンロードに失敗しました。'
-        });
+        toast.error('STTデータのダウンロードに失敗しました。');
       }
     } catch (error) {
-      setAlertMessage({
-        type: 'error',
-        message: 'STTのダウンロード中にエラーが発生しました。'
-      });
+      toast.error('STTデータのダウンロード中にエラーが発生しました。');
     }
   };
 
-  const handleBulkDownload = async (record: Record) => {
+  // ---- Delete handlers ----
+
+  const handleDeleteClick = (record: FollowRecord) => {
+    setRecordToDelete(record);
+    setShowDeleteModal(true);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!recordToDelete) return;
     try {
       const token = localStorage.getItem("token");
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow/${record.id}/bulk`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow/${recordToDelete.id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
       });
-
-      if (response.ok) {
-        // Get the blob from the response
-        const blob = await response.blob();
-        
-        // Create a URL for the blob
-        const url = window.URL.createObjectURL(blob);
-        
-        // Create a temporary link element
-        const link = document.createElement('a');
-        link.href = url;
-        
-        // Set the filename using the record's fileId
-        link.download = `bulk-${record.fileId}.zip`;
-        
-        // Append to body, click, and remove
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        
-        // Clean up the URL
-        window.URL.revokeObjectURL(url);
-
-        setAlertMessage({
-          type: 'success',
-          message: 'Bulkのダウンロードが完了しました。'
-        });
+      if (res.ok) {
+        toast.success('レコードを削除しました。');
+        fetchRecords();
       } else {
-        setAlertMessage({
-          type: 'error',
-          message: 'Bulkのダウンロードに失敗しました。'
-        });
+        const data = await res.json();
+        toast.error(data.error || 'レコードの削除に失敗しました。');
       }
     } catch (error) {
-      setAlertMessage({
-        type: 'error',
-        message: 'Bulkのダウンロード中にエラーが発生しました。'
-      });
+      toast.error('レコードの削除に失敗しました。');
+    } finally {
+      setShowDeleteModal(false);
+      setRecordToDelete(null);
     }
   };
 
+  // ---- Sorting & filtering ----
+
   const parseDate = (dateString: string) => {
-    const date = new Date(dateString);
-    return {
-      year: date.getFullYear(),
-      month: date.getMonth() + 1,
-      day: date.getDate(),
-      hours: date.getHours(),
-      minutes: date.getMinutes(),
-      seconds: date.getSeconds()
-    };
+    try {
+      return new Date(dateString).getTime();
+    } catch {
+      return 0;
+    }
   };
 
   const formatDate = (dateString: string) => {
-    const date = parseDate(dateString);
-    return `${date.year}/${String(date.month).padStart(2, '0')}/${String(date.day).padStart(2, '0')} ${String(date.hours).padStart(2, '0')}:${String(date.minutes).padStart(2, '0')}`;
-  };
-
-  const handlePromptButtonClick = async () => {
-    if (!showPromptModal) {
-      // Open modal and fetch prompt
-      try {
-        const token = localStorage.getItem("token");
-        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow/prompt`, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        });
-        if (res.ok) {
-          const data = await res.json();
-          setPromptText(data.prompt || '');
-          setShowPromptModal(true);
-          setIsEditingPrompt(true);
-        } else {
-          setAlertMessage({
-            type: 'error',
-            message: 'プロンプトの取得に失敗しました。'
-          });
-        }
-      } catch (e) {
-        setAlertMessage({
-          type: 'error',
-          message: 'プロンプトの取得中にエラーが発生しました。'
-        });
-      }
-    } else {
-      // Close modal
-      setShowPromptModal(false);
-      setIsEditingPrompt(false);
-      setPromptText('');
-    }
-  };
-
-  const handlePromptSave = async () => {
     try {
-      const token = localStorage.getItem("token");
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow/prompt`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ prompt: promptText }),
-      });
+      const date = new Date(dateString);
+      if (isNaN(date.getTime())) return dateString;
 
-      if (res.ok) {
-        setAlertMessage({
-          type: 'success',
-          message: 'プロンプトを保存しました。'
-        });
-        setShowPromptModal(false);
-        setIsEditingPrompt(false);
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      const hours = String(date.getHours()).padStart(2, '0');
+      const minutes = String(date.getMinutes()).padStart(2, '0');
+      return `${year}/${month}/${day} ${hours}:${minutes}`;
+    } catch {
+      return dateString;
+    }
+  };
+
+  const truncateText = (text: string | null, maxLength: number = 30) => {
+    if (!text) return '';
+    return text.length > maxLength ? `${text.substring(0, maxLength)}...` : text;
+  };
+
+  const filteredRecords = records.filter(rec =>
+    (rec.date || '').includes(searchTerm) ||
+    (rec.staffId || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (rec.staffName || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (rec.userName || '').toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  const sortedRecords = useMemo(() => {
+    return [...filteredRecords].sort((a, b) => {
+      if (sortField === 'date') {
+        const dateA = parseDate(a.date);
+        const dateB = parseDate(b.date);
+        return sortOrder === 'desc' ? dateB - dateA : dateA - dateB;
       } else {
-        const data = await res.json();
-        setAlertMessage({
-          type: 'error',
-          message: data.error || 'プロンプトの保存に失敗しました。'
-        });
-      }
-    } catch (e) {
-      setAlertMessage({
-        type: 'error',
-        message: 'プロンプトの保存中にエラーが発生しました。'
-      });
-    }
-  };
-
-  const handleColumnSort = (field: SortField) => {
-    if (sortField === field) {
-      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortField(field);
-      setSortOrder('asc');
-    }
-
-    // Update sort icons
-    if (field === 'date') {
-      setSortIconDate(sortOrder === 'asc' ? '↑' : '↓');
-    } else if (field === 'fileId') {
-      setSortIconFileId(sortOrder === 'asc' ? '↑' : '↓');
-    }
-  };
-
-  const handleSalesforceIconClick = (staffId: string, type: 'skillSheet' | 'salesforce', data: any, hope: any) => {
-    setModalStaffId(staffId);
-    setModalType(type);
-    setModalData(data);
-    setStaffMemo(hope)
-    setShowSalesforceModal(true);
-  };
-
-  const handleSalesforceSync = async () => {
-    if (!modalStaffId || !modalType) return;
-    const token = localStorage.getItem("token");
-    try {
-      const body: any = { staffId: modalStaffId, type: modalType };
-      if (modalType === 'skillSheet') {
-        body.skillSheet = modalData;
-      } else if (modalType === 'salesforce') {
-        body.salesforce = modalData;
-      }
-      body.hope = staffMemo;
-      console.log(body)
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/salesforce/sync-account`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        toast.error(data.message || '連携に失敗しました');
-      } else {
-        toast.success(data.message || '連携が完了しました');
-      }
-    } catch (e) {
-      toast.error('サーバーエラーが発生しました');
-    }
-    setShowSalesforceModal(false);
-  };
-
-  // Computed values for filtering and pagination
-  const filteredRecords = useMemo(() => {
-    return records.filter(record => {
-      const searchLower = searchTerm.toLowerCase();
-      return (
-        formatDate(record.date).toLowerCase().includes(searchLower) ||
-        record.fileId.toLowerCase().includes(searchLower)
-      );
-    }).sort((a, b) => {
-      let aValue: any, bValue: any;
-      
-      switch (sortField) {
-        case 'date':
-          aValue = new Date(a.date);
-          bValue = new Date(b.date);
-          break;
-        case 'fileId':
-          aValue = a.fileId;
-          bValue = b.fileId;
-          break;
-        default:
-          return 0;
-      }
-      
-      if (sortOrder === 'asc') {
-        return aValue > bValue ? 1 : -1;
-      } else {
-        return aValue < bValue ? 1 : -1;
+        const valA = (a.staffId || '').toLowerCase();
+        const valB = (b.staffId || '').toLowerCase();
+        return sortOrder === 'desc' ? valB.localeCompare(valA) : valA.localeCompare(valB);
       }
     });
-  }, [records, searchTerm, sortField, sortOrder]);
+  }, [filteredRecords, sortField, sortOrder]);
 
-  const paginatedRecords = useMemo(() => {
-    const startIndex = (currentPage - 1) * rowsPerPage;
-    const endIndex = startIndex + rowsPerPage;
-    return filteredRecords.slice(startIndex, endIndex);
-  }, [filteredRecords, currentPage, rowsPerPage]);
+  const handleColumnSort = (field: SortField) => {
+    const newOrder = field === sortField && sortOrder === 'desc' ? 'asc' : 'desc';
+    setSortField(field);
+    setSortOrder(newOrder);
 
-  // Redirect if not admin
-  if (user && user.role !== 'admin') {
-    // Redirect to appropriate company dashboard
-    const companySlug = user.company?.slug || 'default';
-    window.location.href = `/${companySlug}/dashboard`;
-    return null;
-  }
+    if (field === 'date') {
+      setSortIconDate(newOrder === 'asc' ? '↑' : '↓');
+      setSortIconStaffId('↓');
+    } else {
+      setSortIconDate('↓');
+      setSortIconStaffId(newOrder === 'asc' ? '↑' : '↓');
+    }
+  };
+
+  const handlePageChange = (page: number) => setCurrentPage(page);
+  const handleRowsPerPageChange = (rows: number) => {
+    setRowsPerPage(rows);
+    setCurrentPage(1);
+  };
+
+  // Auto-hide alert after 5 seconds
+  useEffect(() => {
+    if (alertMessage) {
+      const timer = setTimeout(() => setAlertMessage(null), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [alertMessage]);
 
   return (
     <Layout>
       <div className="min-h-screen bg-[#f8fafd] px-4 sm:px-6 lg:px-8 py-6 rounded-[5px]">
-        {/* Alert Message */}
-        {alertMessage && (
-          <div className={`fixed top-4 right-4 z-50 p-4 rounded-[5px] shadow-lg ${
-            alertMessage.type === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-          }`}>
-            {alertMessage.message}
-          </div>
-        )}
-
         {/* Upload Status Modal */}
         {uploadStatus.isUploading && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
             <div className="bg-white p-6 rounded-lg shadow-xl max-w-md w-full mx-4">
               <div className="flex flex-col items-center">
                 <div className="w-16 h-16 mb-4">
-                  {uploadStatus.progress === 'uploading' && (
-                    <div className="w-full h-full border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
-                  )}
-                  {uploadStatus.progress === 'transcribing' && (
-                    <div className="w-full h-full border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
-                  )}
-                  {uploadStatus.progress === 'processing' && (
-                    <div className="w-full h-full border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
-                  )}
+                  <div className="w-full h-full border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
                 </div>
                 <h3 className="text-lg font-semibold text-gray-900 mb-2">
                   {uploadStatus.progress === 'uploading' && 'アップロード中...'}
@@ -892,98 +474,28 @@ export default function AdminFollowPage() {
           </div>
         )}
 
-        {/* Skill Sheet Sidebar */}
-        <SkillSheetSidebar
-          open={isSkillSheetOpen}
-          onClose={() => setIsSkillSheetOpen(false)}
-          skillSheetData={selectedRecord?.skillSheet}
-          skills={selectedRecord?.skills}
-          onSave={handleSkillSheetSave}
-        />
-
-        {/* Salesforce Sidebar */}
-        <SalesforceSidebar
-          open={isSalesforceOpen}
-          onClose={() => setIsSalesforceOpen(false)}
-          salesforceData={selectedSalesforceRecord ? convertToArray(selectedSalesforceRecord.salesforce) : null}
-          initialLor={selectedSalesforceRecord?.hope}
-          onSave={handleSalesforceSave}
-          staffId={selectedSalesforceRecord?.staffId}
-        />
-
-        {/* LoR Sidebar */}
-        <LoRSidebar
-          open={isLoROpen}
-          onClose={() => {
-            setIsLoROpen(false);
-            setSelectedLoRRecord(null);
-          }}
-          lorData={selectedLoRRecord?.lor || null}
-          onSave={handleLoRSave}
-          staffId={selectedLoRRecord?.staffId}
-        />
-
-        {/* Modal for Salesforce confirmation */}
-        {showSalesforceModal && (
+        {/* Delete Confirmation Modal */}
+        {showDeleteModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-30">
             <div className="bg-gray-50 border border-gray-400 rounded-md p-8 min-w-[350px] max-w-[95vw] flex flex-col items-center">
               <div className="text-center mb-6">
-                <div className="text-lg mb-2">以下スタッフIDの情報をセールスフォースへ連携します。<br/>よろしいですか？</div>
-                <div className="text-xl font-semibold mt-4 mb-2">Staff ID　{modalStaffId}</div>
+                <div className="text-lg mb-2">
+                  スタッフID：{recordToDelete?.staffId || '(未設定)'} のレコードを削除しますか？
+                </div>
               </div>
               <div className="flex gap-8 mt-2">
                 <button
                   className="border border-gray-400 rounded px-8 py-2 text-lg hover:bg-gray-200"
-                  onClick={() => setShowSalesforceModal(false)}
-                >キャンセル</button>
+                  onClick={() => { setShowDeleteModal(false); setRecordToDelete(null); }}
+                >
+                  キャンセル
+                </button>
                 <button
-                  className="border border-gray-400 rounded px-8 py-2 text-lg hover:bg-gray-200"
-                  onClick={handleSalesforceSync}
-                >連携する</button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Modal for Prompt (Summary Prompt) */}
-        {showPromptModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-30">
-            <div className="bg-gray-50 border border-gray-400 rounded-md w-[80%] max-w-[800px] max-h-[90vh] flex flex-col">
-              {/* Header */}
-              <div className="p-4 border-b border-gray-300 flex justify-between items-center bg-gray-100">
-                <h3 className="text-lg font-semibold text-gray-700">要約プロンプト</h3>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={handlePromptSave}
-                    className="p-2 hover:bg-gray-200 rounded"
-                    title="保存"
-                  >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
-                    </svg>
-                  </button>
-                  <button
-                    onClick={() => {
-                      setShowPromptModal(false);
-                      setIsEditingPrompt(false);
-                      setPromptText('');
-                    }}
-                    className="text-gray-500 hover:text-gray-700"
-                  >
-                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
-                </div>
-              </div>
-              {/* Content */}
-              <div className="p-4 flex-1 overflow-y-auto">
-                <textarea
-                  value={promptText}
-                  onChange={(e) => setPromptText(e.target.value)}
-                  className="w-full h-full min-h-[400px] p-4 border border-gray-300 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
-                  placeholder="プロンプトを入力してください"
-                />
+                  className="border border-red-400 text-red-600 rounded px-8 py-2 text-lg hover:bg-red-50"
+                  onClick={handleDeleteConfirm}
+                >
+                  削除
+                </button>
               </div>
             </div>
           </div>
@@ -995,21 +507,7 @@ export default function AdminFollowPage() {
             Hello {user?.name || 'User'} <span role="img" aria-label="wave">👋</span>,
           </h1>
           <div className="flex items-center gap-4 rounded-[5px] w-full sm:w-auto">
-            <div className="relative rounded-[5px] flex flex-row items-center gap-2 w-full sm:w-auto">
-              {/* Prompt Button */}
-              <button
-                onClick={handlePromptButtonClick}
-                className={`bg-white rounded-full shadow border border-gray-200 p-2 hover:bg-gray-50 ${
-                  showPromptModal ? 'bg-gray-100' : ''
-                }`}
-                title="プロンプト"
-              >
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                </svg>
-              </button>
-              {/* Upload Button */}
-              <div className="relative rounded-[5px] flex flex-col items-end gap-2">
+            <div className="relative rounded-[5px] flex flex-col items-end gap-2 w-full sm:w-auto">
               <input
                 type="file"
                 ref={fileInputRef}
@@ -1019,12 +517,12 @@ export default function AdminFollowPage() {
               />
               <button
                 onClick={handleUploadClick}
-                disabled={isUploading}
-                className={`mb-2 bg-white rounded-full shadow border border-gray-200 mt-2 ${
-                  isUploading ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-50'
+                disabled={uploadStatus.isUploading}
+                className={`bg-white rounded-full shadow border border-gray-200 mt-2 ${
+                  uploadStatus.isUploading ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-50'
                 }`}
               >
-                {isUploading ? (
+                {uploadStatus.isUploading ? (
                   <div className="w-8 h-8 flex items-center justify-center">
                     <div className="w-5 h-5 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
                   </div>
@@ -1033,30 +531,22 @@ export default function AdminFollowPage() {
                 )}
               </button>
             </div>
-          </div>            
           </div>
         </div>
 
-        {/* Follow Section */}
+        {/* Follow Table Section */}
         <div className="bg-white rounded-[5px] shadow">
           <div className="p-4 sm:p-6 lg:p-8">
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-lg sm:text-xl font-semibold rounded-[5px]">Follow</h2>
               <div className="flex items-center gap-4">
-                <div className="text-green-500 text-sm rounded-[5px]">過去30日間のデータ</div>
                 <div className="relative w-56">
                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <Image
-                      src="/search.svg"
-                      alt="Search"
-                      width={16}
-                      height={16}
-                      className="text-gray-400"
-                    />
+                    <Image src="/search.svg" alt="Search" width={16} height={16} className="text-gray-400" />
                   </div>
                   <input
                     type="text"
-                    placeholder="日付またはFile IDで検索"
+                    placeholder="Search"
                     className="pl-10 pr-4 py-2 rounded-[5px] border border-gray-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-100 text-gray-700 w-full shadow-sm"
                     value={searchTerm}
                     onChange={e => setSearchTerm(e.target.value)}
@@ -1065,49 +555,51 @@ export default function AdminFollowPage() {
               </div>
             </div>
             <div className="overflow-x-auto rounded-[5px] -mx-4 sm:-mx-6 lg:-mx-8">
-              <div className="inline-block min-w-full align-middle max-w-[300px]">
+              <div className="inline-block min-w-full align-middle">
                 <table className="min-w-full text-left text-gray-700 rounded-[5px]">
                   <thead>
                     <tr className="border-b border-gray-200 text-xs text-gray-400 rounded-[5px]">
-                      <th 
-                        className="py-3 px-4 font-medium text-center min-w-[100px] max-w-[300px] rounded-[5px] cursor-pointer hover:bg-gray-50"
+                      <th
+                        className="py-3 px-4 font-medium text-center min-w-[140px] rounded-[5px] cursor-pointer hover:bg-gray-50"
                         onClick={() => handleColumnSort('date')}
                       >
                         Date <span className="ml-1">{sortIconDate}</span>
                       </th>
-                      <th 
-                        className="py-3 px-4 font-medium text-center min-w-[100px] max-w-[300px] rounded-[5px] cursor-pointer hover:bg-gray-50"
-                        onClick={() => handleColumnSort('fileId')}
+                      <th
+                        className="py-3 px-4 font-medium text-center min-w-[100px] rounded-[5px] cursor-pointer hover:bg-gray-50"
+                        onClick={() => handleColumnSort('staffId')}
                       >
-                        File ID <span className="ml-1">{sortIconFileId}</span>
+                        Staff ID <span className="ml-1">{sortIconStaffId}</span>
                       </th>
-                      <th className="py-3 px-4 font-medium text-center min-w-[100px] max-w-[300px] rounded-[5px]">Staff ID</th>
-                      <th className="py-3 px-4 font-medium text-center min-w-[120px] max-w-[300px] rounded-[5px]">Skill Sheet</th>
-                      <th className="py-3 px-4 font-medium text-center min-w-[120px] max-w-[300px] rounded-[5px]">Salesforce</th>
-                      <th className="py-3 px-4 font-medium text-center min-w-[100px] max-w-[300px] rounded-[5px]">LoR</th>
-                      <th className="py-3 px-4 font-medium text-center min-w-[100px] max-w-[300px] rounded-[5px]">STT</th>
-                      <th className="py-3 px-4 font-medium text-center min-w-[100px] max-w-[300px] rounded-[5px]">Bulk</th>
+                      <th className="py-3 px-4 font-medium text-center min-w-[100px] rounded-[5px]">Staff Name</th>
+                      <th className="py-3 px-4 font-medium text-center min-w-[200px] rounded-[5px]">Summary</th>
+                      <th className="py-3 px-4 font-medium text-center min-w-[60px] max-w-[80px] rounded-[5px]">STT</th>
+                      <th className="py-3 px-4 font-medium text-center min-w-[60px] max-w-[80px] rounded-[5px]"></th>
                     </tr>
                   </thead>
                   <tbody>
                     {loading ? (
-                      <tr><td colSpan={8} className="text-center py-8">Loading...</td></tr>
-                    ) : paginatedRecords.length === 0 ? (
-                      <tr><td colSpan={8} className="text-center py-8">No records found</td></tr>
+                      <tr><td colSpan={6} className="text-center py-8">Loading...</td></tr>
+                    ) : sortedRecords.length === 0 ? (
+                      <tr><td colSpan={6} className="text-center py-8">No records found</td></tr>
                     ) : (
-                      paginatedRecords.map((rec) => (
+                      sortedRecords.map((rec) => (
                         <tr key={rec.id} className="border-b border-gray-100 hover:bg-gray-50 transition text-left align-middle rounded-[5px]">
-                          <td className="py-5 px-4 whitespace-nowrap align-middle min-w-[100px] max-w-[300px] rounded-[5px] truncate">{formatDate(rec.date)}</td>
-                          <td className="py-5 px-4 whitespace-nowrap align-middle min-w-[100px] max-w-[300px] rounded-[5px] truncate">{rec.fileId}</td>
-                          <td className="py-5 px-4 whitespace-nowrap align-middle min-w-[100px] max-w-[300px] rounded-[5px]">
-                            <div className="flex items-center gap-x-2 rounded-[5px] truncate">
+                          {/* Date */}
+                          <td className="py-5 px-4 whitespace-nowrap align-middle rounded-[5px] truncate">
+                            {formatDate(rec.date)}
+                          </td>
+                          {/* Staff ID */}
+                          <td className="py-5 px-4 whitespace-nowrap align-middle rounded-[5px]">
+                            <div className="flex items-center gap-x-2 truncate">
                               {editingStaffId === rec.id ? (
                                 <input
-                                  ref={inputRef}
+                                  ref={staffIdInputRef}
                                   value={staffIdInput}
                                   onChange={e => setStaffIdInput(e.target.value)}
                                   onBlur={() => handleStaffIdBlur(rec.id)}
-                                  className="border border-gray-300 rounded-[5px] px-2 py-1 w-20 text-center"
+                                  onKeyDown={e => e.key === 'Enter' && handleStaffIdBlur(rec.id)}
+                                  className="border border-gray-300 rounded-[5px] px-2 py-1 w-24 text-center"
                                 />
                               ) : (
                                 <>
@@ -1119,97 +611,91 @@ export default function AdminFollowPage() {
                               )}
                             </div>
                           </td>
-                          {/* Skill Sheet icons */}
-                          <td className="py-5 px-4 align-middle min-w-[120px] max-w-[300px] rounded-[5px]">
-                            <div className="flex items-center justify-center gap-x-3 rounded-[5px]">
-                              <button 
-                                className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center flex-shrink-0" 
-                                title="Edit"
-                                onClick={() => handleSkillSheetEdit(rec)}
-                              >
-                                <Image src="/edit1.svg" alt="Edit" width={20} height={20} className="rounded-[5px]" />
-                              </button>
-                              <button 
-                                className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center flex-shrink-0" 
-                                title="Download"
-                                onClick={() => handleSkillSheetDownload(rec)}
-                              >
-                                <Image src="/download1.svg" alt="Download" width={20} height={20} className="rounded-[5px]" />
-                              </button>
-                              <button 
-                                className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center flex-shrink-0" 
-                                title="Salesforce"
-                                onClick={() => handleSalesforceIconClick(rec.staffId, 'skillSheet', rec.skillSheet, rec.hope)}
-                              >
-                                <Image src="/salesforce1.svg" alt="Salesforce" width={20} height={20} className="rounded-[5px]" />
-                              </button>
+                          {/* Staff Name */}
+                          <td className="py-5 px-4 whitespace-nowrap align-middle rounded-[5px]">
+                            <div className="flex items-center gap-x-2 truncate">
+                              {editingStaffName === rec.id ? (
+                                <input
+                                  ref={staffNameInputRef}
+                                  value={staffNameInput}
+                                  onChange={e => setStaffNameInput(e.target.value)}
+                                  onBlur={() => handleStaffNameBlur(rec.id)}
+                                  onKeyDown={e => e.key === 'Enter' && handleStaffNameBlur(rec.id)}
+                                  className="border border-gray-300 rounded-[5px] px-2 py-1 text-center"
+                                />
+                              ) : (
+                                <>
+                                  <button className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center flex-shrink-0" title="Edit Staff Name" onClick={() => handleEditStaffName(rec.id, rec.staffName || '')}>
+                                    <Image src="/edit1.svg" alt="Edit Staff Name" width={20} height={20} className="rounded-[5px]" />
+                                  </button>
+                                  <span className="truncate">{rec.staffName || ''}</span>
+                                </>
+                              )}
                             </div>
                           </td>
-                          {/* Salesforce icons */}
-                          <td className="py-5 px-4 align-middle min-w-[120px] max-w-[300px] rounded-[5px]">
-                            <div className="flex items-center justify-center gap-x-3 rounded-[5px]">
-                              <button 
-                                className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center flex-shrink-0" 
-                                title="Edit"
-                                onClick={() => handleSalesforceEdit(rec)}
-                              >
-                                <Image src="/edit1.svg" alt="Edit" width={20} height={20} className="rounded-[5px]" />
-                              </button>
-                              <button 
-                                className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center flex-shrink-0" 
-                                title="Download"
-                                onClick={() => handleSalesforceDownload(rec)}
-                              >
-                                <Image src="/download1.svg" alt="Download" width={20} height={20} className="rounded-[5px]" />
-                              </button>
-                              <button 
-                                className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center flex-shrink-0" 
-                                title="Salesforce"
-                                onClick={() => handleSalesforceIconClick(rec.staffId, 'salesforce', rec.salesforce, rec.hope)}
-                              >
-                                <Image src="/salesforce1.svg" alt="Salesforce" width={20} height={20} className="rounded-[5px]" />
-                              </button>
-                            </div>
+                          {/* Summary */}
+                          <td className="py-5 px-4 align-middle rounded-[5px]">
+                            {editingSummary === rec.id ? (
+                              <textarea
+                                ref={summaryInputRef}
+                                value={summaryInput}
+                                onChange={e => setSummaryInput(e.target.value)}
+                                onBlur={() => handleSummaryBlur(rec.id)}
+                                className="border border-gray-300 rounded-[5px] px-2 py-1 w-full min-h-[60px]"
+                              />
+                            ) : (
+                              <div className="flex items-center gap-x-2">
+                                <button className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center flex-shrink-0" title="Edit Summary" onClick={() => handleEditSummary(rec.id, rec.summary)}>
+                                  <Image src="/edit1.svg" alt="Edit Summary" width={20} height={20} className="rounded-[5px]" />
+                                </button>
+                                <button className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center flex-shrink-0" title="Copy Summary" onClick={() => handleCopySummary(rec.summary)}>
+                                  <Image src="/copy1.svg" alt="Copy Summary" width={20} height={20} className="rounded-[5px]" />
+                                </button>
+                                <span className="truncate" title={rec.summary || ''}>
+                                  {truncateText(rec.summary)}
+                                </span>
+                              </div>
+                            )}
                           </td>
-                          {/* LoR icons */}
-                          <td className="py-5 px-4 align-middle min-w-[100px] max-w-[300px] rounded-[5px]">
-                            <div className="flex items-center justify-center rounded-[5px] gap-x-3">
-                              <button
-                                onClick={() => handleLoREdit(rec)}
-                                className="text-blue-600 hover:text-blue-800 transition-colors"
-                                title="編集"
-                              >
-                                <Image src="/edit1.svg" alt="Edit" width={20} height={20} className="rounded-[5px]" />
-                              </button>
-                              <button
-                                onClick={() => handleLoRCopy(rec)}
-                              >
-                                <Image src="/copy1.svg" alt="copy" width={20} height={20} className="rounded-[5px]" />
-                              </button>
-                            </div>
-                          </td>
-                          {/* STT icons */}
-                          <td className="py-5 px-4 align-middle min-w-[100px] max-w-[300px] rounded-[5px]">
+                          {/* STT */}
+                          <td className="py-5 px-2 align-middle min-w-[60px] max-w-[80px] rounded-[5px]">
                             <div className="flex items-center justify-center rounded-[5px]">
-                              <button 
-                                className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center flex-shrink-0" 
-                                title="Download"
+                              <button
+                                className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center flex-shrink-0"
+                                title="Download STT"
                                 onClick={() => handleSTTDownload(rec)}
                               >
-                                <Image src="/download1.svg" alt="download" width={20} height={20} className="rounded-[5px]" />
+                                <Image src="/download1.svg" alt="download" width={16} height={16} className="rounded-[5px]" />
                               </button>
                             </div>
                           </td>
-                          {/* Bulk icons */}
-                          <td className="py-5 px-4 align-middle min-w-[100px] max-w-[300px] rounded-[5px]">
+                          {/* Delete */}
+                          <td className="py-5 px-2 align-middle min-w-[60px] max-w-[80px] rounded-[5px]">
                             <div className="flex items-center justify-center rounded-[5px]">
-                              <button 
-                                className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center flex-shrink-0" 
-                                title="Download"
-                                onClick={() => handleBulkDownload(rec)}
-                              >
-                                <Image src="/download1.svg" alt="download" width={20} height={20} className="rounded-[5px]" />
-                              </button>
+                              {/* Members can only delete their own records */}
+                              {user?.role === 'member' ? (
+                                rec.ownerId === user.id ? (
+                                  <button
+                                    className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center flex-shrink-0 text-gray-500 hover:text-gray-700"
+                                    title="Delete"
+                                    onClick={() => handleDeleteClick(rec)}
+                                  >
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                    </svg>
+                                  </button>
+                                ) : null
+                              ) : (
+                                <button
+                                  className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center flex-shrink-0 text-gray-500 hover:text-gray-700"
+                                  title="Delete"
+                                  onClick={() => handleDeleteClick(rec)}
+                                >
+                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                  </svg>
+                                </button>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -1221,7 +707,7 @@ export default function AdminFollowPage() {
             </div>
           </div>
           <Pagination
-            totalItems={filteredRecords.length}
+            totalItems={pagination?.total || sortedRecords.length}
             currentPage={currentPage}
             rowsPerPage={rowsPerPage}
             onPageChange={handlePageChange}
@@ -1231,4 +717,4 @@ export default function AdminFollowPage() {
       </div>
     </Layout>
   );
-} 
+}
