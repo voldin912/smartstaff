@@ -11,8 +11,14 @@ import { UploadStatus, ProcessingJob } from "@/lib/types";
 import { followService } from "@/services/followService";
 import { generateFileId } from "@/lib/utils";
 
-// localStorage key for persisting active follow job across page navigations
+// localStorage keys for persisting active jobs across page navigations
+const ACTIVE_JOB_KEY = 'smartstaff_active_job';
 const ACTIVE_FOLLOW_JOB_KEY = 'smartstaff_active_follow_job';
+
+const isOtherJobActive = (ownKey: string): boolean => {
+  const otherKey = ownKey === ACTIVE_JOB_KEY ? ACTIVE_FOLLOW_JOB_KEY : ACTIVE_JOB_KEY;
+  return !!localStorage.getItem(otherKey);
+};
 
 interface FollowRecord {
   id: number;
@@ -359,7 +365,13 @@ export default function FollowPage() {
   // ---- Upload handlers (async with polling) ----
 
   const handleUploadClick = () => {
-    fileInputRef.current?.click();
+    if (uploadStatus.isUploading) {
+      setIsUploadModalVisible(true);
+    } else if (isOtherJobActive(ACTIVE_FOLLOW_JOB_KEY)) {
+      toast.error('別の処理が実行中です。完了後に再度お試しください。');
+    } else {
+      fileInputRef.current?.click();
+    }
   };
 
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -629,10 +641,12 @@ export default function FollowPage() {
               />
               <button
                 onClick={handleUploadClick}
-                disabled={uploadStatus.isUploading}
-                className={`bg-white rounded-full shadow border border-gray-200 mt-2 ${
-                  uploadStatus.isUploading ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-50'
+                className={`bg-white rounded-full shadow border border-gray-200 mt-2 transition-all ${
+                  uploadStatus.isUploading
+                    ? 'hover:bg-indigo-50 border-indigo-300 cursor-pointer'
+                    : 'hover:bg-gray-50'
                 }`}
+                title={uploadStatus.isUploading ? '処理中 - クリックで詳細を表示' : '音声ファイルをアップロード'}
               >
                 {uploadStatus.isUploading ? (
                   <div className="w-8 h-8 flex items-center justify-center">

@@ -21,8 +21,14 @@ import DeleteModal from "@/components/dashboard/DeleteModal";
 import SalesforceSyncModal from "@/components/dashboard/SalesforceSyncModal";
 import RecordsTable from "@/components/dashboard/RecordsTable";
 
-// localStorage key for persisting active job across page navigations
+// localStorage keys for persisting active jobs across page navigations
 const ACTIVE_JOB_KEY = 'smartstaff_active_job';
+const ACTIVE_FOLLOW_JOB_KEY = 'smartstaff_active_follow_job';
+
+const isOtherJobActive = (ownKey: string): boolean => {
+  const otherKey = ownKey === ACTIVE_JOB_KEY ? ACTIVE_FOLLOW_JOB_KEY : ACTIVE_JOB_KEY;
+  return !!localStorage.getItem(otherKey);
+};
 
 export default function DashboardPage() {
   const { user } = useAuth();
@@ -211,6 +217,11 @@ export default function DashboardPage() {
     if (!file) return;
     // Reset input immediately to allow re-selecting the same file
     event.target.value = '';
+
+    if (isOtherJobActive(ACTIVE_JOB_KEY)) {
+      notify('error', '別の処理が実行中です。完了後に再度お試しください。');
+      return;
+    }
 
     if (!user?.id) {
       notify('error', 'ユーザー情報の取得に失敗しました。再度ログインしてください。');
@@ -543,8 +554,14 @@ export default function DashboardPage() {
         <DashboardHeader
           userName={user?.name || 'User'}
           onFileChange={handleFileChange}
-          isProcessing={uploadStatus.isUploading}
-          onProcessingClick={() => setIsUploadModalVisible(true)}
+          isProcessing={uploadStatus.isUploading || isOtherJobActive(ACTIVE_JOB_KEY)}
+          onProcessingClick={() => {
+            if (uploadStatus.isUploading) {
+              setIsUploadModalVisible(true);
+            } else {
+              notify('error', '別の処理が実行中です。完了後に再度お試しください。');
+            }
+          }}
         />
 
         {/* Records Section */}
