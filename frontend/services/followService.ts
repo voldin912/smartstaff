@@ -168,4 +168,22 @@ export const followService = {
       throw new Error(handleApiError(error, 'プロンプトの更新に失敗しました。'));
     }
   },
+
+  /**
+   * Sync follow record to Salesforce (creates Event)
+   */
+  async syncSalesforce(data: { staffId: string; title: string; followDate: string; summary: string }): Promise<{ message: string; eventId?: string }> {
+    try {
+      return await apiRequest<{ message: string; eventId?: string }>(
+        `${API_URL}/api/follow/sync-salesforce`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data),
+        }
+      );
+    } catch (error) {
+      throw new Error(handleApiError(error, 'Salesforce連携に失敗しました。'));
+    }
+  },
 };

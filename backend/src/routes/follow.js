@@ -13,6 +13,7 @@ import {
   getProcessingJobStatus,
   getProcessingJobs,
   retryProcessingJob,
+  syncSalesforce,
 } from '../controllers/followController.js';
 import { upload } from '../middleware/upload.js';
 
@@ -43,6 +44,9 @@ router.put('/:recordId/summary', auth, updateSummary);
 
 // Delete record
 router.delete('/:recordId', auth, deleteRecord);
+
+// Sync follow record to Salesforce (creates Event)
+router.post('/sync-salesforce', auth, syncSalesforce);
 
 // Get prompt (admin and company-manager)
 router.get('/prompt', auth, authorize('admin', 'company-manager'), getPrompt);

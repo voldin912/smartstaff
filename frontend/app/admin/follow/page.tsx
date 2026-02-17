@@ -9,6 +9,7 @@ import { toast } from 'sonner';
 import UploadModal from "@/components/dashboard/UploadModal";
 import PromptEditModal from "@/components/dashboard/PromptEditModal";
 import FollowSummarySidebar from "@/components/FollowSummarySidebar";
+import SalesforceSyncModal from "@/components/dashboard/SalesforceSyncModal";
 import { UploadStatus, ProcessingJob } from "@/lib/types";
 import { followService } from "@/services/followService";
 import { generateFileId } from "@/lib/utils";
@@ -75,6 +76,10 @@ export default function AdminFollowPage() {
   // Summary sidebar states
   const [isSummarySidebarOpen, setIsSummarySidebarOpen] = useState(false);
   const [selectedSummaryRecord, setSelectedSummaryRecord] = useState<FollowRecord | null>(null);
+
+  // Salesforce sync states
+  const [showSalesforceModal, setShowSalesforceModal] = useState(false);
+  const [salesforceSyncRecord, setSalesforceSyncRecord] = useState<FollowRecord | null>(null);
 
   // Upload states (async pattern)
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -408,6 +413,37 @@ export default function AdminFollowPage() {
     }
   };
 
+  const handleSalesforceClick = (record: FollowRecord) => {
+    if (!record.staffId) {
+      toast.error('Staff IDが設定されていません。先にStaff IDを入力してください。');
+      return;
+    }
+    if (!record.summary) {
+      toast.error('要約がありません。先に要約を生成してください。');
+      return;
+    }
+    setSalesforceSyncRecord(record);
+    setShowSalesforceModal(true);
+  };
+
+  const handleSalesforceSync = async () => {
+    if (!salesforceSyncRecord) return;
+    try {
+      const result = await followService.syncSalesforce({
+        staffId: salesforceSyncRecord.staffId,
+        title: salesforceSyncRecord.title || '',
+        followDate: salesforceSyncRecord.followDate || new Date().toISOString().split('T')[0],
+        summary: salesforceSyncRecord.summary || '',
+      });
+      toast.success(result.message || 'Salesforce連携が完了しました');
+    } catch (error: any) {
+      toast.error(error.message || 'Salesforce連携に失敗しました');
+    } finally {
+      setShowSalesforceModal(false);
+      setSalesforceSyncRecord(null);
+    }
+  };
+
   // ---- Upload handlers (async with polling) ----
 
   const handleUploadClick = () => {
@@ -649,6 +685,14 @@ export default function AdminFollowPage() {
           onSave={handleSummarySave}
         />
 
+        {/* Salesforce Sync Confirmation Modal */}
+        <SalesforceSyncModal
+          isOpen={showSalesforceModal}
+          staffId={salesforceSyncRecord?.staffId || null}
+          onClose={() => { setShowSalesforceModal(false); setSalesforceSyncRecord(null); }}
+          onConfirm={handleSalesforceSync}
+        />
+
         {/* Delete Confirmation Modal */}
         {showDeleteModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-30">
@@ -853,8 +897,8 @@ export default function AdminFollowPage() {
                               </button>
                               <button
                                 className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center flex-shrink-0"
-                                title="Salesforce"
-                                onClick={() => toast.info('Salesforce連携は今後実装予定です。')}
+                                title="Salesforce連携"
+                                onClick={() => handleSalesforceClick(rec)}
                               >
                                 <Image src="/salesforce1.svg" alt="Salesforce" width={20} height={20} className="rounded-[5px]" />
                               </button>

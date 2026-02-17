@@ -4,7 +4,9 @@ import PDFDocument from 'pdfkit';
 import path from 'path';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegPath from 'ffmpeg-static';
+import jsforce from 'jsforce';
 import logger from '../utils/logger.js';
+import { decrypt } from '../utils/encryption.js';
 import { createProcessingJob, getJobStatus, getUserJobs, retryFailedJob } from '../services/asyncProcessingService.js';
 import { addAudioProcessingJob } from '../queues/audioQueue.js';
 import { DEFAULT_FOLLOW_SUMMARY_PROMPT } from '../services/followProcessing/difyWorkflow.js';
@@ -538,6 +540,110 @@ const updatePrompt = async (req, res) => {
   }
 };
 
+// Sync follow record to Salesforce as an Event
+const syncSalesforce = async (req, res) => {
+  try {
+    const { staffId, title, followDate, summary } = req.body;
+
+    if (!staffId) {
+      return res.status(400).json({ message: 'Staff IDが指定されていません' });
+    }
+    if (!title) {
+      return res.status(400).json({ message: 'タイトルが指定されていません' });
+    }
+    if (!followDate) {
+      return res.status(400).json({ message: '実施日時が指定されていません' });
+    }
+    if (!summary) {
+      return res.status(400).json({ message: '要約が指定されていません' });
+    }
+
+    const { role, company_id } = req.user;
+    const actualCompanyId = role === 'admin' ? 'admin' : String(company_id);
+
+    logger.info('[syncFollowSalesforce] Starting sync', { staffId, actualCompanyId });
+
+    // 1. Get Salesforce credentials
+    const [settingsRows] = await pool.query(
+      'SELECT * FROM salesforce WHERE company_id = ?',
+      [actualCompanyId]
+    );
+    const settings = settingsRows[0];
+
+    if (!settings) {
+      return res.status(400).json({ message: 'Salesforce設定が見つかりません' });
+    }
+
+    // 2. Decrypt credentials
+    const decryptedPassword = decrypt(settings.password);
+    const decryptedSecurityToken = decrypt(settings.security_token);
+
+    if (!decryptedPassword || !decryptedSecurityToken) {
+      logger.error('[syncFollowSalesforce] Failed to decrypt credentials');
+      return res.status(500).json({ message: '認証情報の復号化に失敗しました' });
+    }
+
+    // 3. Login to Salesforce
+    logger.info('[syncFollowSalesforce] Logging in to Salesforce...');
+    const conn = new jsforce.Connection({ loginUrl: settings.base_url });
+    await conn.login(settings.username, decryptedPassword + decryptedSecurityToken);
+    logger.info('[syncFollowSalesforce] Successfully logged in');
+
+    // 4. Query Account by StaffID__c to get the WhoId
+    logger.info('[syncFollowSalesforce] Querying Account for StaffID__c:', staffId);
+    const accounts = await conn.sobject('Account')
+      .find({ StaffID__c: staffId })
+      .limit(1)
+      .execute();
+
+    if (!accounts.length) {
+      logger.warn('[syncFollowSalesforce] Account not found for staffId:', staffId);
+      return res.status(404).json({ message: '指定したStaff IDのアカウントが見つかりません' });
+    }
+
+    const accountId = accounts[0].Id;
+    logger.info('[syncFollowSalesforce] Account found:', { accountId, name: accounts[0].Name });
+
+    // 5. Build StartDateTime and EndDateTime
+    // followDate is "YYYY-MM-DD", combine with current time for the datetime
+    const now = new Date();
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+    const seconds = String(now.getSeconds()).padStart(2, '0');
+    const dateTimeStr = `${followDate}T${hours}:${minutes}:${seconds}`;
+
+    // 6. Create Event record
+    const eventData = {
+      Subject: title,
+      StartDateTime: dateTimeStr,
+      EndDateTime: dateTimeStr,
+      Description: summary,
+      WhatId: accountId,
+    };
+
+    logger.info('[syncFollowSalesforce] Creating Event:', {
+      Subject: title.substring(0, 50) + (title.length > 50 ? '...' : ''),
+      StartDateTime: dateTimeStr,
+      EndDateTime: dateTimeStr,
+      DescriptionLength: summary.length,
+      WhatId: accountId,
+    });
+
+    const result = await conn.sobject('Event').create(eventData);
+
+    if (result.success) {
+      logger.info('[syncFollowSalesforce] Event created successfully:', { eventId: result.id });
+      return res.json({ message: 'Salesforce連携が完了しました', eventId: result.id });
+    } else {
+      logger.error('[syncFollowSalesforce] Event creation failed:', result.errors);
+      return res.status(500).json({ message: 'Salesforceへの連携に失敗しました', errors: result.errors });
+    }
+  } catch (error) {
+    logger.error('[syncFollowSalesforce] Error:', { message: error.message, stack: error.stack });
+    return res.status(500).json({ message: error.message || 'サーバーエラーが発生しました' });
+  }
+};
+
 export {
   getRecords,
   uploadAudio,
@@ -551,4 +657,5 @@ export {
   getProcessingJobStatus,
   getProcessingJobs,
   retryProcessingJob,
+  syncSalesforce,
 };
