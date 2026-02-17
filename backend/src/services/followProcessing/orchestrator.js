@@ -264,8 +264,20 @@ export async function processFollowAudioJob(
 
     cleanupChunkFiles(jobId, context.chunks, context.processedFilePath);
 
+    // Delete original uploaded audio file (client requirement: no audio retention)
+    if (fs.existsSync(audioFilePath)) {
+      fs.unlinkSync(audioFilePath);
+      logger.info('Follow Orchestrator: Deleted original audio file', { jobId, path: audioFilePath });
+    }
+    // Delete converted file if different from original
+    if (context.processedFilePath !== audioFilePath && fs.existsSync(context.processedFilePath)) {
+      fs.unlinkSync(context.processedFilePath);
+      logger.info('Follow Orchestrator: Deleted converted audio file', { jobId, path: context.processedFilePath });
+    }
+
     await completeStep(jobId, STEPS.CLEANUP, {
       cleanedChunks: context.chunks.length,
+      audioFileDeleted: true,
     });
 
     // ========================================

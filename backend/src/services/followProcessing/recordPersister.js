@@ -29,7 +29,6 @@ export async function saveFollowRecord(jobId, data) {
     userId,
     companyId,
     staffId,
-    audioFilePath,
     sttText,
     summary,
   } = data;
@@ -52,7 +51,7 @@ export async function saveFollowRecord(jobId, data) {
         userId,
         companyId,
         staffId,
-        audioFilePath,
+        null,
         sttText,
         summary,
       ]
