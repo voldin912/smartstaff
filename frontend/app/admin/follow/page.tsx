@@ -6,18 +6,13 @@ import Layout from "@/components/Layout";
 import Pagination from "@/components/molecules/pagination";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from 'sonner';
+import UploadModal from "@/components/dashboard/UploadModal";
+import { UploadStatus, ProcessingJob } from "@/lib/types";
+import { followService } from "@/services/followService";
+import { generateFileId } from "@/lib/utils";
 
-// Function to generate a file ID in the format originalname-YYYYMMDDHHMMSS
-const generateFileId = (originalName: string) => {
-  const now = new Date();
-  const dateStr = now.getFullYear() +
-    String(now.getMonth() + 1).padStart(2, '0') +
-    String(now.getDate()).padStart(2, '0') +
-    String(now.getHours()).padStart(2, '0') +
-    String(now.getMinutes()).padStart(2, '0') +
-    String(now.getSeconds()).padStart(2, '0');
-  return `${originalName}-${dateStr}`;
-};
+// localStorage key for persisting active follow job across page navigations
+const ACTIVE_FOLLOW_JOB_KEY = 'smartstaff_active_follow_job';
 
 interface FollowRecord {
   id: number;
@@ -40,18 +35,10 @@ interface PaginationInfo {
   totalPages: number;
 }
 
-// Add new interface for upload status
-interface UploadStatus {
-  isUploading: boolean;
-  progress: 'uploading' | 'transcribing' | 'processing' | 'complete' | 'error';
-  message: string;
-  estimatedTime?: string;
-}
-
 type SortField = 'date' | 'staffId';
 type SortOrder = 'asc' | 'desc';
 
-export default function FollowPage() {
+export default function AdminFollowPage() {
   const { user } = useAuth();
   const [records, setRecords] = useState<FollowRecord[]>([]);
   const [pagination, setPagination] = useState<PaginationInfo | null>(null);
@@ -77,14 +64,17 @@ export default function FollowPage() {
   const staffNameInputRef = useRef<HTMLInputElement | null>(null);
   const summaryInputRef = useRef<HTMLTextAreaElement | null>(null);
 
-  // Upload states
+  // Upload states (async pattern)
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [isUploading, setIsUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<UploadStatus>({
     isUploading: false,
     progress: 'uploading',
     message: '',
   });
+  const [isUploadModalVisible, setIsUploadModalVisible] = useState(false);
+
+  // Polling cleanup reference
+  const [pollCleanup, setPollCleanup] = useState<(() => void) | null>(null);
 
   // Delete states
   const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -93,6 +83,143 @@ export default function FollowPage() {
   useEffect(() => {
     fetchRecords();
   }, [currentPage, rowsPerPage]);
+
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => {
+      if (pollCleanup) {
+        pollCleanup();
+      }
+    };
+  }, [pollCleanup]);
+
+  // Check for active job on mount and resume polling if needed
+  useEffect(() => {
+    const checkActiveJob = async () => {
+      try {
+        const stored = localStorage.getItem(ACTIVE_FOLLOW_JOB_KEY);
+        if (!stored) return;
+
+        const { jobId } = JSON.parse(stored);
+        if (!jobId) return;
+
+        // Fetch current job status
+        const job = await followService.getJobStatus(jobId);
+
+        if (job.status === 'pending' || job.status === 'processing') {
+          // Job still running - restore state and resume polling
+          let progressState: UploadStatus['progress'] = 'processing';
+          if (job.status === 'pending') {
+            progressState = 'uploading';
+          } else if (job.status === 'processing') {
+            progressState = (job.progress ?? 0) < 85 ? 'transcribing' : 'processing';
+          }
+
+          setUploadStatus({
+            isUploading: true,
+            progress: progressState,
+            message: job.currentStep || '処理中...',
+            progressPercent: job.progress,
+            jobId: job.jobId,
+          });
+          setIsUploadModalVisible(true);
+
+          // Resume polling
+          const cleanup = followService.pollJobStatus(
+            jobId,
+            handleProgressUpdate,
+            handleJobComplete,
+            handleJobError
+          );
+          setPollCleanup(() => cleanup);
+        } else if (job.status === 'completed') {
+          // Job completed while away
+          localStorage.removeItem(ACTIVE_FOLLOW_JOB_KEY);
+          setUploadStatus({
+            isUploading: false,
+            progress: 'complete',
+            message: '処理が完了しました。',
+            progressPercent: 100,
+            jobId: job.jobId,
+          });
+          setIsUploadModalVisible(true);
+          toast.success('ファイルの処理が完了しました。');
+          fetchRecords();
+        } else if (job.status === 'failed') {
+          // Job failed while away
+          localStorage.removeItem(ACTIVE_FOLLOW_JOB_KEY);
+          setUploadStatus({
+            isUploading: false,
+            progress: 'error',
+            message: job.errorMessage || '処理に失敗しました。',
+            jobId: job.jobId,
+          });
+          setIsUploadModalVisible(true);
+          toast.error(job.errorMessage || '処理に失敗しました。');
+        }
+      } catch (error) {
+        localStorage.removeItem(ACTIVE_FOLLOW_JOB_KEY);
+        console.error('Failed to check active follow job:', error);
+      }
+    };
+
+    checkActiveJob();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Run only on mount
+
+  // Handle progress updates from polling
+  const handleProgressUpdate = (job: ProcessingJob) => {
+    let progressState: UploadStatus['progress'] = 'processing';
+    if (job.status === 'pending') {
+      progressState = 'uploading';
+    } else if (job.status === 'processing') {
+      // 0-80% is STT processing, 85%+ is summary/persist
+      progressState = (job.progress ?? 0) < 85 ? 'transcribing' : 'processing';
+    } else if (job.status === 'completed') {
+      progressState = 'complete';
+    } else if (job.status === 'failed') {
+      progressState = 'error';
+    }
+
+    setUploadStatus(prev => ({
+      ...prev,
+      isUploading: job.status !== 'completed' && job.status !== 'failed',
+      progress: progressState,
+      message: job.currentStep || '処理中...',
+      progressPercent: job.progress,
+      jobId: job.jobId,
+    }));
+  };
+
+  // Handle job completion
+  const handleJobComplete = (job: ProcessingJob) => {
+    localStorage.removeItem(ACTIVE_FOLLOW_JOB_KEY);
+    setUploadStatus({
+      isUploading: false,
+      progress: 'complete',
+      message: '処理が完了しました。',
+      progressPercent: 100,
+      jobId: job.jobId,
+    });
+    setIsUploadModalVisible(true);
+    toast.success('ファイルの処理が完了しました。');
+    fetchRecords();
+    setPollCleanup(null);
+  };
+
+  // Handle job error
+  const handleJobError = (error: string) => {
+    localStorage.removeItem(ACTIVE_FOLLOW_JOB_KEY);
+    setUploadStatus(prev => ({
+      ...prev,
+      isUploading: false,
+      progress: 'error',
+      message: error,
+    }));
+    setIsUploadModalVisible(true);
+    toast.error(error);
+    setPollCleanup(null);
+  };
 
   const fetchRecords = async () => {
     setLoading(true);
@@ -229,7 +356,7 @@ export default function FollowPage() {
     }
   };
 
-  // ---- Upload handlers ----
+  // ---- Upload handlers (async with polling) ----
 
   const handleUploadClick = () => {
     fileInputRef.current?.click();
@@ -238,6 +365,9 @@ export default function FollowPage() {
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+
+    // Reset input immediately to allow re-selecting the same file
+    event.target.value = '';
 
     if (!user?.id) {
       toast.error('ユーザー情報の取得に失敗しました。再度ログインしてください。');
@@ -256,53 +386,55 @@ export default function FollowPage() {
     }
 
     const fileSizeInMB = file.size / (1024 * 1024);
-    const estimatedMinutes = Math.ceil(fileSizeInMB * 1.5);
+    const estimatedMinutes = Math.ceil(fileSizeInMB * 0.5);
     const estimatedTime = estimatedMinutes > 1 ? `${estimatedMinutes}分程度` : '1分程度';
 
     setUploadStatus({
       isUploading: true,
       progress: 'uploading',
       message: 'ファイルをアップロード中です...',
-      estimatedTime
+      estimatedTime,
+      progressPercent: 0,
     });
-
-    const formData = new FormData();
-    formData.append('audio', file);
-    formData.append('fileId', generateFileId(file.name.split('.')[0]));
-    formData.append('staffId', user?.id.toString() || '');
+    setIsUploadModalVisible(true);
 
     try {
-      const token = localStorage.getItem("token");
+      // Upload and get job ID (returns immediately)
+      const response = await followService.uploadAudio(
+        file,
+        generateFileId(file.name.split('.')[0]),
+        user.id.toString()
+      );
+
+      // Save active job to localStorage for persistence across page navigations
+      localStorage.setItem(ACTIVE_FOLLOW_JOB_KEY, JSON.stringify({ jobId: response.jobId }));
 
       setUploadStatus(prev => ({
         ...prev,
         progress: 'transcribing',
-        message: `音声ファイルの文字起こしを開始しました。\n完了までお待ちください。`
+        message: '処理を開始しました...',
+        jobId: response.jobId,
+        progressPercent: 5,
       }));
 
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow/upload`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-        body: formData,
-      });
+      // Start polling for job status
+      const cleanup = followService.pollJobStatus(
+        response.jobId,
+        handleProgressUpdate,
+        handleJobComplete,
+        handleJobError
+      );
 
-      const data = await response.json();
+      setPollCleanup(() => cleanup);
 
-      if (response.ok) {
-        setUploadStatus({ isUploading: false, progress: 'complete', message: 'ファイルの処理が完了しました。' });
-        toast.success('ファイルの処理が完了しました。');
-        fetchRecords();
-      } else {
-        setUploadStatus({ isUploading: false, progress: 'error', message: data.message || 'アップロードに失敗しました。' });
-        toast.error(data.message || 'アップロードに失敗しました。');
-      }
     } catch (error) {
-      setUploadStatus({ isUploading: false, progress: 'error', message: 'アップロード中にエラーが発生しました。' });
-      toast.error('アップロード中にエラーが発生しました。');
-    } finally {
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
-      }
+      setUploadStatus({
+        isUploading: false,
+        progress: 'error',
+        message: (error as Error).message || 'アップロードに失敗しました。',
+        progressPercent: 0,
+      });
+      toast.error((error as Error).message || 'アップロードに失敗しました。');
     }
   };
 
@@ -447,32 +579,12 @@ export default function FollowPage() {
   return (
     <Layout>
       <div className="min-h-screen bg-[#f8fafd] px-4 sm:px-6 lg:px-8 py-6 rounded-[5px]">
-        {/* Upload Status Modal */}
-        {uploadStatus.isUploading && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white p-6 rounded-lg shadow-xl max-w-md w-full mx-4">
-              <div className="flex flex-col items-center">
-                <div className="w-16 h-16 mb-4">
-                  <div className="w-full h-full border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
-                </div>
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                  {uploadStatus.progress === 'uploading' && 'アップロード中...'}
-                  {uploadStatus.progress === 'transcribing' && '文字起こし処理中...'}
-                  {uploadStatus.progress === 'processing' && '処理中...'}
-                </h3>
-                <p className="text-gray-600 text-center whitespace-pre-line">
-                  {uploadStatus.message}
-                </p>
-                <button
-                  className="mt-4 px-4 py-2 bg-gray-200 rounded hover:bg-gray-300"
-                  onClick={() => setUploadStatus({ ...uploadStatus, isUploading: false })}
-                >
-                  閉じる
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+        {/* Upload Status Modal (reusable UploadModal component) */}
+        <UploadModal
+          uploadStatus={uploadStatus}
+          isVisible={isUploadModalVisible}
+          onClose={() => setIsUploadModalVisible(false)}
+        />
 
         {/* Delete Confirmation Modal */}
         {showDeleteModal && (
