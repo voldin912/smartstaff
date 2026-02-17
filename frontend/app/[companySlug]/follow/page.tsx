@@ -7,6 +7,7 @@ import Pagination from "@/components/molecules/pagination";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from 'sonner';
 import UploadModal from "@/components/dashboard/UploadModal";
+import PromptEditModal from "@/components/dashboard/PromptEditModal";
 import { UploadStatus, ProcessingJob } from "@/lib/types";
 import { followService } from "@/services/followService";
 import { generateFileId } from "@/lib/utils";
@@ -78,6 +79,13 @@ export default function FollowPage() {
     message: '',
   });
   const [isUploadModalVisible, setIsUploadModalVisible] = useState(false);
+
+  // Prompt edit states
+  const [showPromptModal, setShowPromptModal] = useState(false);
+  const [promptText, setPromptText] = useState('');
+  const [promptLoading, setPromptLoading] = useState(false);
+  const [promptSaving, setPromptSaving] = useState(false);
+  const canEditPrompt = user?.role === 'admin' || user?.role === 'company-manager';
 
   // Polling cleanup reference
   const [pollCleanup, setPollCleanup] = useState<(() => void) | null>(null);
@@ -225,6 +233,35 @@ export default function FollowPage() {
     setIsUploadModalVisible(true);
     toast.error(error);
     setPollCleanup(null);
+  };
+
+  // ---- Prompt handlers ----
+
+  const handleOpenPrompt = async () => {
+    setPromptLoading(true);
+    setShowPromptModal(true);
+    try {
+      const data = await followService.getPrompt();
+      setPromptText(data.prompt);
+    } catch (error) {
+      toast.error((error as Error).message || 'プロンプトの取得に失敗しました。');
+      setShowPromptModal(false);
+    } finally {
+      setPromptLoading(false);
+    }
+  };
+
+  const handleSavePrompt = async () => {
+    setPromptSaving(true);
+    try {
+      await followService.updatePrompt(promptText);
+      toast.success('プロンプトを保存しました。');
+      setShowPromptModal(false);
+    } catch (error) {
+      toast.error((error as Error).message || 'プロンプトの保存に失敗しました。');
+    } finally {
+      setPromptSaving(false);
+    }
   };
 
   const fetchRecords = async () => {
@@ -625,13 +662,37 @@ export default function FollowPage() {
           </div>
         )}
 
+        {/* Prompt Edit Modal */}
+        <PromptEditModal
+          isVisible={showPromptModal}
+          isLoading={promptLoading}
+          promptText={promptText}
+          onPromptChange={setPromptText}
+          onSave={handleSavePrompt}
+          onClose={() => setShowPromptModal(false)}
+          isSaving={promptSaving}
+        />
+
         {/* Header */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8 rounded-[5px]">
           <h1 className="text-xl sm:text-2xl font-semibold text-gray-900 rounded-[5px]">
             Hello {user?.name || 'User'} <span role="img" aria-label="wave">👋</span>,
           </h1>
-          <div className="flex items-center gap-4 rounded-[5px] w-full sm:w-auto">
-            <div className="relative rounded-[5px] flex flex-col items-end gap-2 w-full sm:w-auto">
+          <div className="flex items-center gap-2 rounded-[5px] w-full sm:w-auto justify-end">
+            {canEditPrompt && (
+              <button
+                onClick={handleOpenPrompt}
+                className="bg-white rounded-full shadow border border-gray-200 mt-2 hover:bg-gray-50 transition-all"
+                title="要約プロンプトを編集"
+              >
+                <div className="w-8 h-8 flex items-center justify-center">
+                  <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+                  </svg>
+                </div>
+              </button>
+            )}
+            <div className="relative flex flex-col items-end">
               <input
                 type="file"
                 ref={fileInputRef}

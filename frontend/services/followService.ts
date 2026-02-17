@@ -139,4 +139,33 @@ export const followService = {
       }
     };
   },
+
+  /**
+   * Get follow summary prompt (admin/company-manager only)
+   */
+  async getPrompt(): Promise<{ prompt: string }> {
+    try {
+      return await apiRequest<{ prompt: string }>(`${API_URL}/api/follow/prompt`);
+    } catch (error) {
+      throw new Error(handleApiError(error, 'プロンプトの取得に失敗しました。'));
+    }
+  },
+
+  /**
+   * Update follow summary prompt (admin/company-manager only)
+   */
+  async updatePrompt(prompt: string): Promise<{ success: boolean; message: string }> {
+    try {
+      return await apiRequest<{ success: boolean; message: string }>(
+        `${API_URL}/api/follow/prompt`,
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt }),
+        }
+      );
+    } catch (error) {
+      throw new Error(handleApiError(error, 'プロンプトの更新に失敗しました。'));
+    }
+  },
 };
