@@ -10,6 +10,7 @@ import UploadModal from "@/components/dashboard/UploadModal";
 import PromptEditModal from "@/components/dashboard/PromptEditModal";
 import FollowSummarySidebar from "@/components/FollowSummarySidebar";
 import SalesforceSyncModal from "@/components/dashboard/SalesforceSyncModal";
+import FollowSkeletonRow from "@/components/dashboard/FollowSkeletonRow";
 import { UploadStatus, ProcessingJob } from "@/lib/types";
 import { followService } from "@/services/followService";
 import { generateFileId } from "@/lib/utils";
@@ -824,7 +825,9 @@ export default function AdminFollowPage() {
                   </thead>
                   <tbody>
                     {loading ? (
-                      <tr><td colSpan={6} className="text-center py-8">Loading...</td></tr>
+                      Array.from({ length: rowsPerPage || 10 }).map((_, index) => (
+                        <FollowSkeletonRow key={`skeleton-${index}`} />
+                      ))
                     ) : sortedRecords.length === 0 ? (
                       <tr><td colSpan={6} className="text-center py-8">No records found</td></tr>
                     ) : (
