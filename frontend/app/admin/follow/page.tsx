@@ -8,6 +8,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { toast } from 'sonner';
 import UploadModal from "@/components/dashboard/UploadModal";
 import PromptEditModal from "@/components/dashboard/PromptEditModal";
+import FollowSummarySidebar from "@/components/FollowSummarySidebar";
 import { UploadStatus, ProcessingJob } from "@/lib/types";
 import { followService } from "@/services/followService";
 import { generateFileId } from "@/lib/utils";
@@ -17,6 +18,7 @@ const ACTIVE_JOB_KEY = 'smartstaff_active_job';
 const ACTIVE_FOLLOW_JOB_KEY = 'smartstaff_active_follow_job';
 
 const isOtherJobActive = (ownKey: string): boolean => {
+  if (typeof window === 'undefined') return false;
   const otherKey = ownKey === ACTIVE_JOB_KEY ? ACTIVE_FOLLOW_JOB_KEY : ACTIVE_JOB_KEY;
   return !!localStorage.getItem(otherKey);
 };
@@ -28,6 +30,8 @@ interface FollowRecord {
   fileId: string;
   staffId: string;
   staffName: string;
+  followDate: string | null;
+  title: string;
   summary: string | null;
   companyId?: number;
   userName?: string;
@@ -64,12 +68,13 @@ export default function AdminFollowPage() {
   const [staffIdInput, setStaffIdInput] = useState("");
   const [editingStaffName, setEditingStaffName] = useState<number | null>(null);
   const [staffNameInput, setStaffNameInput] = useState("");
-  const [editingSummary, setEditingSummary] = useState<number | null>(null);
-  const [summaryInput, setSummaryInput] = useState("");
 
   const staffIdInputRef = useRef<HTMLInputElement | null>(null);
   const staffNameInputRef = useRef<HTMLInputElement | null>(null);
-  const summaryInputRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // Summary sidebar states
+  const [isSummarySidebarOpen, setIsSummarySidebarOpen] = useState(false);
+  const [selectedSummaryRecord, setSelectedSummaryRecord] = useState<FollowRecord | null>(null);
 
   // Upload states (async pattern)
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -344,31 +349,35 @@ export default function AdminFollowPage() {
     }
   };
 
-  const handleEditSummary = (id: number, currentSummary: string | null) => {
-    setEditingSummary(id);
-    setSummaryInput(currentSummary || '');
-    setTimeout(() => summaryInputRef.current?.focus(), 0);
+  const handleSummaryEdit = (record: FollowRecord) => {
+    setSelectedSummaryRecord(record);
+    setIsSummarySidebarOpen(true);
   };
 
-  const handleSummaryBlur = async (id: number) => {
-    setEditingSummary(null);
-    const trimmedInput = summaryInput?.trim() || '';
+  const handleSummarySave = async (data: { followDate: string; title: string; summary: string }) => {
+    if (!selectedSummaryRecord) return;
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow/${id}/summary`, {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow/${selectedSummaryRecord.id}/summary`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ summary: trimmedInput }),
+        body: JSON.stringify({
+          followDate: data.followDate,
+          title: data.title,
+          summary: data.summary,
+        }),
       });
       if (res.ok) {
-        toast.success('要約を更新しました。');
+        toast.success('要約を保存しました。');
+        setIsSummarySidebarOpen(false);
+        setSelectedSummaryRecord(null);
         fetchRecords();
       } else {
-        const data = await res.json();
-        toast.error(data.error || '要約の更新に失敗しました。');
+        const resData = await res.json();
+        toast.error(resData.error || '要約の保存に失敗しました。');
       }
     } catch (e) {
-      toast.error('要約の更新に失敗しました。');
+      toast.error('要約の保存に失敗しました。');
     }
   };
 
@@ -571,11 +580,6 @@ export default function AdminFollowPage() {
     }
   };
 
-  const truncateText = (text: string | null, maxLength: number = 30) => {
-    if (!text) return '';
-    return text.length > maxLength ? `${text.substring(0, maxLength)}...` : text;
-  };
-
   const filteredRecords = records.filter(rec =>
     (rec.date || '').includes(searchTerm) ||
     (rec.staffId || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -633,6 +637,16 @@ export default function AdminFollowPage() {
           uploadStatus={uploadStatus}
           isVisible={isUploadModalVisible}
           onClose={() => setIsUploadModalVisible(false)}
+        />
+
+        {/* Follow Summary Sidebar */}
+        <FollowSummarySidebar
+          open={isSummarySidebarOpen}
+          onClose={() => { setIsSummarySidebarOpen(false); setSelectedSummaryRecord(null); }}
+          followDate={selectedSummaryRecord?.followDate || new Date().toISOString().split('T')[0]}
+          title={selectedSummaryRecord?.title || ''}
+          summary={selectedSummaryRecord?.summary || ''}
+          onSave={handleSummarySave}
         />
 
         {/* Delete Confirmation Modal */}
@@ -821,28 +835,30 @@ export default function AdminFollowPage() {
                             </div>
                           </td>
                           {/* Summary */}
-                          <td className="py-5 px-4 align-middle rounded-[5px]">
-                            {editingSummary === rec.id ? (
-                              <textarea
-                                ref={summaryInputRef}
-                                value={summaryInput}
-                                onChange={e => setSummaryInput(e.target.value)}
-                                onBlur={() => handleSummaryBlur(rec.id)}
-                                className="border border-gray-300 rounded-[5px] px-2 py-1 w-full min-h-[60px]"
-                              />
-                            ) : (
-                              <div className="flex items-center gap-x-2">
-                                <button className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center flex-shrink-0" title="Edit Summary" onClick={() => handleEditSummary(rec.id, rec.summary)}>
-                                  <Image src="/edit1.svg" alt="Edit Summary" width={20} height={20} className="rounded-[5px]" />
-                                </button>
-                                <button className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center flex-shrink-0" title="Copy Summary" onClick={() => handleCopySummary(rec.summary)}>
-                                  <Image src="/copy1.svg" alt="Copy Summary" width={20} height={20} className="rounded-[5px]" />
-                                </button>
-                                <span className="truncate" title={rec.summary || ''}>
-                                  {truncateText(rec.summary)}
-                                </span>
-                              </div>
-                            )}
+                          <td className="py-5 px-4 align-middle min-w-[120px] max-w-[300px] rounded-[5px]">
+                            <div className="flex items-center justify-center gap-x-3 rounded-[5px]">
+                              <button
+                                className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center flex-shrink-0"
+                                title="Edit"
+                                onClick={() => handleSummaryEdit(rec)}
+                              >
+                                <Image src="/edit1.svg" alt="Edit" width={20} height={20} className="rounded-[5px]" />
+                              </button>
+                              <button
+                                className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center flex-shrink-0"
+                                title="Copy"
+                                onClick={() => handleCopySummary(rec.summary)}
+                              >
+                                <Image src="/copy1.svg" alt="Copy" width={20} height={20} className="rounded-[5px]" />
+                              </button>
+                              <button
+                                className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center flex-shrink-0"
+                                title="Salesforce"
+                                onClick={() => toast.info('Salesforce連携は今後実装予定です。')}
+                              >
+                                <Image src="/salesforce1.svg" alt="Salesforce" width={20} height={20} className="rounded-[5px]" />
+                              </button>
+                            </div>
                           </td>
                           {/* STT */}
                           <td className="py-5 px-2 align-middle min-w-[60px] max-w-[80px] rounded-[5px]">

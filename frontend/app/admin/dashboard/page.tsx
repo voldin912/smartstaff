@@ -26,6 +26,7 @@ const ACTIVE_JOB_KEY = 'smartstaff_active_job';
 const ACTIVE_FOLLOW_JOB_KEY = 'smartstaff_active_follow_job';
 
 const isOtherJobActive = (ownKey: string): boolean => {
+  if (typeof window === 'undefined') return false;
   const otherKey = ownKey === ACTIVE_JOB_KEY ? ACTIVE_FOLLOW_JOB_KEY : ACTIVE_JOB_KEY;
   return !!localStorage.getItem(otherKey);
 };

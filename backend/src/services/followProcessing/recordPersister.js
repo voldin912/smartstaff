@@ -39,8 +39,8 @@ export async function saveFollowRecord(jobId, data) {
   try {
     const [result] = await pool.query(
       `INSERT INTO follows 
-       (job_id, file_id, user_id, company_id, staff_id, audio_file_path, stt, summary, date)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())
+       (job_id, file_id, user_id, company_id, staff_id, follow_date, audio_file_path, stt, summary, date)
+       VALUES (?, ?, ?, ?, ?, CURDATE(), ?, ?, ?, NOW())
        ON DUPLICATE KEY UPDATE 
          updated_at = NOW(),
          stt = VALUES(stt),

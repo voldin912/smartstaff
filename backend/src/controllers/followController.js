@@ -35,6 +35,8 @@ const getRecords = async (req, res) => {
         r.file_id as fileId,
         r.staff_id as staffId,
         r.staff_name as staffName,
+        DATE_FORMAT(r.follow_date, '%Y-%m-%d') as followDate,
+        r.title,
         r.summary,
         r.company_id as companyId,
         u.name as userName
@@ -366,19 +368,27 @@ const updateStaffName = async (req, res) => {
   }
 };
 
-// Update summary
+// Update summary (with follow_date and title)
 const updateSummary = async (req, res) => {
   try {
     const { recordId } = req.params;
     const { role, company_id, id: userId } = req.user;
-    const { summary } = req.body;
+    const { summary, followDate, title } = req.body;
 
     if (typeof summary !== 'string') {
       return res.status(400).json({ error: 'Invalid summary data' });
     }
 
-    if (summary.length > 30000) {
-      return res.status(400).json({ error: 'Summary exceeds 30000 character limit' });
+    if (summary.length > 3000) {
+      return res.status(400).json({ error: 'Summary exceeds 3000 character limit' });
+    }
+
+    if (title !== undefined && typeof title !== 'string') {
+      return res.status(400).json({ error: 'Invalid title data' });
+    }
+
+    if (title && title.length > 1000) {
+      return res.status(400).json({ error: 'Title exceeds 1000 character limit' });
     }
 
     // Permission check scoped by company_id
@@ -396,9 +406,12 @@ const updateSummary = async (req, res) => {
       return res.status(403).json({ error: 'このレコードを編集する権限がありません。' });
     }
 
+    const dateValue = followDate || null;
+    const titleValue = title !== undefined ? title : '';
+
     const [result] = await pool.query(
-      'UPDATE follows SET summary = ? WHERE id = ?',
-      [summary, recordId]
+      'UPDATE follows SET follow_date = ?, title = ?, summary = ? WHERE id = ?',
+      [dateValue, titleValue, summary, recordId]
     );
 
     if (result.affectedRows === 0) {

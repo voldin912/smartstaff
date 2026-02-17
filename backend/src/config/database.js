@@ -148,6 +148,8 @@ export const initializeDatabase = async () => {
         company_id INT,
         staff_id VARCHAR(255),
         staff_name VARCHAR(255) DEFAULT '',
+        follow_date DATE DEFAULT NULL,
+        title VARCHAR(1000) DEFAULT '',
         audio_file_path VARCHAR(500),
         stt TEXT,
         summary TEXT,
@@ -1208,6 +1210,18 @@ const addAsyncFollowColumns = async () => {
     if (!await columnExists('companies', 'follow_summary_prompt')) {
       await pool.query('ALTER TABLE companies ADD COLUMN follow_summary_prompt TEXT DEFAULT NULL AFTER logo');
       logger.info('Added follow_summary_prompt column to companies table');
+    }
+
+    // Add follow_date column to follows table
+    if (!await columnExists('follows', 'follow_date')) {
+      await pool.query('ALTER TABLE follows ADD COLUMN follow_date DATE DEFAULT NULL AFTER staff_name');
+      logger.info('Added follow_date column to follows table');
+    }
+
+    // Add title column to follows table
+    if (!await columnExists('follows', 'title')) {
+      await pool.query("ALTER TABLE follows ADD COLUMN title VARCHAR(1000) DEFAULT '' AFTER follow_date");
+      logger.info('Added title column to follows table');
     }
 
     logger.info('Async follow columns migration completed');
