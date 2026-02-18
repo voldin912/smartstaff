@@ -158,7 +158,7 @@ export async function getJobStatus(jobId, userId, role) {
 /**
  * Get all jobs for a user/company with pagination
  */
-export async function getUserJobs(userId, companyId, role, status = null, limit = 20) {
+export async function getUserJobs(userId, companyId, role, status = null, limit = 20, jobType = null) {
   try {
     let query = `
       SELECT 
@@ -187,6 +187,12 @@ export async function getUserJobs(userId, companyId, role, status = null, limit 
     if (status) {
       query += ' AND pj.status = ?';
       params.push(status);
+    }
+
+    // Job type filter
+    if (jobType) {
+      query += ' AND pj.job_type = ?';
+      params.push(jobType);
     }
     
     query += ' ORDER BY pj.created_at DESC LIMIT ?';

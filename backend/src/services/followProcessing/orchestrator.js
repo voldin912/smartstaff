@@ -242,7 +242,6 @@ export async function processFollowAudioJob(
       userId,
       companyId,
       staffId,
-      audioFilePath: context.processedFilePath,
       sttText: context.combinedText,
       summary: context.summary,
     });

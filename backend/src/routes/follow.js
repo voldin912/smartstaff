@@ -30,6 +30,15 @@ router.get('/processing/jobs', auth, getProcessingJobs);
 router.get('/processing/jobs/:jobId', auth, getProcessingJobStatus);
 router.post('/processing/jobs/:jobId/retry', auth, retryProcessingJob);
 
+// Sync follow record to Salesforce (creates Event) - must be before /:recordId routes
+router.post('/sync-salesforce', auth, syncSalesforce);
+
+// Get prompt (admin and company-manager)
+router.get('/prompt', auth, authorize('admin', 'company-manager'), getPrompt);
+
+// Update prompt (admin and company-manager)
+router.put('/prompt', auth, authorize('admin', 'company-manager'), updatePrompt);
+
 // Download STT as PDF
 router.get('/:recordId/stt', auth, downloadSTT);
 
@@ -44,14 +53,5 @@ router.put('/:recordId/summary', auth, updateSummary);
 
 // Delete record
 router.delete('/:recordId', auth, deleteRecord);
-
-// Sync follow record to Salesforce (creates Event)
-router.post('/sync-salesforce', auth, syncSalesforce);
-
-// Get prompt (admin and company-manager)
-router.get('/prompt', auth, authorize('admin', 'company-manager'), getPrompt);
-
-// Update prompt (admin and company-manager)
-router.put('/prompt', auth, authorize('admin', 'company-manager'), updatePrompt);
 
 export default router;

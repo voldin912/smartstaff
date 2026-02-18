@@ -10,6 +10,11 @@ import FormData from 'form-data';
 import fs from 'fs';
 import path from 'path';
 import logger from '../../utils/logger.js';
+
+if (!process.env.DIFY_SECRET_KEY_FOLLOW_SUMMARY) {
+  console.warn('WARNING: DIFY_SECRET_KEY_FOLLOW_SUMMARY is not set. Follow summary workflow will fail.');
+}
+
 import {
   API_CONFIG,
   ERROR_CODES,
@@ -118,7 +123,7 @@ async function uploadTextFile(jobId, filePath) {
       });
       form.append('type', 'document');
       form.append('purpose', 'workflow_input');
-      form.append('user', 'voldin012');
+      form.append('user', process.env.DIFY_USER || 'default-user');
 
       const response = await axios.post('https://api.dify.ai/v1/files/upload', form, {
         headers: {
@@ -189,7 +194,7 @@ async function runFollowWorkflow(jobId, txtFileId, prompt) {
             },
             "prompt": prompt,
           },
-          user: 'voldin012',
+          user: process.env.DIFY_USER || 'default-user',
         },
         {
           headers: {

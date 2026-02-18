@@ -2,10 +2,15 @@ import { pool } from '../config/database.js';
 import fs from 'fs';
 import PDFDocument from 'pdfkit';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegPath from 'ffmpeg-static';
 import jsforce from 'jsforce';
 import logger from '../utils/logger.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const FONT_PATH = path.join(__dirname, '../../fonts/NotoSansJP-Regular.ttf');
 import { decrypt } from '../utils/encryption.js';
 import { createProcessingJob, getJobStatus, getUserJobs, retryFailedJob } from '../services/asyncProcessingService.js';
 import { addAudioProcessingJob } from '../queues/audioQueue.js';
@@ -183,9 +188,12 @@ const uploadAudio = async (req, res) => {
 const getProcessingJobStatus = async (req, res) => {
   try {
     const { jobId } = req.params;
+    const parsedJobId = parseInt(jobId, 10);
+    if (isNaN(parsedJobId)) return res.status(400).json({ error: 'Invalid job ID' });
+
     const { role, company_id, id: userId } = req.user;
 
-    const job = await getJobStatus(parseInt(jobId), userId, role);
+    const job = await getJobStatus(parsedJobId, userId, role);
 
     if (!job) {
       return res.status(404).json({ error: 'Job not found or access denied' });
@@ -209,13 +217,11 @@ const getProcessingJobs = async (req, res) => {
       company_id,
       role,
       status || null,
-      parseInt(limit) || 20
+      parseInt(limit) || 20,
+      'follow'
     );
 
-    // Filter to only follow jobs
-    const followJobs = jobs.filter(j => j.job_type === 'follow');
-
-    res.json({ jobs: followJobs });
+    res.json({ jobs });
   } catch (error) {
     logger.error('Error getting follow processing jobs', error);
     res.status(500).json({ error: 'Failed to get processing jobs' });
@@ -226,9 +232,12 @@ const getProcessingJobs = async (req, res) => {
 const retryProcessingJob = async (req, res) => {
   try {
     const { jobId } = req.params;
+    const parsedJobId = parseInt(jobId, 10);
+    if (isNaN(parsedJobId)) return res.status(400).json({ error: 'Invalid job ID' });
+
     const { role, company_id, id: userId } = req.user;
 
-    const result = await retryFailedJob(parseInt(jobId), userId, company_id, role);
+    const result = await retryFailedJob(parsedJobId, userId, company_id, role);
 
     res.json(result);
   } catch (error) {
@@ -240,11 +249,21 @@ const retryProcessingJob = async (req, res) => {
 const downloadSTT = async (req, res) => {
   try {
     const { recordId } = req.params;
-    // Get STT data and file_id from database
-    const [records] = await pool.query(
-      'SELECT stt, file_id FROM follows WHERE id = ?',
-      [recordId]
-    );
+    const id = parseInt(recordId, 10);
+    if (isNaN(id)) return res.status(400).json({ error: 'Invalid record ID' });
+
+    const { role, company_id } = req.user;
+
+    // Company-scoped authorization check
+    let sttQuery = 'SELECT stt, file_id FROM follows WHERE id = ?';
+    const sttParams = [id];
+
+    if (role !== 'admin') {
+      sttQuery += ' AND company_id = ?';
+      sttParams.push(company_id);
+    }
+
+    const [records] = await pool.query(sttQuery, sttParams);
     if (records.length === 0) {
       return res.status(404).json({ error: 'Record not found' });
     }
@@ -265,7 +284,7 @@ const downloadSTT = async (req, res) => {
     const encodedFilename = encodeURIComponent(`STT-${fileId}.pdf`);
     res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodedFilename}`);
     doc.pipe(res);
-    doc.registerFont('NotoSansJP', 'C:/Users/ALPHA/BITREP/auth-crud/backend/fonts/NotoSansJP-Regular.ttf');
+    doc.registerFont('NotoSansJP', FONT_PATH);
     const paragraphs = sttData
       .replace(/\r\n/g, '\n')
       .replace(/\r/g, '\n')
@@ -291,16 +310,23 @@ const downloadSTT = async (req, res) => {
 const updateStaffId = async (req, res) => {
   try {
     const { recordId } = req.params;
+    const id = parseInt(recordId, 10);
+    if (isNaN(id)) return res.status(400).json({ error: 'Invalid record ID' });
+
     const { role, company_id, id: userId } = req.user;
     const { staffId } = req.body;
 
-    if (!staffId) {
+    if (typeof staffId !== 'string' || staffId.length === 0) {
       return res.status(400).json({ error: 'staffId is required' });
+    }
+
+    if (staffId.length > 255) {
+      return res.status(400).json({ error: 'Staff ID exceeds 255 character limit' });
     }
 
     // Permission check scoped by company_id
     let permissionQuery = 'SELECT id, company_id FROM follows WHERE id = ?';
-    const permissionParams = [recordId];
+    const permissionParams = [id];
 
     if (role === 'member' || role === 'company-manager') {
       permissionQuery += ' AND company_id = ?';
@@ -316,7 +342,7 @@ const updateStaffId = async (req, res) => {
 
     const [result] = await pool.query(
       'UPDATE follows SET staff_id = ? WHERE id = ?',
-      [staffId, recordId]
+      [staffId, id]
     );
     if (result.affectedRows === 0) {
       return res.status(404).json({ error: 'Record not found' });
@@ -332,6 +358,9 @@ const updateStaffId = async (req, res) => {
 const updateStaffName = async (req, res) => {
   try {
     const { recordId } = req.params;
+    const id = parseInt(recordId, 10);
+    if (isNaN(id)) return res.status(400).json({ error: 'Invalid record ID' });
+
     const { role, company_id, id: userId } = req.user;
     const { staffName } = req.body;
 
@@ -339,9 +368,13 @@ const updateStaffName = async (req, res) => {
       return res.status(400).json({ error: 'Invalid staff name data' });
     }
 
+    if (staffName.length > 255) {
+      return res.status(400).json({ error: 'Staff name exceeds 255 character limit' });
+    }
+
     // Permission check scoped by company_id
     let permissionQuery = 'SELECT id, company_id FROM follows WHERE id = ?';
-    const permissionParams = [recordId];
+    const permissionParams = [id];
 
     if (role === 'member' || role === 'company-manager') {
       permissionQuery += ' AND company_id = ?';
@@ -356,7 +389,7 @@ const updateStaffName = async (req, res) => {
 
     const [result] = await pool.query(
       'UPDATE follows SET staff_name = ? WHERE id = ?',
-      [staffName, recordId]
+      [staffName, id]
     );
 
     if (result.affectedRows === 0) {
@@ -374,6 +407,9 @@ const updateStaffName = async (req, res) => {
 const updateSummary = async (req, res) => {
   try {
     const { recordId } = req.params;
+    const id = parseInt(recordId, 10);
+    if (isNaN(id)) return res.status(400).json({ error: 'Invalid record ID' });
+
     const { role, company_id, id: userId } = req.user;
     const { summary, followDate, title } = req.body;
 
@@ -393,9 +429,13 @@ const updateSummary = async (req, res) => {
       return res.status(400).json({ error: 'Title exceeds 1000 character limit' });
     }
 
+    if (followDate && !/^\d{4}-\d{2}-\d{2}$/.test(followDate)) {
+      return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD' });
+    }
+
     // Permission check scoped by company_id
     let permissionQuery = 'SELECT id, company_id FROM follows WHERE id = ?';
-    const permissionParams = [recordId];
+    const permissionParams = [id];
 
     if (role === 'member' || role === 'company-manager') {
       permissionQuery += ' AND company_id = ?';
@@ -413,7 +453,7 @@ const updateSummary = async (req, res) => {
 
     const [result] = await pool.query(
       'UPDATE follows SET follow_date = ?, title = ?, summary = ? WHERE id = ?',
-      [dateValue, titleValue, summary, recordId]
+      [dateValue, titleValue, summary, id]
     );
 
     if (result.affectedRows === 0) {
@@ -431,14 +471,17 @@ const updateSummary = async (req, res) => {
 const deleteRecord = async (req, res) => {
   try {
     const { recordId } = req.params;
+    const id = parseInt(recordId, 10);
+    if (isNaN(id)) return res.status(400).json({ error: 'Invalid record ID' });
+
     const { role, company_id, id: userId } = req.user;
 
     let query = `
-      SELECT r.id, r.company_id as recordCompanyId, r.user_id as ownerId, r.audio_file_path
+      SELECT r.id, r.company_id as recordCompanyId, r.user_id as ownerId
       FROM follows r
       WHERE r.id = ?
     `;
-    const queryParams = [recordId];
+    const queryParams = [id];
 
     // Apply role-based access control
     if (role === 'member') {
@@ -460,23 +503,10 @@ const deleteRecord = async (req, res) => {
       return res.status(404).json({ error: 'レコードが見つからないか、削除する権限がありません。' });
     }
 
-    // Get audio_file_path before deletion
-    const audioFilePath = records[0].audio_file_path;
+    // Delete the record (audio files are already deleted after processing)
+    await pool.query('DELETE FROM follows WHERE id = ?', [id]);
 
-    // Delete the audio file if it exists
-    if (audioFilePath && fs.existsSync(audioFilePath)) {
-      try {
-        fs.unlinkSync(audioFilePath);
-        logger.debug('Audio file deleted', { recordId, audioFilePath });
-      } catch (fileError) {
-        logger.warn('Failed to delete audio file', { recordId, audioFilePath, error: fileError.message });
-      }
-    }
-
-    // Delete the record
-    await pool.query('DELETE FROM follows WHERE id = ?', [recordId]);
-
-    logger.debug('Follow record deleted', { recordId });
+    logger.debug('Follow record deleted', { recordId: id });
 
     res.json({ success: true, message: 'Record deleted successfully' });
   } catch (error) {
@@ -519,6 +549,10 @@ const updatePrompt = async (req, res) => {
       return res.status(400).json({ error: 'Invalid prompt data' });
     }
 
+    if (prompt.length > 3000) {
+      return res.status(400).json({ error: 'Prompt exceeds 3000 character limit' });
+    }
+
     if (!company_id) {
       return res.status(400).json({ error: 'Company ID not found for user' });
     }
@@ -554,11 +588,26 @@ const syncSalesforce = async (req, res) => {
     if (!followDate) {
       return res.status(400).json({ message: '実施日時が指定されていません' });
     }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(followDate)) {
+      return res.status(400).json({ message: 'Invalid date format. Use YYYY-MM-DD' });
+    }
     if (!summary) {
       return res.status(400).json({ message: '要約が指定されていません' });
     }
 
     const { role, company_id } = req.user;
+
+    // Company-scoped authorization: verify user's company owns a follow with this staffId
+    if (role !== 'admin') {
+      const [owned] = await pool.query(
+        'SELECT id FROM follows WHERE staff_id = ? AND company_id = ? LIMIT 1',
+        [staffId, company_id]
+      );
+      if (owned.length === 0) {
+        return res.status(403).json({ message: 'このスタッフIDのレコードにアクセスする権限がありません' });
+      }
+    }
+
     const actualCompanyId = role === 'admin' ? 'admin' : String(company_id);
 
     logger.info('[syncFollowSalesforce] Starting sync', { staffId, actualCompanyId });
@@ -640,7 +689,7 @@ const syncSalesforce = async (req, res) => {
     }
   } catch (error) {
     logger.error('[syncFollowSalesforce] Error:', { message: error.message, stack: error.stack });
-    return res.status(500).json({ message: error.message || 'サーバーエラーが発生しました' });
+    return res.status(500).json({ message: 'Salesforce連携中にエラーが発生しました' });
   }
 };
 

@@ -18,7 +18,6 @@ import cache from '../../utils/cache.js';
  * @param {number} data.userId - User ID
  * @param {number} data.companyId - Company ID
  * @param {string} data.staffId - Staff ID
- * @param {string} data.audioFilePath - Path to audio file
  * @param {string} data.sttText - Combined STT text
  * @param {string} data.summary - Follow summary text
  * @returns {Promise<{recordId: number, isNew: boolean}>}

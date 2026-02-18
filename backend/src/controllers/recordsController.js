@@ -7,9 +7,14 @@ import fs from 'fs';
 import PDFDocument from 'pdfkit';
 import archiver from 'archiver';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegPath from 'ffmpeg-static';
 import logger from '../utils/logger.js';
+
+const __filename_rc = fileURLToPath(import.meta.url);
+const __dirname_rc = path.dirname(__filename_rc);
+const FONT_PATH = path.join(__dirname_rc, '../../fonts/NotoSansJP-Regular.ttf');
 import cache from '../utils/cache.js';
 import { withLock, shouldRunJob, recordJobRun } from '../utils/jobLock.js';
 import { 
@@ -468,7 +473,7 @@ const downloadSTT = async (req, res) => {
     const encodedFilename = encodeURIComponent(`STT-${fileId}.pdf`);
     res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodedFilename}`);
     doc.pipe(res);
-    doc.registerFont('NotoSansJP', 'C:/Users/ALPHA/BITREP/auth-crud/backend/fonts/NotoSansJP-Regular.ttf');
+    doc.registerFont('NotoSansJP', FONT_PATH);
     const paragraphs = sttData
       .replace(/\r\n/g, '\n')
       .replace(/\r/g, '\n')
@@ -564,7 +569,7 @@ const downloadSkillSheet = async (req, res) => {
     const encodedFilename = encodeURIComponent(`スキルシート-${fileId}.pdf`);
     res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodedFilename}`);
     doc.pipe(res);
-    doc.registerFont('NotoSansJP', 'C:/Users/ALPHA/BITREP/auth-crud/backend/fonts/NotoSansJP-Regular.ttf');
+    doc.registerFont('NotoSansJP', FONT_PATH);
 
     // Title - Centered
     doc.font('NotoSansJP').fontSize(16).text('Personal Data Sheet', { align: 'center' });
@@ -871,7 +876,7 @@ const downloadSalesforce = async (req, res) => {
     doc.pipe(res);
 
     // Register and use Japanese font
-    doc.registerFont('NotoSansJP', 'C:/Users/ALPHA/BITREP/auth-crud/backend/fonts/NotoSansJP-Regular.ttf');
+    doc.registerFont('NotoSansJP', FONT_PATH);
     doc.font('NotoSansJP').fontSize(16).text('セールスフォース', { align: 'center' });
     doc.moveDown();
 
@@ -977,7 +982,7 @@ const downloadBulk = async (req, res) => {
         right: 50
       }
     });
-    sttPDF.registerFont('NotoSansJP', 'C:/Users/ALPHA/BITREP/auth-crud/backend/fonts/NotoSansJP-Regular.ttf');
+    sttPDF.registerFont('NotoSansJP', FONT_PATH);
     const paragraphs = stt
       .replace(/\r\n/g, '\n')
       .replace(/\r/g, '\n')
@@ -1006,7 +1011,7 @@ const downloadBulk = async (req, res) => {
         right: 40
       }
     });
-    skillSheetPDF.registerFont('NotoSansJP', 'C:/Users/ALPHA/BITREP/auth-crud/backend/fonts/NotoSansJP-Regular.ttf');
+    skillSheetPDF.registerFont('NotoSansJP', FONT_PATH);
 
     // Title - Centered
     skillSheetPDF.font('NotoSansJP').fontSize(16).text('Personal Data Sheet', { align: 'center' });
@@ -1102,7 +1107,7 @@ const downloadBulk = async (req, res) => {
       size: 'A4',
       margins: { top: 50, bottom: 50, left: 50, right: 50 }
     });
-    salesforcePDF.registerFont('NotoSansJP', 'C:/Users/ALPHA/BITREP/auth-crud/backend/fonts/NotoSansJP-Regular.ttf');
+    salesforcePDF.registerFont('NotoSansJP', FONT_PATH);
     salesforcePDF.font('NotoSansJP').fontSize(16).text('セールスフォース', { align: 'center' });
     salesforcePDF.moveDown();
 
