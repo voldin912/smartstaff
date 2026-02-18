@@ -45,6 +45,7 @@ const getRecords = async (req, res) => {
         DATE_FORMAT(r.follow_date, '%Y-%m-%d') as followDate,
         r.title,
         r.summary,
+        r.salesforce_event_id as salesforceEventId,
         r.company_id as companyId,
         u.name as userName
       FROM follows r
@@ -477,7 +478,7 @@ const deleteRecord = async (req, res) => {
     const { role, company_id, id: userId } = req.user;
 
     let query = `
-      SELECT r.id, r.company_id as recordCompanyId, r.user_id as ownerId
+      SELECT r.id, r.company_id as recordCompanyId, r.user_id as ownerId, r.salesforce_event_id, r.staff_id
       FROM follows r
       WHERE r.id = ?
     `;
@@ -501,6 +502,42 @@ const deleteRecord = async (req, res) => {
 
     if (records.length === 0) {
       return res.status(404).json({ error: 'レコードが見つからないか、削除する権限がありません。' });
+    }
+
+    const followRecord = records[0];
+
+    // Delete linked Salesforce Event if it exists
+    if (followRecord.salesforce_event_id) {
+      try {
+        const recordCompanyId = followRecord.recordCompanyId;
+        const actualCompanyId = role === 'admin' ? 'admin' : String(recordCompanyId);
+
+        const [settingsRows] = await pool.query(
+          'SELECT * FROM salesforce WHERE company_id = ?',
+          [actualCompanyId]
+        );
+
+        if (settingsRows.length > 0) {
+          const settings = settingsRows[0];
+          const decryptedPassword = decrypt(settings.password);
+          const decryptedSecurityToken = decrypt(settings.security_token);
+
+          if (decryptedPassword && decryptedSecurityToken) {
+            const conn = new jsforce.Connection({ loginUrl: settings.base_url });
+            await conn.login(settings.username, decryptedPassword + decryptedSecurityToken);
+
+            const deleteResult = await conn.sobject('Event').destroy(followRecord.salesforce_event_id);
+            if (deleteResult.success) {
+              logger.info('Salesforce Event deleted', { eventId: followRecord.salesforce_event_id, followId: id });
+            } else {
+              logger.warn('Failed to delete Salesforce Event', { eventId: followRecord.salesforce_event_id, errors: deleteResult.errors });
+            }
+          }
+        }
+      } catch (sfError) {
+        // Log but don't block record deletion if Salesforce cleanup fails
+        logger.warn('Failed to delete linked Salesforce Event', { eventId: followRecord.salesforce_event_id, error: sfError.message });
+      }
     }
 
     // Delete the record (audio files are already deleted after processing)
@@ -574,11 +611,18 @@ const updatePrompt = async (req, res) => {
   }
 };
 
-// Sync follow record to Salesforce as an Event
+// Sync follow record to Salesforce as an Event (create or update)
 const syncSalesforce = async (req, res) => {
   try {
-    const { staffId, title, followDate, summary } = req.body;
+    const { followId, staffId, title, followDate, summary } = req.body;
 
+    if (!followId) {
+      return res.status(400).json({ message: 'Follow IDが指定されていません' });
+    }
+    const parsedFollowId = parseInt(followId, 10);
+    if (isNaN(parsedFollowId)) {
+      return res.status(400).json({ message: 'Invalid follow ID' });
+    }
     if (!staffId) {
       return res.status(400).json({ message: 'Staff IDが指定されていません' });
     }
@@ -597,20 +641,24 @@ const syncSalesforce = async (req, res) => {
 
     const { role, company_id } = req.user;
 
-    // Company-scoped authorization: verify user's company owns a follow with this staffId
+    // Company-scoped authorization: verify user's company owns this follow record
+    let authQuery = 'SELECT id, salesforce_event_id FROM follows WHERE id = ?';
+    const authParams = [parsedFollowId];
+
     if (role !== 'admin') {
-      const [owned] = await pool.query(
-        'SELECT id FROM follows WHERE staff_id = ? AND company_id = ? LIMIT 1',
-        [staffId, company_id]
-      );
-      if (owned.length === 0) {
-        return res.status(403).json({ message: 'このスタッフIDのレコードにアクセスする権限がありません' });
-      }
+      authQuery += ' AND company_id = ?';
+      authParams.push(company_id);
     }
 
+    const [followRows] = await pool.query(authQuery, authParams);
+    if (followRows.length === 0) {
+      return res.status(403).json({ message: 'このレコードにアクセスする権限がありません' });
+    }
+
+    const existingEventId = followRows[0].salesforce_event_id;
     const actualCompanyId = role === 'admin' ? 'admin' : String(company_id);
 
-    logger.info('[syncFollowSalesforce] Starting sync', { staffId, actualCompanyId });
+    logger.info('[syncFollowSalesforce] Starting sync', { followId: parsedFollowId, staffId, actualCompanyId, existingEventId });
 
     // 1. Get Salesforce credentials
     const [settingsRows] = await pool.query(
@@ -638,7 +686,7 @@ const syncSalesforce = async (req, res) => {
     await conn.login(settings.username, decryptedPassword + decryptedSecurityToken);
     logger.info('[syncFollowSalesforce] Successfully logged in');
 
-    // 4. Query Account by StaffID__c to get the WhoId
+    // 4. Query Account by StaffID__c
     logger.info('[syncFollowSalesforce] Querying Account for StaffID__c:', staffId);
     const accounts = await conn.sobject('Account')
       .find({ StaffID__c: staffId })
@@ -654,38 +702,66 @@ const syncSalesforce = async (req, res) => {
     logger.info('[syncFollowSalesforce] Account found:', { accountId, name: accounts[0].Name });
 
     // 5. Build StartDateTime and EndDateTime
-    // followDate is "YYYY-MM-DD", combine with current time for the datetime
     const now = new Date();
     const hours = String(now.getHours()).padStart(2, '0');
     const minutes = String(now.getMinutes()).padStart(2, '0');
     const seconds = String(now.getSeconds()).padStart(2, '0');
     const dateTimeStr = `${followDate}T${hours}:${minutes}:${seconds}`;
 
-    // 6. Create Event record
-    const eventData = {
-      Subject: title,
-      StartDateTime: dateTimeStr,
-      EndDateTime: dateTimeStr,
-      Description: summary,
-      WhatId: accountId,
-    };
+    // 6. Create or Update Event
+    if (existingEventId) {
+      // Update existing Event
+      logger.info('[syncFollowSalesforce] Updating existing Event:', { existingEventId });
 
-    logger.info('[syncFollowSalesforce] Creating Event:', {
-      Subject: title.substring(0, 50) + (title.length > 50 ? '...' : ''),
-      StartDateTime: dateTimeStr,
-      EndDateTime: dateTimeStr,
-      DescriptionLength: summary.length,
-      WhatId: accountId,
-    });
+      const updateResult = await conn.sobject('Event').update({
+        Id: existingEventId,
+        Subject: title,
+        StartDateTime: dateTimeStr,
+        EndDateTime: dateTimeStr,
+        Description: summary,
+        WhatId: accountId,
+      });
 
-    const result = await conn.sobject('Event').create(eventData);
-
-    if (result.success) {
-      logger.info('[syncFollowSalesforce] Event created successfully:', { eventId: result.id });
-      return res.json({ message: 'Salesforce連携が完了しました', eventId: result.id });
+      if (updateResult.success) {
+        logger.info('[syncFollowSalesforce] Event updated successfully:', { eventId: existingEventId });
+        return res.json({ message: 'Salesforce連携を更新しました', eventId: existingEventId, isUpdate: true });
+      } else {
+        logger.error('[syncFollowSalesforce] Event update failed:', updateResult.errors);
+        return res.status(500).json({ message: 'Salesforceイベントの更新に失敗しました' });
+      }
     } else {
-      logger.error('[syncFollowSalesforce] Event creation failed:', result.errors);
-      return res.status(500).json({ message: 'Salesforceへの連携に失敗しました', errors: result.errors });
+      // Create new Event
+      const eventData = {
+        Subject: title,
+        StartDateTime: dateTimeStr,
+        EndDateTime: dateTimeStr,
+        Description: summary,
+        WhatId: accountId,
+      };
+
+      logger.info('[syncFollowSalesforce] Creating new Event:', {
+        Subject: title.substring(0, 50) + (title.length > 50 ? '...' : ''),
+        StartDateTime: dateTimeStr,
+        EndDateTime: dateTimeStr,
+        DescriptionLength: summary.length,
+        WhatId: accountId,
+      });
+
+      const result = await conn.sobject('Event').create(eventData);
+
+      if (result.success) {
+        // Store the Event ID in the follows table
+        await pool.query(
+          'UPDATE follows SET salesforce_event_id = ? WHERE id = ?',
+          [result.id, parsedFollowId]
+        );
+
+        logger.info('[syncFollowSalesforce] Event created and ID stored:', { eventId: result.id, followId: parsedFollowId });
+        return res.json({ message: 'Salesforce連携が完了しました', eventId: result.id, isUpdate: false });
+      } else {
+        logger.error('[syncFollowSalesforce] Event creation failed:', result.errors);
+        return res.status(500).json({ message: 'Salesforceへの連携に失敗しました' });
+      }
     }
   } catch (error) {
     logger.error('[syncFollowSalesforce] Error:', { message: error.message, stack: error.stack });

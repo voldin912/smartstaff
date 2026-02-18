@@ -170,11 +170,11 @@ export const followService = {
   },
 
   /**
-   * Sync follow record to Salesforce (creates Event)
+   * Sync follow record to Salesforce (creates or updates Event)
    */
-  async syncSalesforce(data: { staffId: string; title: string; followDate: string; summary: string }): Promise<{ message: string; eventId?: string }> {
+  async syncSalesforce(data: { followId: number; staffId: string; title: string; followDate: string; summary: string }): Promise<{ message: string; eventId?: string; isUpdate?: boolean }> {
     try {
-      return await apiRequest<{ message: string; eventId?: string }>(
+      return await apiRequest<{ message: string; eventId?: string; isUpdate?: boolean }>(
         `${API_URL}/api/follow/sync-salesforce`,
         {
           method: 'POST',

@@ -35,6 +35,7 @@ interface FollowRecord {
   followDate: string | null;
   title: string;
   summary: string | null;
+  salesforceEventId: string | null;
   companyId?: number;
   userName?: string;
 }
@@ -431,12 +432,20 @@ export default function AdminFollowPage() {
     if (!salesforceSyncRecord) return;
     try {
       const result = await followService.syncSalesforce({
+        followId: salesforceSyncRecord.id,
         staffId: salesforceSyncRecord.staffId,
         title: salesforceSyncRecord.title || '',
         followDate: salesforceSyncRecord.followDate || new Date().toISOString().split('T')[0],
         summary: salesforceSyncRecord.summary || '',
       });
       toast.success(result.message || 'Salesforce連携が完了しました');
+
+      // Update local state with the new event ID
+      if (result.eventId) {
+        setRecords(prev => prev.map(r =>
+          r.id === salesforceSyncRecord.id ? { ...r, salesforceEventId: result.eventId! } : r
+        ));
+      }
     } catch (error: any) {
       toast.error(error.message || 'Salesforce連携に失敗しました');
     } finally {
@@ -690,6 +699,7 @@ export default function AdminFollowPage() {
         <SalesforceSyncModal
           isOpen={showSalesforceModal}
           staffId={salesforceSyncRecord?.staffId || null}
+          isUpdate={!!salesforceSyncRecord?.salesforceEventId}
           onClose={() => { setShowSalesforceModal(false); setSalesforceSyncRecord(null); }}
           onConfirm={handleSalesforceSync}
         />
@@ -899,11 +909,14 @@ export default function AdminFollowPage() {
                                 <Image src="/copy1.svg" alt="Copy" width={20} height={20} className="rounded-[5px]" />
                               </button>
                               <button
-                                className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center flex-shrink-0"
-                                title="Salesforce連携"
+                                className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center flex-shrink-0 relative"
+                                title={rec.salesforceEventId ? "Salesforce連携済み（クリックで更新）" : "Salesforce連携"}
                                 onClick={() => handleSalesforceClick(rec)}
                               >
                                 <Image src="/salesforce1.svg" alt="Salesforce" width={20} height={20} className="rounded-[5px]" />
+                                {rec.salesforceEventId && (
+                                  <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-green-500 rounded-full border border-white" />
+                                )}
                               </button>
                             </div>
                           </td>

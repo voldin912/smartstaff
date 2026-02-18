@@ -153,6 +153,7 @@ export const initializeDatabase = async () => {
         audio_file_path VARCHAR(500),
         stt TEXT,
         summary TEXT,
+        salesforce_event_id VARCHAR(18) DEFAULT NULL,
         date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -1222,6 +1223,12 @@ const addAsyncFollowColumns = async () => {
     if (!await columnExists('follows', 'title')) {
       await pool.query("ALTER TABLE follows ADD COLUMN title VARCHAR(1000) DEFAULT '' AFTER follow_date");
       logger.info('Added title column to follows table');
+    }
+
+    // Add salesforce_event_id column to follows table
+    if (!await columnExists('follows', 'salesforce_event_id')) {
+      await pool.query("ALTER TABLE follows ADD COLUMN salesforce_event_id VARCHAR(18) DEFAULT NULL AFTER summary");
+      logger.info('Added salesforce_event_id column to follows table');
     }
 
     logger.info('Async follow columns migration completed');
