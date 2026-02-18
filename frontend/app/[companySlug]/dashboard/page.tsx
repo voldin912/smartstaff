@@ -55,6 +55,8 @@ export default function DashboardPage() {
   const [modalType, setModalType] = useState<'skillSheet' | 'salesforce' | null>(null);
   const [modalData, setModalData] = useState<any>(null);
   const [staffMemo, setStaffMemo] = useState('');
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [recordToDelete, setRecordToDelete] = useState<RecordType | null>(null);
   const [detailRecordId, setDetailRecordId] = useState<number | null>(null);
@@ -435,6 +437,7 @@ export default function DashboardPage() {
 
   const handleSalesforceSync = async () => {
     if (!modalStaffId || !modalType) return;
+    setIsSyncing(true);
     try {
       const body: any = { staffId: modalStaffId, type: modalType };
       if (modalType === 'skillSheet') {
@@ -461,8 +464,11 @@ export default function DashboardPage() {
       }
     } catch (e) {
       toast.error('サーバーエラーが発生しました');
+    } finally {
+      setIsSyncing(false);
+      setShowSalesforceModal(false);
+      setModalType(null);
     }
-    setShowSalesforceModal(false);
   };
 
   const handleDeleteClick = (record: RecordSummary) => {
@@ -473,6 +479,7 @@ export default function DashboardPage() {
 
   const handleDeleteConfirm = async () => {
     if (!recordToDelete) return;
+    setIsDeleting(true);
     try {
       await recordsService.deleteRecord(recordToDelete.id);
       notify('success', 'レコードを削除しました。');
@@ -480,6 +487,7 @@ export default function DashboardPage() {
     } catch (error) {
       notify('error', (error as Error).message || 'レコードの削除に失敗しました。');
     } finally {
+      setIsDeleting(false);
       setShowDeleteModal(false);
       setRecordToDelete(null);
     }
@@ -538,6 +546,7 @@ export default function DashboardPage() {
         <SalesforceSyncModal
           isOpen={showSalesforceModal}
           staffId={modalStaffId}
+          isLoading={isSyncing}
           onClose={() => {
             setShowSalesforceModal(false);
             setModalType(null);
@@ -546,6 +555,7 @@ export default function DashboardPage() {
         />
         <DeleteModal
           isOpen={showDeleteModal}
+          isLoading={isDeleting}
           onClose={() => {
             setShowDeleteModal(false);
             setRecordToDelete(null);

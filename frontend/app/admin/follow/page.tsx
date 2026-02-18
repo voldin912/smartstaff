@@ -82,6 +82,8 @@ export default function AdminFollowPage() {
   // Salesforce sync states
   const [showSalesforceModal, setShowSalesforceModal] = useState(false);
   const [salesforceSyncRecord, setSalesforceSyncRecord] = useState<FollowRecord | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Upload states (async pattern)
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -430,6 +432,7 @@ export default function AdminFollowPage() {
 
   const handleSalesforceSync = async () => {
     if (!salesforceSyncRecord) return;
+    setIsSyncing(true);
     try {
       const result = await followService.syncSalesforce({
         followId: salesforceSyncRecord.id,
@@ -449,6 +452,7 @@ export default function AdminFollowPage() {
     } catch (error: any) {
       toast.error(error.message || 'Salesforce連携に失敗しました');
     } finally {
+      setIsSyncing(false);
       setShowSalesforceModal(false);
       setSalesforceSyncRecord(null);
     }
@@ -579,6 +583,7 @@ export default function AdminFollowPage() {
 
   const handleDeleteConfirm = async () => {
     if (!recordToDelete) return;
+    setIsDeleting(true);
     try {
       const token = localStorage.getItem("token");
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow/${recordToDelete.id}`, {
@@ -595,6 +600,7 @@ export default function AdminFollowPage() {
     } catch (error) {
       toast.error('レコードの削除に失敗しました。');
     } finally {
+      setIsDeleting(false);
       setShowDeleteModal(false);
       setRecordToDelete(null);
     }
@@ -700,6 +706,7 @@ export default function AdminFollowPage() {
           isOpen={showSalesforceModal}
           staffId={salesforceSyncRecord?.staffId || null}
           isUpdate={!!salesforceSyncRecord?.salesforceEventId}
+          isLoading={isSyncing}
           onClose={() => { setShowSalesforceModal(false); setSalesforceSyncRecord(null); }}
           onConfirm={handleSalesforceSync}
         />
@@ -709,24 +716,37 @@ export default function AdminFollowPage() {
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-30">
             <div className="bg-gray-50 border border-gray-400 rounded-md p-8 min-w-[350px] max-w-[95vw] flex flex-col items-center">
               <div className="text-center mb-6">
-                <div className="text-lg mb-2">
-                  スタッフID：{recordToDelete?.staffId || '(未設定)'} のレコードを削除しますか？
+                {isDeleting ? (
+                  <div className="flex flex-col items-center gap-3 py-4">
+                    <svg className="animate-spin h-8 w-8 text-red-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    <div className="text-lg">削除中...</div>
+                    <div className="text-sm text-gray-500">しばらくお待ちください</div>
+                  </div>
+                ) : (
+                  <div className="text-lg mb-2">
+                    スタッフID：{recordToDelete?.staffId || '(未設定)'} のレコードを削除しますか？
+                  </div>
+                )}
+              </div>
+              {!isDeleting && (
+                <div className="flex gap-8 mt-2">
+                  <button
+                    className="border border-gray-400 rounded px-8 py-2 text-lg hover:bg-gray-200"
+                    onClick={() => { setShowDeleteModal(false); setRecordToDelete(null); }}
+                  >
+                    キャンセル
+                  </button>
+                  <button
+                    className="border border-red-400 text-red-600 rounded px-8 py-2 text-lg hover:bg-red-50"
+                    onClick={handleDeleteConfirm}
+                  >
+                    削除
+                  </button>
                 </div>
-              </div>
-              <div className="flex gap-8 mt-2">
-                <button
-                  className="border border-gray-400 rounded px-8 py-2 text-lg hover:bg-gray-200"
-                  onClick={() => { setShowDeleteModal(false); setRecordToDelete(null); }}
-                >
-                  キャンセル
-                </button>
-                <button
-                  className="border border-red-400 text-red-600 rounded px-8 py-2 text-lg hover:bg-red-50"
-                  onClick={handleDeleteConfirm}
-                >
-                  削除
-                </button>
-              </div>
+              )}
             </div>
           </div>
         )}
