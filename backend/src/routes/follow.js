@@ -1,6 +1,20 @@
 import express from 'express';
 import { auth, authorize } from '../middleware/auth.js';
-import { getRecords, uploadAudio, downloadSTT, updateStaffId, updateStaffName, updateSummary, deleteRecord, getPrompt, updatePrompt } from '../controllers/followController.js';
+import {
+  getRecords,
+  uploadAudio,
+  downloadSTT,
+  updateStaffId,
+  updateStaffName,
+  updateSummary,
+  deleteRecord,
+  getPrompt,
+  updatePrompt,
+  getProcessingJobStatus,
+  getProcessingJobs,
+  retryProcessingJob,
+  syncSalesforce,
+} from '../controllers/followController.js';
 import { upload } from '../middleware/upload.js';
 
 const router = express.Router();
@@ -8,8 +22,22 @@ const router = express.Router();
 // Get all records (paginated)
 router.get('/', auth, getRecords);
 
-// Upload audio file
+// Upload audio file (async - returns jobId)
 router.post('/upload', auth, upload.single('audio'), uploadAudio);
+
+// Processing job status routes (must be before /:recordId routes to avoid conflict)
+router.get('/processing/jobs', auth, getProcessingJobs);
+router.get('/processing/jobs/:jobId', auth, getProcessingJobStatus);
+router.post('/processing/jobs/:jobId/retry', auth, retryProcessingJob);
+
+// Sync follow record to Salesforce (creates Event) - must be before /:recordId routes
+router.post('/sync-salesforce', auth, syncSalesforce);
+
+// Get prompt (admin and company-manager)
+router.get('/prompt', auth, authorize('admin', 'company-manager'), getPrompt);
+
+// Update prompt (admin and company-manager)
+router.put('/prompt', auth, authorize('admin', 'company-manager'), updatePrompt);
 
 // Download STT as PDF
 router.get('/:recordId/stt', auth, downloadSTT);
@@ -25,11 +53,5 @@ router.put('/:recordId/summary', auth, updateSummary);
 
 // Delete record
 router.delete('/:recordId', auth, deleteRecord);
-
-// Get prompt (admin only)
-router.get('/prompt', auth, authorize('admin'), getPrompt);
-
-// Update prompt (admin only)
-router.put('/prompt', auth, authorize('admin'), updatePrompt);
 
 export default router;

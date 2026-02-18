@@ -9,8 +9,9 @@ import { pool } from '../config/database.js';
 import logger from '../utils/logger.js';
 import { addAudioProcessingJob } from '../queues/audioQueue.js';
 
-// Import the orchestrator for processing
+// Import the orchestrators for processing
 import { processAudioJob as orchestratorProcessAudioJob } from './audioProcessing/orchestrator.js';
+import { processFollowAudioJob as orchestratorProcessFollowJob } from './followProcessing/orchestrator.js';
 
 // ============================================
 // Job Management Functions
@@ -18,17 +19,25 @@ import { processAudioJob as orchestratorProcessAudioJob } from './audioProcessin
 
 /**
  * Create a new processing job
+ * 
+ * @param {string} fileId - File ID
+ * @param {number} userId - User ID
+ * @param {number} companyId - Company ID
+ * @param {string} staffId - Staff ID
+ * @param {string} localFilePath - Path to local audio file
+ * @param {string} jobType - Job type: 'record' or 'follow' (default: 'record')
+ * @returns {Promise<number>} Job ID
  */
-export async function createProcessingJob(fileId, userId, companyId, staffId, localFilePath) {
+export async function createProcessingJob(fileId, userId, companyId, staffId, localFilePath, jobType = 'record') {
   try {
     const [result] = await pool.query(
       `INSERT INTO processing_jobs 
-       (file_id, user_id, company_id, staff_id, local_file_path, status, current_step) 
-       VALUES (?, ?, ?, ?, ?, 'pending', 'ジョブ作成完了')`,
-      [fileId, userId, companyId, staffId, localFilePath]
+       (file_id, user_id, company_id, staff_id, local_file_path, job_type, status, current_step) 
+       VALUES (?, ?, ?, ?, ?, ?, 'pending', 'ジョブ作成完了')`,
+      [fileId, userId, companyId, staffId, localFilePath, jobType]
     );
     
-    logger.info('Processing job created', { jobId: result.insertId, fileId, userId });
+    logger.info('Processing job created', { jobId: result.insertId, fileId, userId, jobType });
     return result.insertId;
   } catch (error) {
     logger.error('Error creating processing job', { error: error.message });
@@ -149,7 +158,7 @@ export async function getJobStatus(jobId, userId, role) {
 /**
  * Get all jobs for a user/company with pagination
  */
-export async function getUserJobs(userId, companyId, role, status = null, limit = 20) {
+export async function getUserJobs(userId, companyId, role, status = null, limit = 20, jobType = null) {
   try {
     let query = `
       SELECT 
@@ -178,6 +187,12 @@ export async function getUserJobs(userId, companyId, role, status = null, limit 
     if (status) {
       query += ' AND pj.status = ?';
       params.push(status);
+    }
+
+    // Job type filter
+    if (jobType) {
+      query += ' AND pj.job_type = ?';
+      params.push(jobType);
     }
     
     query += ' ORDER BY pj.created_at DESC LIMIT ?';
@@ -344,6 +359,54 @@ export async function processAudioJob(jobId, audioFilePath, fileId, userId, comp
   }
 }
 
+/**
+ * Main async processing function for follow audio job
+ * Delegates to the follow orchestrator for modular step execution
+ * 
+ * @param {number} jobId - Job ID
+ * @param {string} audioFilePath - Path to audio file
+ * @param {string} fileId - File ID
+ * @param {number} userId - User ID
+ * @param {number} companyId - Company ID
+ * @param {string} staffId - Staff ID
+ * @returns {Promise<{success: boolean, recordId?: number, error?: string}>}
+ */
+export async function processFollowJob(jobId, audioFilePath, fileId, userId, companyId, staffId) {
+  logger.info('Starting follow audio processing job', { jobId, audioFilePath });
+  
+  try {
+    // Delegate to follow orchestrator with required callbacks
+    const result = await orchestratorProcessFollowJob(
+      jobId,
+      audioFilePath,
+      fileId,
+      userId,
+      companyId,
+      staffId,
+      updateJobStatus,
+      registerChunks,
+      updateChunkStatus
+    );
+    
+    if (!result.success) {
+      logger.error('Follow audio processing failed', { jobId, error: result.error });
+      throw new Error(result.error || 'Follow processing failed');
+    }
+    
+    logger.info('Follow audio processing completed', { 
+      jobId, 
+      recordId: result.recordId,
+      qualityStatus: result.qualityStatus
+    });
+    
+    return result;
+    
+  } catch (error) {
+    logger.error('Error in processFollowJob', { jobId, error: error.message });
+    throw error;
+  }
+}
+
 // ============================================
 // Job Retry and Cleanup
 // ============================================
@@ -393,7 +456,7 @@ export async function retryFailedJob(jobId, userId, companyId, role) {
       [jobId]
     );
     
-    // Add job to persistent queue for retry
+    // Add job to persistent queue for retry (include jobType for routing)
     await addAudioProcessingJob({
       jobId,
       audioFilePath: job.localFilePath,
@@ -401,6 +464,7 @@ export async function retryFailedJob(jobId, userId, companyId, role) {
       userId: job.userId,
       companyId: job.companyId,
       staffId: job.staffId,
+      jobType: job.job_type || 'record',
     });
     
     logger.info('Job retry queued', { jobId, previousStatus: job.status });
@@ -452,6 +516,7 @@ export default {
   
   // Processing
   processAudioJob,
+  processFollowJob,
   
   // Retry and cleanup
   retryFailedJob,

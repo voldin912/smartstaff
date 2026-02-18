@@ -48,6 +48,7 @@ export const initializeDatabase = async () => {
         name VARCHAR(255) NOT NULL UNIQUE,
         slug VARCHAR(255) UNIQUE,
         logo VARCHAR(255),
+        follow_summary_prompt TEXT DEFAULT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       )
@@ -141,14 +142,18 @@ export const initializeDatabase = async () => {
     const followsTable = `
       CREATE TABLE IF NOT EXISTS follows (
         id INT PRIMARY KEY AUTO_INCREMENT,
+        job_id BIGINT UNIQUE,
         file_id VARCHAR(255),
         user_id INT,
         company_id INT,
         staff_id VARCHAR(255),
         staff_name VARCHAR(255) DEFAULT '',
+        follow_date DATE DEFAULT NULL,
+        title VARCHAR(1000) DEFAULT '',
         audio_file_path VARCHAR(500),
         stt TEXT,
         summary TEXT,
+        salesforce_event_id VARCHAR(18) DEFAULT NULL,
         date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -156,7 +161,8 @@ export const initializeDatabase = async () => {
         FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE SET NULL,
         INDEX idx_follows_company_id (company_id),
         INDEX idx_follows_company_created (company_id, created_at DESC),
-        INDEX idx_follows_user_created (user_id, created_at DESC)
+        INDEX idx_follows_user_created (user_id, created_at DESC),
+        INDEX idx_follows_job_id (job_id)
       )
     `;
 
@@ -201,6 +207,7 @@ export const initializeDatabase = async () => {
         stt_result LONGTEXT,
         error_message TEXT,
         record_id INT NULL,
+        job_type ENUM('record', 'follow') NOT NULL DEFAULT 'record',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         completed_at TIMESTAMP NULL,
@@ -216,7 +223,8 @@ export const initializeDatabase = async () => {
         INDEX idx_user_id (user_id),
         INDEX idx_company_id (company_id),
         INDEX idx_created_at (created_at DESC),
-        INDEX idx_heartbeat_status (status, heartbeat_at)
+        INDEX idx_heartbeat_status (status, heartbeat_at),
+        INDEX idx_job_type (job_type)
       )
     `;
 
@@ -402,6 +410,9 @@ export const runMigrations = async () => {
 
     // Migration: Update follows table schema (add company_id, staff_name, summary; drop old columns)
     await migrateFollowsTable();
+
+    // Migration: Add async processing columns (job_type on processing_jobs, job_id on follows, follow_summary_prompt on companies)
+    await addAsyncFollowColumns();
 
     logger.info('Database migrations completed successfully');
   } catch (error) {
@@ -1139,6 +1150,90 @@ const migrateFollowsTable = async () => {
     logger.info('Follows table migration completed');
   } catch (error) {
     logger.error('Error migrating follows table', error);
+    // Don't throw - allow initialization to continue
+  }
+};
+
+// Migration function: Add async follow processing columns
+const addAsyncFollowColumns = async () => {
+  try {
+    const dbName = DB_NAME;
+
+    const columnExists = async (tableName, columnName) => {
+      const [columns] = await pool.query(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = ? 
+        AND TABLE_NAME = ? 
+        AND COLUMN_NAME = ?
+      `, [dbName, tableName, columnName]);
+      return columns.length > 0;
+    };
+
+    const indexExists = async (tableName, indexName) => {
+      const [indexes] = await pool.query(`
+        SELECT INDEX_NAME 
+        FROM INFORMATION_SCHEMA.STATISTICS 
+        WHERE TABLE_SCHEMA = ? 
+        AND TABLE_NAME = ? 
+        AND INDEX_NAME = ?
+      `, [dbName, tableName, indexName]);
+      return indexes.length > 0;
+    };
+
+    logger.info('Starting async follow columns migration...');
+
+    // Add job_type column to processing_jobs
+    if (!await columnExists('processing_jobs', 'job_type')) {
+      await pool.query("ALTER TABLE processing_jobs ADD COLUMN job_type ENUM('record', 'follow') NOT NULL DEFAULT 'record' AFTER record_id");
+      logger.info('Added job_type column to processing_jobs table');
+      if (!await indexExists('processing_jobs', 'idx_job_type')) {
+        await pool.query('ALTER TABLE processing_jobs ADD INDEX idx_job_type (job_type)');
+        logger.info('Added idx_job_type index to processing_jobs');
+      }
+    }
+
+    // Add job_id column to follows table
+    if (!await columnExists('follows', 'job_id')) {
+      await pool.query('ALTER TABLE follows ADD COLUMN job_id BIGINT UNIQUE AFTER id');
+      logger.info('Added job_id column to follows table');
+      if (!await indexExists('follows', 'idx_follows_job_id')) {
+        try {
+          await pool.query('CREATE INDEX idx_follows_job_id ON follows (job_id)');
+          logger.info('Added idx_follows_job_id index to follows table');
+        } catch (e) {
+          logger.debug('idx_follows_job_id index may already exist');
+        }
+      }
+    }
+
+    // Add follow_summary_prompt column to companies table
+    if (!await columnExists('companies', 'follow_summary_prompt')) {
+      await pool.query('ALTER TABLE companies ADD COLUMN follow_summary_prompt TEXT DEFAULT NULL AFTER logo');
+      logger.info('Added follow_summary_prompt column to companies table');
+    }
+
+    // Add follow_date column to follows table
+    if (!await columnExists('follows', 'follow_date')) {
+      await pool.query('ALTER TABLE follows ADD COLUMN follow_date DATE DEFAULT NULL AFTER staff_name');
+      logger.info('Added follow_date column to follows table');
+    }
+
+    // Add title column to follows table
+    if (!await columnExists('follows', 'title')) {
+      await pool.query("ALTER TABLE follows ADD COLUMN title VARCHAR(1000) DEFAULT '' AFTER follow_date");
+      logger.info('Added title column to follows table');
+    }
+
+    // Add salesforce_event_id column to follows table
+    if (!await columnExists('follows', 'salesforce_event_id')) {
+      await pool.query("ALTER TABLE follows ADD COLUMN salesforce_event_id VARCHAR(18) DEFAULT NULL AFTER summary");
+      logger.info('Added salesforce_event_id column to follows table');
+    }
+
+    logger.info('Async follow columns migration completed');
+  } catch (error) {
+    logger.error('Error adding async follow columns', error);
     // Don't throw - allow initialization to continue
   }
 };

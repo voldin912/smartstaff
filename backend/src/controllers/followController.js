@@ -1,106 +1,20 @@
 import { pool } from '../config/database.js';
-import axios from 'axios';
-import pkg from 'nodejs-whisper';
-import FormData from 'form-data';
-const { nodewhisper } = pkg;
 import fs from 'fs';
 import PDFDocument from 'pdfkit';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegPath from 'ffmpeg-static';
+import jsforce from 'jsforce';
 import logger from '../utils/logger.js';
-import {
-  API_CONFIG,
-  isRetryableStatus,
-  categorizeError,
-  calculateBackoff,
-  sleep,
-} from '../config/axiosConfig.js';
 
-
-// import path from 'path'
-// import { nodewhisper } from 'nodejs-whisper'
-
-// // Need to provide exact path to your audio file.
-// const filePath = path.resolve(__dirname, 'YourAudioFileName')
-
-// await nodewhisper(filePath, {
-// 	modelName: 'base.en', //Downloaded models name
-// 	autoDownloadModelName: 'base.en', // (optional) auto download a model if model is not present
-// 	removeWavFileAfterTranscription: false, // (optional) remove wav file once transcribed
-// 	withCuda: false, // (optional) use cuda for faster processing
-// 	logger: console, // (optional) Logging instance, defaults to console
-// 	whisperOptions: {
-// 		outputInCsv: false, // get output result in csv file
-// 		outputInJson: false, // get output result in json file
-// 		outputInJsonFull: false, // get output result in json file including more information
-// 		outputInLrc: false, // get output result in lrc file
-// 		outputInSrt: true, // get output result in srt file
-// 		outputInText: false, // get output result in txt file
-// 		outputInVtt: false, // get output result in vtt file
-// 		outputInWords: false, // get output result in wts file for karaoke
-// 		translateToEnglish: false, // translate from source language to english
-// 		wordTimestamps: false, // word-level timestamps
-// 		timestamps_length: 20, // amount of dialogue per timestamp pair
-// 		splitOnWord: true, // split on word rather than on token
-// 	},
-// })
-
-// // Model list
-// const MODELS_LIST = [
-// 	'tiny',
-// 	'tiny.en',
-// 	'base',
-// 	'base.en',
-// 	'small',
-// 	'small.en',
-// 	'medium',
-// 	'medium.en',
-// 	'large-v1',
-// 	'large',
-// 	'large-v3-turbo',
-// ]
-
-// Transcription Queue Manager
-class TranscriptionQueue {
-  constructor() {
-    this.queue = [];
-    this.isProcessing = false;
-  }
-
-  async addToQueue(audioFilePath, options) {
-    return new Promise((resolve, reject) => {
-      this.queue.push({
-        audioFilePath,
-        options,
-        resolve,
-        reject
-      });
-      this.processQueue();
-    });
-  }
-
-  async processQueue() {
-    if (this.isProcessing || this.queue.length === 0) {
-      return;
-    }
-
-    this.isProcessing = true;
-    const { audioFilePath, options, resolve, reject } = this.queue.shift();
-
-    try {
-      const result = await nodewhisper(audioFilePath, options);
-      resolve(result);
-    } catch (error) {
-      reject(error);
-    } finally {
-      this.isProcessing = false;
-      this.processQueue(); // Process next item in queue
-    }
-  }
-}
-
-const transcriptionQueue = new TranscriptionQueue();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const FONT_PATH = path.join(__dirname, '../../fonts/NotoSansJP-Regular.ttf');
+import { decrypt } from '../utils/encryption.js';
+import { createProcessingJob, getJobStatus, getUserJobs, retryFailedJob } from '../services/asyncProcessingService.js';
+import { addAudioProcessingJob } from '../queues/audioQueue.js';
+import { DEFAULT_FOLLOW_SUMMARY_PROMPT } from '../services/followProcessing/difyWorkflow.js';
 
 ffmpeg.setFfmpegPath(ffmpegPath);
 
@@ -128,7 +42,10 @@ const getRecords = async (req, res) => {
         r.file_id as fileId,
         r.staff_id as staffId,
         r.staff_name as staffName,
+        DATE_FORMAT(r.follow_date, '%Y-%m-%d') as followDate,
+        r.title,
         r.summary,
+        r.salesforce_event_id as salesforceEventId,
         r.company_id as companyId,
         u.name as userName
       FROM follows r
@@ -140,14 +57,12 @@ const getRecords = async (req, res) => {
 
     // Apply role-based filtering using r.company_id
     if (role === 'member') {
-      // Members can see records from all users in the same company
       query += ' WHERE r.company_id = ?';
       countQuery += ' WHERE r.company_id = ?';
       queryParams.push(company_id);
       countParams.push(company_id);
       logger.debug('Filtering for member', { company_id });
     } else if (role === 'company-manager') {
-      // Company managers can see records from their company
       query += ' WHERE r.company_id = ?';
       countQuery += ' WHERE r.company_id = ?';
       queryParams.push(company_id);
@@ -193,325 +108,163 @@ const getRecords = async (req, res) => {
   }
 };
 
-const uploadFile = async (filePath) => {
-  const form = new FormData();
-  form.append('file', fs.createReadStream(filePath), {
-    filename: filePath.split('/').pop(), // ensure filename is included
-    contentType: 'audio/mpeg', // explicitly set the correct MIME type
-  });
-  form.append('type', 'audio');
-  form.append('purpose', 'workflow_input');
-  form.append('user', 'voldin012');
-
-  const response = await axios.post('https://api.dify.ai/v1/files/upload', form, {
-    headers: {
-      Authorization: `Bearer ${process.env.DIFY_SECRET_KEY}`,
-      ...form.getHeaders()
-    }
-  });
-
-  logger.debug('API response', { data: response.data });
-
-  return response.data.id;
-}
-
-const getTxtPathFromMp3 = (mp3Path) => {
-  return mp3Path.replace(/\.(mp3|wav|m4a|flac|aac)$/i, '.csv');
-}
-
-// Upload audio file and create record
+// Upload audio file - async pattern (returns jobId immediately)
 const uploadAudio = async (req, res) => {
   try {
     if (!req.file) {
+      logger.error('Upload error: No file in request', { body: req.body, files: req.files });
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
     const { staffId, fileId } = req.body;
+    const userId = req.user.id;
+    const companyId = req.user.company_id;
+
+    if (!staffId || !fileId) {
+      logger.error('Upload error: Missing required fields', { body: req.body, staffId, fileId });
+      return res.status(400).json({ error: 'Missing required fields: staffId and fileId are required' });
+    }
+
     let audioFilePath = req.file.path;
     const ext = path.extname(audioFilePath).toLowerCase();
-    // If file is .m4a, convert to .wav
+
+    // If file is .m4a, convert to .mp3
     if (ext === '.m4a') {
-      const wavPath = audioFilePath.replace(/\.m4a$/i, '.mp3');
+      const mp3Path = audioFilePath.replace(/\.m4a$/i, '.mp3');
       await new Promise((resolve, reject) => {
         ffmpeg(audioFilePath)
           .toFormat('mp3')
           .on('end', () => resolve())
           .on('error', (err) => reject(err))
-          .save(wavPath);
+          .save(mp3Path);
       });
-      // Optionally remove the original m4a file
+      // Remove the original m4a file
       if (fs.existsSync(audioFilePath)) {
         try {
           fs.unlinkSync(audioFilePath);
           logger.debug('Original m4a file deleted', { audioFilePath });
         } catch (error) {
           logger.warn('Failed to delete original m4a file', { audioFilePath, error: error.message });
-          // Continue - cleanup failure should not affect processing
+          // Continue - cleanup failure should not affect job creation
         }
       }
-      audioFilePath = wavPath;
+      audioFilePath = mp3Path;
     }
-    
-    // Function to split audio into chunks
-    const splitAudioIntoChunks = async (filePath, chunkSize = 4 * 1024 * 1024) => {
-      const fileBuffer = fs.readFileSync(filePath);
-      const chunks = [];
-      for (let i = 0; i < fileBuffer.length; i += chunkSize) {
-        chunks.push(fileBuffer.slice(i, i + chunkSize));
-      }
-      return chunks;
-    };
 
-    // Function to process a single chunk with retry logic
-    const processChunk = async (chunk, index) => {
-      const tempFilePath = `${audioFilePath}_chunk_${index}.mp3`;
-      fs.writeFileSync(tempFilePath, chunk);
-      const maxRetries = API_CONFIG.dify.maxRetries;
+    // Create processing job in database with job_type = 'follow'
+    const jobId = await createProcessingJob(fileId, userId, companyId, staffId, audioFilePath, 'follow');
 
-      try {
-        const tempFileId = await uploadFile(tempFilePath);
-        
-        // Process chunk with Dify workflow - with retry logic
-        let lastError = null;
-        
-        for (let attempt = 1; attempt <= maxRetries; attempt++) {
-          try {
-            const difyResponse = await axios.post(
-              'https://api.dify.ai/v1/workflows/run',
-              {
-                inputs: {
-                  "audioFile": {
-                    "transfer_method": "local_file",
-                    "upload_file_id": tempFileId,
-                    "type": "audio"
-                  }
-                },
-                user: 'voldin012'
-              },
-              {
-                headers: {
-                  'Authorization': `Bearer ${process.env.DIFY_SECRET_KEY_STT}`,
-                  'Content-Type': 'application/json'
-                },
-                timeout: API_CONFIG.dify.workflowTimeout
-              }
-            );
+    logger.info('Follow processing job created, starting async processing', {
+      jobId,
+      fileId,
+      userId,
+      audioFilePath,
+    });
 
-            // Clean up temp file on success
-            if (fs.existsSync(tempFilePath)) {
-              try {
-                fs.unlinkSync(tempFilePath);
-                logger.debug('Chunk temp file deleted', { tempFilePath });
-              } catch (unlinkError) {
-                logger.warn('Failed to delete chunk temp file', { tempFilePath, error: unlinkError.message });
-              }
-            }
-            
-            return difyResponse.data.data.outputs.stt;
-          } catch (error) {
-            lastError = error;
-            const errorCode = categorizeError(error, 'workflow');
-            const httpStatus = error.response?.status;
-            
-            logger.warn(`Follow chunk ${index} attempt ${attempt}/${maxRetries} failed`, {
-              errorCode,
-              httpStatus,
-              message: error.message
-            });
-            
-            // Check if we should retry
-            const shouldRetry = attempt < maxRetries && 
-              (isRetryableStatus(httpStatus) || !error.response);
-            
-            if (shouldRetry) {
-              const delay = calculateBackoff(attempt);
-              logger.debug(`Retrying follow chunk in ${delay}ms`, { index, attempt });
-              await sleep(delay);
-            }
-          }
-        }
-        
-        // All retries exhausted
-        const errorCode = categorizeError(lastError, 'workflow');
-        logger.error(`Follow chunk ${index} failed after all retries`, { errorCode });
-        throw lastError;
-        
-      } catch (error) {
-        logger.error(`Error processing follow chunk ${index}`, { error: error.message });
-        // Clean up temp file on error
-        if (fs.existsSync(tempFilePath)) {
-          try {
-            fs.unlinkSync(tempFilePath);
-          } catch (unlinkError) {
-            logger.warn('Failed to delete chunk temp file on error', { tempFilePath, error: unlinkError.message });
-          }
-        }
-        return '';
-      }
-    };
+    // Add job to persistent queue with jobType for routing (non-blocking, survives restarts)
+    await addAudioProcessingJob({
+      jobId,
+      audioFilePath,
+      fileId,
+      userId,
+      companyId,
+      staffId,
+      jobType: 'follow',
+    });
 
-    // Split audio into chunks and process them
-    const chunks = await splitAudioIntoChunks(audioFilePath);
-    
-    // Process chunks sequentially with waiting time between each chunk
-    const chunkResults = [];
-    for (let i = 0; i < chunks.length; i++) {
-      const result = await processChunk(chunks[i], i);
-      chunkResults.push(result);
-      
-      // Wait 0.5 seconds between each chunk processing
-      if (i < chunks.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, 500));
-      }
-    }
-    
-    // Combine all chunk results
-    logger.debug('Chunk processing', { chunkCount: chunks.length });
-    const combinedText = chunkResults.join('\n');
-    logger.debug('Combined text length', { length: combinedText?.length || 0 });
-    const txtFilePath = getTxtPathFromMp3(audioFilePath);
-    fs.writeFileSync(txtFilePath, combinedText);
+    // Return job ID immediately (non-blocking response)
+    res.status(200).json({
+      jobId: jobId,
+      message: 'アップロードを受け付けました。処理を開始します。',
+      status: 'pending',
+    });
 
-    // Process combined text with main Dify workflow
-    try {
-      const txtFileId = await uploadFile(txtFilePath);
-      
-      // Retry logic for Dify API calls using unified config
-      let difyResponse;
-      let lastError = null;
-      const maxRetries = API_CONFIG.dify.maxRetries;
-      
-      for (let attempt = 1; attempt <= maxRetries; attempt++) {
-        try {
-          difyResponse = await axios.post(
-            'https://api.dify.ai/v1/workflows/run',
-            {
-              inputs: {
-                "txtFile": {
-                  "transfer_method": "local_file",
-                  "upload_file_id": txtFileId,
-                  "type": "document"
-                }
-              },
-              user: 'voldin012'
-            },
-            {
-              headers: {
-                'Authorization': `Bearer ${process.env.DIFY_SECRET_KEY}`,
-                'Content-Type': 'application/json'
-              },
-              timeout: API_CONFIG.dify.workflowTimeout
-            }
-          );
-          break; // Success, exit retry loop
-        } catch (error) {
-          lastError = error;
-          const errorCode = categorizeError(error, 'workflow');
-          const httpStatus = error.response?.status;
-          
-          logger.warn(`Dify API attempt ${attempt}/${maxRetries} failed`, { 
-            errorCode,
-            httpStatus,
-            message: error.message 
-          });
-          
-          // Check if we should retry
-          const shouldRetry = attempt < maxRetries && 
-            (isRetryableStatus(httpStatus) || !error.response);
-          
-          if (!shouldRetry) {
-            throw error; // Don't retry non-retryable errors
-          }
-          
-          if (attempt < maxRetries) {
-            // Wait before retry (exponential backoff)
-            const waitTime = calculateBackoff(attempt);
-            logger.debug(`Waiting ${waitTime}ms before retry ${attempt + 1}`);
-            await sleep(waitTime);
-          } else {
-            throw error; // Re-throw the error if all retries failed
-          }
-        }
-      }
-
-      const {status, outputs } = difyResponse.data.data;
-      logger.debug('Dify outputs', { outputs });
-      if (status === 'succeeded') {
-        // Insert record into database
-        // Note: summary will be populated by a follow-specific Dify workflow in a future step
-        const query = `
-        INSERT INTO follows (file_id, user_id, company_id, staff_id, audio_file_path, stt, date)
-        VALUES (?, ?, ?, ?, ?, ?, NOW())
-      `;
-
-        const userId = req.user.id;
-        const companyId = req.user.company_id;
-        const [result] = await pool.query(query, [
-          fileId,
-          userId,
-          companyId,
-          staffId,
-          audioFilePath,
-          combinedText
-        ]);
-
-        // Return the created record with formatted date
-        const [newRecord] = await pool.query(
-          `SELECT 
-            id, 
-            DATE_FORMAT(date, '%Y-%m-%d %H:%i:%s') as date,
-            file_id as fileId, 
-            staff_id as staffId,
-            staff_name as staffName,
-            summary,
-            company_id as companyId
-          FROM follows 
-          WHERE id = ?`,
-          [result.insertId]
-        );
-
-        res.status(200).json(newRecord[0]);
-      } else {
-        logger.debug('Dify response outputs', { outputs: difyResponse.data.data.outputs });
-        res.status(500).json({ message: 'Failed to get response from Dify' });
-      }
-    } catch (difyError) {
-      logger.error('Error calling Dify API', difyError);
-      
-      if (difyError.code === 'ECONNABORTED' || difyError.response?.status === 504) {
-        res.status(504).json({ 
-          error: 'Dify API Timeout',
-          message: 'The Dify API took too long to respond. Please try again with a smaller file or contact support.',
-          details: 'Gateway timeout - the server did not respond within the expected time'
-        });
-      } else if (difyError.response) {
-        res.status(difyError.response.status).json({ 
-          error: 'Dify API Error',
-          message: `Dify API returned error: ${difyError.response.status} ${difyError.response.statusText}`,
-          details: difyError.response.data
-        });
-      } else {
-        res.status(500).json({ 
-          error: 'Failed to process audio file',
-          message: 'An unexpected error occurred while processing the audio file',
-          details: difyError.message
-        });
-      }
-    }
   } catch (error) {
-    logger.error('Error uploading audio', error);
+    logger.error('Error uploading follow audio', error);
     res.status(500).json({ error: 'Failed to upload audio file' });
+  }
+};
+
+// Get processing job status (for polling)
+const getProcessingJobStatus = async (req, res) => {
+  try {
+    const { jobId } = req.params;
+    const parsedJobId = parseInt(jobId, 10);
+    if (isNaN(parsedJobId)) return res.status(400).json({ error: 'Invalid job ID' });
+
+    const { role, company_id, id: userId } = req.user;
+
+    const job = await getJobStatus(parsedJobId, userId, role);
+
+    if (!job) {
+      return res.status(404).json({ error: 'Job not found or access denied' });
+    }
+
+    res.json(job);
+  } catch (error) {
+    logger.error('Error getting follow job status', error);
+    res.status(500).json({ error: 'Failed to get job status' });
+  }
+};
+
+// Get all processing jobs for current user (filtered by job_type = 'follow')
+const getProcessingJobs = async (req, res) => {
+  try {
+    const { role, company_id, id: userId } = req.user;
+    const { status, limit } = req.query;
+
+    const jobs = await getUserJobs(
+      userId,
+      company_id,
+      role,
+      status || null,
+      parseInt(limit) || 20,
+      'follow'
+    );
+
+    res.json({ jobs });
+  } catch (error) {
+    logger.error('Error getting follow processing jobs', error);
+    res.status(500).json({ error: 'Failed to get processing jobs' });
+  }
+};
+
+// Retry a failed processing job
+const retryProcessingJob = async (req, res) => {
+  try {
+    const { jobId } = req.params;
+    const parsedJobId = parseInt(jobId, 10);
+    if (isNaN(parsedJobId)) return res.status(400).json({ error: 'Invalid job ID' });
+
+    const { role, company_id, id: userId } = req.user;
+
+    const result = await retryFailedJob(parsedJobId, userId, company_id, role);
+
+    res.json(result);
+  } catch (error) {
+    logger.error('Error retrying follow job', error);
+    res.status(500).json({ error: error.message || 'Failed to retry job' });
   }
 };
 
 const downloadSTT = async (req, res) => {
   try {
     const { recordId } = req.params;
-    // Get STT data and file_id from database
-    const [records] = await pool.query(
-      'SELECT stt, file_id FROM follows WHERE id = ?',
-      [recordId]
-    );
+    const id = parseInt(recordId, 10);
+    if (isNaN(id)) return res.status(400).json({ error: 'Invalid record ID' });
+
+    const { role, company_id } = req.user;
+
+    // Company-scoped authorization check
+    let sttQuery = 'SELECT stt, file_id FROM follows WHERE id = ?';
+    const sttParams = [id];
+
+    if (role !== 'admin') {
+      sttQuery += ' AND company_id = ?';
+      sttParams.push(company_id);
+    }
+
+    const [records] = await pool.query(sttQuery, sttParams);
     if (records.length === 0) {
       return res.status(404).json({ error: 'Record not found' });
     }
@@ -532,7 +285,7 @@ const downloadSTT = async (req, res) => {
     const encodedFilename = encodeURIComponent(`STT-${fileId}.pdf`);
     res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodedFilename}`);
     doc.pipe(res);
-    doc.registerFont('NotoSansJP', 'C:/Users/ALPHA/BITREP/auth-crud/backend/fonts/NotoSansJP-Regular.ttf');
+    doc.registerFont('NotoSansJP', FONT_PATH);
     const paragraphs = sttData
       .replace(/\r\n/g, '\n')
       .replace(/\r/g, '\n')
@@ -558,16 +311,23 @@ const downloadSTT = async (req, res) => {
 const updateStaffId = async (req, res) => {
   try {
     const { recordId } = req.params;
+    const id = parseInt(recordId, 10);
+    if (isNaN(id)) return res.status(400).json({ error: 'Invalid record ID' });
+
     const { role, company_id, id: userId } = req.user;
     const { staffId } = req.body;
 
-    if (!staffId) {
+    if (typeof staffId !== 'string' || staffId.length === 0) {
       return res.status(400).json({ error: 'staffId is required' });
+    }
+
+    if (staffId.length > 255) {
+      return res.status(400).json({ error: 'Staff ID exceeds 255 character limit' });
     }
 
     // Permission check scoped by company_id
     let permissionQuery = 'SELECT id, company_id FROM follows WHERE id = ?';
-    const permissionParams = [recordId];
+    const permissionParams = [id];
 
     if (role === 'member' || role === 'company-manager') {
       permissionQuery += ' AND company_id = ?';
@@ -583,7 +343,7 @@ const updateStaffId = async (req, res) => {
 
     const [result] = await pool.query(
       'UPDATE follows SET staff_id = ? WHERE id = ?',
-      [staffId, recordId]
+      [staffId, id]
     );
     if (result.affectedRows === 0) {
       return res.status(404).json({ error: 'Record not found' });
@@ -599,6 +359,9 @@ const updateStaffId = async (req, res) => {
 const updateStaffName = async (req, res) => {
   try {
     const { recordId } = req.params;
+    const id = parseInt(recordId, 10);
+    if (isNaN(id)) return res.status(400).json({ error: 'Invalid record ID' });
+
     const { role, company_id, id: userId } = req.user;
     const { staffName } = req.body;
 
@@ -606,9 +369,13 @@ const updateStaffName = async (req, res) => {
       return res.status(400).json({ error: 'Invalid staff name data' });
     }
 
+    if (staffName.length > 255) {
+      return res.status(400).json({ error: 'Staff name exceeds 255 character limit' });
+    }
+
     // Permission check scoped by company_id
     let permissionQuery = 'SELECT id, company_id FROM follows WHERE id = ?';
-    const permissionParams = [recordId];
+    const permissionParams = [id];
 
     if (role === 'member' || role === 'company-manager') {
       permissionQuery += ' AND company_id = ?';
@@ -623,7 +390,7 @@ const updateStaffName = async (req, res) => {
 
     const [result] = await pool.query(
       'UPDATE follows SET staff_name = ? WHERE id = ?',
-      [staffName, recordId]
+      [staffName, id]
     );
 
     if (result.affectedRows === 0) {
@@ -637,24 +404,39 @@ const updateStaffName = async (req, res) => {
   }
 };
 
-// Update summary
+// Update summary (with follow_date and title)
 const updateSummary = async (req, res) => {
   try {
     const { recordId } = req.params;
+    const id = parseInt(recordId, 10);
+    if (isNaN(id)) return res.status(400).json({ error: 'Invalid record ID' });
+
     const { role, company_id, id: userId } = req.user;
-    const { summary } = req.body;
+    const { summary, followDate, title } = req.body;
 
     if (typeof summary !== 'string') {
       return res.status(400).json({ error: 'Invalid summary data' });
     }
 
-    if (summary.length > 30000) {
-      return res.status(400).json({ error: 'Summary exceeds 30000 character limit' });
+    if (summary.length > 3000) {
+      return res.status(400).json({ error: 'Summary exceeds 3000 character limit' });
+    }
+
+    if (title !== undefined && typeof title !== 'string') {
+      return res.status(400).json({ error: 'Invalid title data' });
+    }
+
+    if (title && title.length > 1000) {
+      return res.status(400).json({ error: 'Title exceeds 1000 character limit' });
+    }
+
+    if (followDate && !/^\d{4}-\d{2}-\d{2}$/.test(followDate)) {
+      return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD' });
     }
 
     // Permission check scoped by company_id
     let permissionQuery = 'SELECT id, company_id FROM follows WHERE id = ?';
-    const permissionParams = [recordId];
+    const permissionParams = [id];
 
     if (role === 'member' || role === 'company-manager') {
       permissionQuery += ' AND company_id = ?';
@@ -667,9 +449,12 @@ const updateSummary = async (req, res) => {
       return res.status(403).json({ error: 'このレコードを編集する権限がありません。' });
     }
 
+    const dateValue = followDate || null;
+    const titleValue = title !== undefined ? title : '';
+
     const [result] = await pool.query(
-      'UPDATE follows SET summary = ? WHERE id = ?',
-      [summary, recordId]
+      'UPDATE follows SET follow_date = ?, title = ?, summary = ? WHERE id = ?',
+      [dateValue, titleValue, summary, id]
     );
 
     if (result.affectedRows === 0) {
@@ -687,28 +472,28 @@ const updateSummary = async (req, res) => {
 const deleteRecord = async (req, res) => {
   try {
     const { recordId } = req.params;
+    const id = parseInt(recordId, 10);
+    if (isNaN(id)) return res.status(400).json({ error: 'Invalid record ID' });
+
     const { role, company_id, id: userId } = req.user;
 
     let query = `
-      SELECT r.id, r.company_id as recordCompanyId, r.user_id as ownerId, r.audio_file_path
+      SELECT r.id, r.company_id as recordCompanyId, r.user_id as ownerId, r.salesforce_event_id, r.staff_id
       FROM follows r
       WHERE r.id = ?
     `;
-    const queryParams = [recordId];
+    const queryParams = [id];
 
     // Apply role-based access control
     if (role === 'member') {
-      // Members can only delete their own records
       query += ' AND r.user_id = ?';
       queryParams.push(userId);
     } else if (role === 'company-manager') {
-      // Company managers can delete records from their company
       query += ' AND r.company_id = ?';
       queryParams.push(company_id);
     } else if (role === 'admin') {
       // Admin can delete all records - no additional WHERE condition
     } else {
-      // Unknown role - default to member behavior
       query += ' AND r.user_id = ?';
       queryParams.push(userId);
     }
@@ -719,24 +504,46 @@ const deleteRecord = async (req, res) => {
       return res.status(404).json({ error: 'レコードが見つからないか、削除する権限がありません。' });
     }
 
-    // Get audio_file_path before deletion
-    const audioFilePath = records[0].audio_file_path;
+    const followRecord = records[0];
 
-    // Delete the audio file if it exists
-    if (audioFilePath && fs.existsSync(audioFilePath)) {
+    // Delete linked Salesforce Event if it exists
+    if (followRecord.salesforce_event_id) {
       try {
-        fs.unlinkSync(audioFilePath);
-        logger.debug('Audio file deleted', { recordId, audioFilePath });
-      } catch (fileError) {
-        // Log error but don't fail the deletion if file deletion fails
-        logger.warn('Failed to delete audio file', { recordId, audioFilePath, error: fileError.message });
+        const recordCompanyId = followRecord.recordCompanyId;
+        const actualCompanyId = role === 'admin' ? 'admin' : String(recordCompanyId);
+
+        const [settingsRows] = await pool.query(
+          'SELECT * FROM salesforce WHERE company_id = ?',
+          [actualCompanyId]
+        );
+
+        if (settingsRows.length > 0) {
+          const settings = settingsRows[0];
+          const decryptedPassword = decrypt(settings.password);
+          const decryptedSecurityToken = decrypt(settings.security_token);
+
+          if (decryptedPassword && decryptedSecurityToken) {
+            const conn = new jsforce.Connection({ loginUrl: settings.base_url });
+            await conn.login(settings.username, decryptedPassword + decryptedSecurityToken);
+
+            const deleteResult = await conn.sobject('Event').destroy(followRecord.salesforce_event_id);
+            if (deleteResult.success) {
+              logger.info('Salesforce Event deleted', { eventId: followRecord.salesforce_event_id, followId: id });
+            } else {
+              logger.warn('Failed to delete Salesforce Event', { eventId: followRecord.salesforce_event_id, errors: deleteResult.errors });
+            }
+          }
+        }
+      } catch (sfError) {
+        // Log but don't block record deletion if Salesforce cleanup fails
+        logger.warn('Failed to delete linked Salesforce Event', { eventId: followRecord.salesforce_event_id, error: sfError.message });
       }
     }
 
-    // Delete the record
-    await pool.query('DELETE FROM follows WHERE id = ?', [recordId]);
+    // Delete the record (audio files are already deleted after processing)
+    await pool.query('DELETE FROM follows WHERE id = ?', [id]);
 
-    logger.debug('Follow record deleted', { recordId });
+    logger.debug('Follow record deleted', { recordId: id });
 
     res.json({ success: true, message: 'Record deleted successfully' });
   } catch (error) {
@@ -745,37 +552,220 @@ const deleteRecord = async (req, res) => {
   }
 };
 
-// Get prompt
+// Get prompt - fetches from companies.follow_summary_prompt with fallback to default
 const getPrompt = async (req, res) => {
   try {
     const { role, company_id } = req.user;
-    
-    // For now, we'll store prompt per company (or use a default)
-    // You may want to create a prompts table or store in a config table
-    // For simplicity, returning a default prompt that can be stored in environment or database
-    const defaultPrompt = process.env.DEFAULT_SUMMARY_PROMPT || '';
-    
-    res.json({ prompt: defaultPrompt });
+
+    let prompt = DEFAULT_FOLLOW_SUMMARY_PROMPT;
+
+    if (company_id) {
+      const [rows] = await pool.query(
+        'SELECT follow_summary_prompt FROM companies WHERE id = ?',
+        [company_id]
+      );
+      if (rows.length > 0 && rows[0].follow_summary_prompt) {
+        prompt = rows[0].follow_summary_prompt;
+      }
+    }
+
+    res.json({ prompt });
   } catch (error) {
     logger.error('Error fetching prompt', error);
     res.status(500).json({ error: 'Failed to fetch prompt' });
   }
 };
 
-// Update prompt
+// Update prompt - persists to companies.follow_summary_prompt
 const updatePrompt = async (req, res) => {
   try {
     const { prompt } = req.body;
     const { role, company_id } = req.user;
-    
-    // For now, we'll just return success
-    // You may want to store this in a database table (e.g., prompts table with company_id)
-    // TODO: Implement database storage for prompts
-    
+
+    if (typeof prompt !== 'string') {
+      return res.status(400).json({ error: 'Invalid prompt data' });
+    }
+
+    if (prompt.length > 3000) {
+      return res.status(400).json({ error: 'Prompt exceeds 3000 character limit' });
+    }
+
+    if (!company_id) {
+      return res.status(400).json({ error: 'Company ID not found for user' });
+    }
+
+    // Store the prompt (or set to NULL if empty to revert to default)
+    const promptValue = prompt.trim() === '' ? null : prompt;
+
+    await pool.query(
+      'UPDATE companies SET follow_summary_prompt = ? WHERE id = ?',
+      [promptValue, company_id]
+    );
+
+    logger.info('Follow summary prompt updated', { company_id, promptLength: prompt.length });
+
     res.json({ success: true, message: 'Prompt updated successfully' });
   } catch (error) {
     logger.error('Error updating prompt', error);
     res.status(500).json({ error: 'Failed to update prompt' });
+  }
+};
+
+// Sync follow record to Salesforce as an Event (create or update)
+const syncSalesforce = async (req, res) => {
+  try {
+    const { followId, staffId, title, followDate, summary } = req.body;
+
+    if (!followId) {
+      return res.status(400).json({ message: 'Follow IDが指定されていません' });
+    }
+    const parsedFollowId = parseInt(followId, 10);
+    if (isNaN(parsedFollowId)) {
+      return res.status(400).json({ message: 'Invalid follow ID' });
+    }
+    if (!staffId) {
+      return res.status(400).json({ message: 'Staff IDが指定されていません' });
+    }
+    if (!title) {
+      return res.status(400).json({ message: 'タイトルが指定されていません' });
+    }
+    if (!followDate) {
+      return res.status(400).json({ message: '実施日時が指定されていません' });
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(followDate)) {
+      return res.status(400).json({ message: 'Invalid date format. Use YYYY-MM-DD' });
+    }
+    if (!summary) {
+      return res.status(400).json({ message: '要約が指定されていません' });
+    }
+
+    const { role, company_id } = req.user;
+
+    // Company-scoped authorization: verify user's company owns this follow record
+    let authQuery = 'SELECT id, salesforce_event_id FROM follows WHERE id = ?';
+    const authParams = [parsedFollowId];
+
+    if (role !== 'admin') {
+      authQuery += ' AND company_id = ?';
+      authParams.push(company_id);
+    }
+
+    const [followRows] = await pool.query(authQuery, authParams);
+    if (followRows.length === 0) {
+      return res.status(403).json({ message: 'このレコードにアクセスする権限がありません' });
+    }
+
+    const existingEventId = followRows[0].salesforce_event_id;
+    const actualCompanyId = role === 'admin' ? 'admin' : String(company_id);
+
+    logger.info('[syncFollowSalesforce] Starting sync', { followId: parsedFollowId, staffId, actualCompanyId, existingEventId });
+
+    // 1. Get Salesforce credentials
+    const [settingsRows] = await pool.query(
+      'SELECT * FROM salesforce WHERE company_id = ?',
+      [actualCompanyId]
+    );
+    const settings = settingsRows[0];
+
+    if (!settings) {
+      return res.status(400).json({ message: 'Salesforce設定が見つかりません' });
+    }
+
+    // 2. Decrypt credentials
+    const decryptedPassword = decrypt(settings.password);
+    const decryptedSecurityToken = decrypt(settings.security_token);
+
+    if (!decryptedPassword || !decryptedSecurityToken) {
+      logger.error('[syncFollowSalesforce] Failed to decrypt credentials');
+      return res.status(500).json({ message: '認証情報の復号化に失敗しました' });
+    }
+
+    // 3. Login to Salesforce
+    logger.info('[syncFollowSalesforce] Logging in to Salesforce...');
+    const conn = new jsforce.Connection({ loginUrl: settings.base_url });
+    await conn.login(settings.username, decryptedPassword + decryptedSecurityToken);
+    logger.info('[syncFollowSalesforce] Successfully logged in');
+
+    // 4. Query Account by StaffID__c
+    logger.info('[syncFollowSalesforce] Querying Account for StaffID__c:', staffId);
+    const accounts = await conn.sobject('Account')
+      .find({ StaffID__c: staffId })
+      .limit(1)
+      .execute();
+
+    if (!accounts.length) {
+      logger.warn('[syncFollowSalesforce] Account not found for staffId:', staffId);
+      return res.status(404).json({ message: '指定したStaff IDのアカウントが見つかりません' });
+    }
+
+    const accountId = accounts[0].Id;
+    logger.info('[syncFollowSalesforce] Account found:', { accountId, name: accounts[0].Name });
+
+    // 5. Build StartDateTime and EndDateTime
+    const now = new Date();
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+    const seconds = String(now.getSeconds()).padStart(2, '0');
+    const dateTimeStr = `${followDate}T${hours}:${minutes}:${seconds}`;
+
+    // 6. Create or Update Event
+    if (existingEventId) {
+      // Update existing Event
+      logger.info('[syncFollowSalesforce] Updating existing Event:', { existingEventId });
+
+      const updateResult = await conn.sobject('Event').update({
+        Id: existingEventId,
+        Subject: title,
+        StartDateTime: dateTimeStr,
+        EndDateTime: dateTimeStr,
+        Description: summary,
+        WhatId: accountId,
+      });
+
+      if (updateResult.success) {
+        logger.info('[syncFollowSalesforce] Event updated successfully:', { eventId: existingEventId });
+        return res.json({ message: 'Salesforce連携を更新しました', eventId: existingEventId, isUpdate: true });
+      } else {
+        logger.error('[syncFollowSalesforce] Event update failed:', updateResult.errors);
+        return res.status(500).json({ message: 'Salesforceイベントの更新に失敗しました' });
+      }
+    } else {
+      // Create new Event
+      const eventData = {
+        Subject: title,
+        StartDateTime: dateTimeStr,
+        EndDateTime: dateTimeStr,
+        Description: summary,
+        WhatId: accountId,
+      };
+
+      logger.info('[syncFollowSalesforce] Creating new Event:', {
+        Subject: title.substring(0, 50) + (title.length > 50 ? '...' : ''),
+        StartDateTime: dateTimeStr,
+        EndDateTime: dateTimeStr,
+        DescriptionLength: summary.length,
+        WhatId: accountId,
+      });
+
+      const result = await conn.sobject('Event').create(eventData);
+
+      if (result.success) {
+        // Store the Event ID in the follows table
+        await pool.query(
+          'UPDATE follows SET salesforce_event_id = ? WHERE id = ?',
+          [result.id, parsedFollowId]
+        );
+
+        logger.info('[syncFollowSalesforce] Event created and ID stored:', { eventId: result.id, followId: parsedFollowId });
+        return res.json({ message: 'Salesforce連携が完了しました', eventId: result.id, isUpdate: false });
+      } else {
+        logger.error('[syncFollowSalesforce] Event creation failed:', result.errors);
+        return res.status(500).json({ message: 'Salesforceへの連携に失敗しました' });
+      }
+    }
+  } catch (error) {
+    logger.error('[syncFollowSalesforce] Error:', { message: error.message, stack: error.stack });
+    return res.status(500).json({ message: 'Salesforce連携中にエラーが発生しました' });
   }
 };
 
@@ -788,5 +778,9 @@ export {
   updateSummary,
   deleteRecord,
   getPrompt,
-  updatePrompt
+  updatePrompt,
+  getProcessingJobStatus,
+  getProcessingJobs,
+  retryProcessingJob,
+  syncSalesforce,
 };

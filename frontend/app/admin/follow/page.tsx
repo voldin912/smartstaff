@@ -6,17 +6,23 @@ import Layout from "@/components/Layout";
 import Pagination from "@/components/molecules/pagination";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from 'sonner';
+import UploadModal from "@/components/dashboard/UploadModal";
+import PromptEditModal from "@/components/dashboard/PromptEditModal";
+import FollowSummarySidebar from "@/components/FollowSummarySidebar";
+import SalesforceSyncModal from "@/components/dashboard/SalesforceSyncModal";
+import FollowSkeletonRow from "@/components/dashboard/FollowSkeletonRow";
+import { UploadStatus, ProcessingJob } from "@/lib/types";
+import { followService } from "@/services/followService";
+import { generateFileId } from "@/lib/utils";
 
-// Function to generate a file ID in the format originalname-YYYYMMDDHHMMSS
-const generateFileId = (originalName: string) => {
-  const now = new Date();
-  const dateStr = now.getFullYear() +
-    String(now.getMonth() + 1).padStart(2, '0') +
-    String(now.getDate()).padStart(2, '0') +
-    String(now.getHours()).padStart(2, '0') +
-    String(now.getMinutes()).padStart(2, '0') +
-    String(now.getSeconds()).padStart(2, '0');
-  return `${originalName}-${dateStr}`;
+// localStorage keys for persisting active jobs across page navigations
+const ACTIVE_JOB_KEY = 'smartstaff_active_job';
+const ACTIVE_FOLLOW_JOB_KEY = 'smartstaff_active_follow_job';
+
+const isOtherJobActive = (ownKey: string): boolean => {
+  if (typeof window === 'undefined') return false;
+  const otherKey = ownKey === ACTIVE_JOB_KEY ? ACTIVE_FOLLOW_JOB_KEY : ACTIVE_JOB_KEY;
+  return !!localStorage.getItem(otherKey);
 };
 
 interface FollowRecord {
@@ -26,7 +32,10 @@ interface FollowRecord {
   fileId: string;
   staffId: string;
   staffName: string;
+  followDate: string | null;
+  title: string;
   summary: string | null;
+  salesforceEventId: string | null;
   companyId?: number;
   userName?: string;
 }
@@ -40,18 +49,10 @@ interface PaginationInfo {
   totalPages: number;
 }
 
-// Add new interface for upload status
-interface UploadStatus {
-  isUploading: boolean;
-  progress: 'uploading' | 'transcribing' | 'processing' | 'complete' | 'error';
-  message: string;
-  estimatedTime?: string;
-}
-
 type SortField = 'date' | 'staffId';
 type SortOrder = 'asc' | 'desc';
 
-export default function FollowPage() {
+export default function AdminFollowPage() {
   const { user } = useAuth();
   const [records, setRecords] = useState<FollowRecord[]>([]);
   const [pagination, setPagination] = useState<PaginationInfo | null>(null);
@@ -70,21 +71,38 @@ export default function FollowPage() {
   const [staffIdInput, setStaffIdInput] = useState("");
   const [editingStaffName, setEditingStaffName] = useState<number | null>(null);
   const [staffNameInput, setStaffNameInput] = useState("");
-  const [editingSummary, setEditingSummary] = useState<number | null>(null);
-  const [summaryInput, setSummaryInput] = useState("");
 
   const staffIdInputRef = useRef<HTMLInputElement | null>(null);
   const staffNameInputRef = useRef<HTMLInputElement | null>(null);
-  const summaryInputRef = useRef<HTMLTextAreaElement | null>(null);
 
-  // Upload states
+  // Summary sidebar states
+  const [isSummarySidebarOpen, setIsSummarySidebarOpen] = useState(false);
+  const [selectedSummaryRecord, setSelectedSummaryRecord] = useState<FollowRecord | null>(null);
+
+  // Salesforce sync states
+  const [showSalesforceModal, setShowSalesforceModal] = useState(false);
+  const [salesforceSyncRecord, setSalesforceSyncRecord] = useState<FollowRecord | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  // Upload states (async pattern)
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [isUploading, setIsUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<UploadStatus>({
     isUploading: false,
     progress: 'uploading',
     message: '',
   });
+  const [isUploadModalVisible, setIsUploadModalVisible] = useState(false);
+
+  // Prompt edit states
+  const [showPromptModal, setShowPromptModal] = useState(false);
+  const [promptText, setPromptText] = useState('');
+  const [promptLoading, setPromptLoading] = useState(false);
+  const [promptSaving, setPromptSaving] = useState(false);
+  const canEditPrompt = user?.role === 'company-manager';
+
+  // Polling cleanup reference
+  const [pollCleanup, setPollCleanup] = useState<(() => void) | null>(null);
 
   // Delete states
   const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -93,6 +111,172 @@ export default function FollowPage() {
   useEffect(() => {
     fetchRecords();
   }, [currentPage, rowsPerPage]);
+
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => {
+      if (pollCleanup) {
+        pollCleanup();
+      }
+    };
+  }, [pollCleanup]);
+
+  // Check for active job on mount and resume polling if needed
+  useEffect(() => {
+    const checkActiveJob = async () => {
+      try {
+        const stored = localStorage.getItem(ACTIVE_FOLLOW_JOB_KEY);
+        if (!stored) return;
+
+        const { jobId } = JSON.parse(stored);
+        if (!jobId) return;
+
+        // Fetch current job status
+        const job = await followService.getJobStatus(jobId);
+
+        if (job.status === 'pending' || job.status === 'processing') {
+          // Job still running - restore state and resume polling
+          let progressState: UploadStatus['progress'] = 'processing';
+          if (job.status === 'pending') {
+            progressState = 'uploading';
+          } else if (job.status === 'processing') {
+            progressState = (job.progress ?? 0) < 85 ? 'transcribing' : 'processing';
+          }
+
+          setUploadStatus({
+            isUploading: true,
+            progress: progressState,
+            message: job.currentStep || '処理中...',
+            progressPercent: job.progress,
+            jobId: job.jobId,
+          });
+          setIsUploadModalVisible(true);
+
+          // Resume polling
+          const cleanup = followService.pollJobStatus(
+            jobId,
+            handleProgressUpdate,
+            handleJobComplete,
+            handleJobError
+          );
+          setPollCleanup(() => cleanup);
+        } else if (job.status === 'completed') {
+          // Job completed while away
+          localStorage.removeItem(ACTIVE_FOLLOW_JOB_KEY);
+          setUploadStatus({
+            isUploading: false,
+            progress: 'complete',
+            message: '処理が完了しました。',
+            progressPercent: 100,
+            jobId: job.jobId,
+          });
+          setIsUploadModalVisible(true);
+          toast.success('ファイルの処理が完了しました。');
+          fetchRecords();
+        } else if (job.status === 'failed') {
+          // Job failed while away
+          localStorage.removeItem(ACTIVE_FOLLOW_JOB_KEY);
+          setUploadStatus({
+            isUploading: false,
+            progress: 'error',
+            message: job.errorMessage || '処理に失敗しました。',
+            jobId: job.jobId,
+          });
+          setIsUploadModalVisible(true);
+          toast.error(job.errorMessage || '処理に失敗しました。');
+        }
+      } catch (error) {
+        localStorage.removeItem(ACTIVE_FOLLOW_JOB_KEY);
+        console.error('Failed to check active follow job:', error);
+      }
+    };
+
+    checkActiveJob();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Run only on mount
+
+  // Handle progress updates from polling
+  const handleProgressUpdate = (job: ProcessingJob) => {
+    let progressState: UploadStatus['progress'] = 'processing';
+    if (job.status === 'pending') {
+      progressState = 'uploading';
+    } else if (job.status === 'processing') {
+      // 0-80% is STT processing, 85%+ is summary/persist
+      progressState = (job.progress ?? 0) < 85 ? 'transcribing' : 'processing';
+    } else if (job.status === 'completed') {
+      progressState = 'complete';
+    } else if (job.status === 'failed') {
+      progressState = 'error';
+    }
+
+    setUploadStatus(prev => ({
+      ...prev,
+      isUploading: job.status !== 'completed' && job.status !== 'failed',
+      progress: progressState,
+      message: job.currentStep || '処理中...',
+      progressPercent: job.progress,
+      jobId: job.jobId,
+    }));
+  };
+
+  // Handle job completion
+  const handleJobComplete = (job: ProcessingJob) => {
+    localStorage.removeItem(ACTIVE_FOLLOW_JOB_KEY);
+    setUploadStatus({
+      isUploading: false,
+      progress: 'complete',
+      message: '処理が完了しました。',
+      progressPercent: 100,
+      jobId: job.jobId,
+    });
+    setIsUploadModalVisible(true);
+    toast.success('ファイルの処理が完了しました。');
+    fetchRecords();
+    setPollCleanup(null);
+  };
+
+  // Handle job error
+  const handleJobError = (error: string) => {
+    localStorage.removeItem(ACTIVE_FOLLOW_JOB_KEY);
+    setUploadStatus(prev => ({
+      ...prev,
+      isUploading: false,
+      progress: 'error',
+      message: error,
+    }));
+    setIsUploadModalVisible(true);
+    toast.error(error);
+    setPollCleanup(null);
+  };
+
+  // ---- Prompt handlers ----
+
+  const handleOpenPrompt = async () => {
+    setPromptLoading(true);
+    setShowPromptModal(true);
+    try {
+      const data = await followService.getPrompt();
+      setPromptText(data.prompt);
+    } catch (error) {
+      toast.error((error as Error).message || 'プロンプトの取得に失敗しました。');
+      setShowPromptModal(false);
+    } finally {
+      setPromptLoading(false);
+    }
+  };
+
+  const handleSavePrompt = async () => {
+    setPromptSaving(true);
+    try {
+      await followService.updatePrompt(promptText);
+      toast.success('プロンプトを保存しました。');
+      setShowPromptModal(false);
+    } catch (error) {
+      toast.error((error as Error).message || 'プロンプトの保存に失敗しました。');
+    } finally {
+      setPromptSaving(false);
+    }
+  };
 
   const fetchRecords = async () => {
     setLoading(true);
@@ -174,31 +358,35 @@ export default function FollowPage() {
     }
   };
 
-  const handleEditSummary = (id: number, currentSummary: string | null) => {
-    setEditingSummary(id);
-    setSummaryInput(currentSummary || '');
-    setTimeout(() => summaryInputRef.current?.focus(), 0);
+  const handleSummaryEdit = (record: FollowRecord) => {
+    setSelectedSummaryRecord(record);
+    setIsSummarySidebarOpen(true);
   };
 
-  const handleSummaryBlur = async (id: number) => {
-    setEditingSummary(null);
-    const trimmedInput = summaryInput?.trim() || '';
+  const handleSummarySave = async (data: { followDate: string; title: string; summary: string }) => {
+    if (!selectedSummaryRecord) return;
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow/${id}/summary`, {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow/${selectedSummaryRecord.id}/summary`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ summary: trimmedInput }),
+        body: JSON.stringify({
+          followDate: data.followDate,
+          title: data.title,
+          summary: data.summary,
+        }),
       });
       if (res.ok) {
-        toast.success('要約を更新しました。');
+        toast.success('要約を保存しました。');
+        setIsSummarySidebarOpen(false);
+        setSelectedSummaryRecord(null);
         fetchRecords();
       } else {
-        const data = await res.json();
-        toast.error(data.error || '要約の更新に失敗しました。');
+        const resData = await res.json();
+        toast.error(resData.error || '要約の保存に失敗しました。');
       }
     } catch (e) {
-      toast.error('要約の更新に失敗しました。');
+      toast.error('要約の保存に失敗しました。');
     }
   };
 
@@ -229,15 +417,65 @@ export default function FollowPage() {
     }
   };
 
-  // ---- Upload handlers ----
+  const handleSalesforceClick = (record: FollowRecord) => {
+    if (!record.staffId) {
+      toast.error('Staff IDが設定されていません。先にStaff IDを入力してください。');
+      return;
+    }
+    if (!record.summary) {
+      toast.error('要約がありません。先に要約を生成してください。');
+      return;
+    }
+    setSalesforceSyncRecord(record);
+    setShowSalesforceModal(true);
+  };
+
+  const handleSalesforceSync = async () => {
+    if (!salesforceSyncRecord) return;
+    setIsSyncing(true);
+    try {
+      const result = await followService.syncSalesforce({
+        followId: salesforceSyncRecord.id,
+        staffId: salesforceSyncRecord.staffId,
+        title: salesforceSyncRecord.title || '',
+        followDate: salesforceSyncRecord.followDate || new Date().toISOString().split('T')[0],
+        summary: salesforceSyncRecord.summary || '',
+      });
+      toast.success(result.message || 'Salesforce連携が完了しました');
+
+      // Update local state with the new event ID
+      if (result.eventId) {
+        setRecords(prev => prev.map(r =>
+          r.id === salesforceSyncRecord.id ? { ...r, salesforceEventId: result.eventId! } : r
+        ));
+      }
+    } catch (error: any) {
+      toast.error(error.message || 'Salesforce連携に失敗しました');
+    } finally {
+      setIsSyncing(false);
+      setShowSalesforceModal(false);
+      setSalesforceSyncRecord(null);
+    }
+  };
+
+  // ---- Upload handlers (async with polling) ----
 
   const handleUploadClick = () => {
-    fileInputRef.current?.click();
+    if (uploadStatus.isUploading) {
+      setIsUploadModalVisible(true);
+    } else if (isOtherJobActive(ACTIVE_FOLLOW_JOB_KEY)) {
+      toast.error('別の処理が実行中です。完了後に再度お試しください。');
+    } else {
+      fileInputRef.current?.click();
+    }
   };
 
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+
+    // Reset input immediately to allow re-selecting the same file
+    event.target.value = '';
 
     if (!user?.id) {
       toast.error('ユーザー情報の取得に失敗しました。再度ログインしてください。');
@@ -256,53 +494,55 @@ export default function FollowPage() {
     }
 
     const fileSizeInMB = file.size / (1024 * 1024);
-    const estimatedMinutes = Math.ceil(fileSizeInMB * 1.5);
+    const estimatedMinutes = Math.ceil(fileSizeInMB * 0.5);
     const estimatedTime = estimatedMinutes > 1 ? `${estimatedMinutes}分程度` : '1分程度';
 
     setUploadStatus({
       isUploading: true,
       progress: 'uploading',
       message: 'ファイルをアップロード中です...',
-      estimatedTime
+      estimatedTime,
+      progressPercent: 0,
     });
-
-    const formData = new FormData();
-    formData.append('audio', file);
-    formData.append('fileId', generateFileId(file.name.split('.')[0]));
-    formData.append('staffId', user?.id.toString() || '');
+    setIsUploadModalVisible(true);
 
     try {
-      const token = localStorage.getItem("token");
+      // Upload and get job ID (returns immediately)
+      const response = await followService.uploadAudio(
+        file,
+        generateFileId(file.name.split('.')[0]),
+        user.id.toString()
+      );
+
+      // Save active job to localStorage for persistence across page navigations
+      localStorage.setItem(ACTIVE_FOLLOW_JOB_KEY, JSON.stringify({ jobId: response.jobId }));
 
       setUploadStatus(prev => ({
         ...prev,
         progress: 'transcribing',
-        message: `音声ファイルの文字起こしを開始しました。\n完了までお待ちください。`
+        message: '処理を開始しました...',
+        jobId: response.jobId,
+        progressPercent: 5,
       }));
 
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow/upload`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-        body: formData,
-      });
+      // Start polling for job status
+      const cleanup = followService.pollJobStatus(
+        response.jobId,
+        handleProgressUpdate,
+        handleJobComplete,
+        handleJobError
+      );
 
-      const data = await response.json();
+      setPollCleanup(() => cleanup);
 
-      if (response.ok) {
-        setUploadStatus({ isUploading: false, progress: 'complete', message: 'ファイルの処理が完了しました。' });
-        toast.success('ファイルの処理が完了しました。');
-        fetchRecords();
-      } else {
-        setUploadStatus({ isUploading: false, progress: 'error', message: data.message || 'アップロードに失敗しました。' });
-        toast.error(data.message || 'アップロードに失敗しました。');
-      }
     } catch (error) {
-      setUploadStatus({ isUploading: false, progress: 'error', message: 'アップロード中にエラーが発生しました。' });
-      toast.error('アップロード中にエラーが発生しました。');
-    } finally {
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
-      }
+      setUploadStatus({
+        isUploading: false,
+        progress: 'error',
+        message: (error as Error).message || 'アップロードに失敗しました。',
+        progressPercent: 0,
+      });
+      toast.error((error as Error).message || 'アップロードに失敗しました。');
     }
   };
 
@@ -343,6 +583,7 @@ export default function FollowPage() {
 
   const handleDeleteConfirm = async () => {
     if (!recordToDelete) return;
+    setIsDeleting(true);
     try {
       const token = localStorage.getItem("token");
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/follow/${recordToDelete.id}`, {
@@ -359,6 +600,7 @@ export default function FollowPage() {
     } catch (error) {
       toast.error('レコードの削除に失敗しました。');
     } finally {
+      setIsDeleting(false);
       setShowDeleteModal(false);
       setRecordToDelete(null);
     }
@@ -388,11 +630,6 @@ export default function FollowPage() {
     } catch {
       return dateString;
     }
-  };
-
-  const truncateText = (text: string | null, maxLength: number = 30) => {
-    if (!text) return '';
-    return text.length > maxLength ? `${text.substring(0, maxLength)}...` : text;
   };
 
   const filteredRecords = records.filter(rec =>
@@ -447,67 +684,104 @@ export default function FollowPage() {
   return (
     <Layout>
       <div className="min-h-screen bg-[#f8fafd] px-4 sm:px-6 lg:px-8 py-6 rounded-[5px]">
-        {/* Upload Status Modal */}
-        {uploadStatus.isUploading && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white p-6 rounded-lg shadow-xl max-w-md w-full mx-4">
-              <div className="flex flex-col items-center">
-                <div className="w-16 h-16 mb-4">
-                  <div className="w-full h-full border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
-                </div>
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                  {uploadStatus.progress === 'uploading' && 'アップロード中...'}
-                  {uploadStatus.progress === 'transcribing' && '文字起こし処理中...'}
-                  {uploadStatus.progress === 'processing' && '処理中...'}
-                </h3>
-                <p className="text-gray-600 text-center whitespace-pre-line">
-                  {uploadStatus.message}
-                </p>
-                <button
-                  className="mt-4 px-4 py-2 bg-gray-200 rounded hover:bg-gray-300"
-                  onClick={() => setUploadStatus({ ...uploadStatus, isUploading: false })}
-                >
-                  閉じる
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+        {/* Upload Status Modal (reusable UploadModal component) */}
+        <UploadModal
+          uploadStatus={uploadStatus}
+          isVisible={isUploadModalVisible}
+          onClose={() => setIsUploadModalVisible(false)}
+        />
+
+        {/* Follow Summary Sidebar */}
+        <FollowSummarySidebar
+          open={isSummarySidebarOpen}
+          onClose={() => { setIsSummarySidebarOpen(false); setSelectedSummaryRecord(null); }}
+          followDate={selectedSummaryRecord?.followDate || new Date().toISOString().split('T')[0]}
+          title={selectedSummaryRecord?.title || ''}
+          summary={selectedSummaryRecord?.summary || ''}
+          onSave={handleSummarySave}
+        />
+
+        {/* Salesforce Sync Confirmation Modal */}
+        <SalesforceSyncModal
+          isOpen={showSalesforceModal}
+          staffId={salesforceSyncRecord?.staffId || null}
+          isUpdate={!!salesforceSyncRecord?.salesforceEventId}
+          isLoading={isSyncing}
+          onClose={() => { setShowSalesforceModal(false); setSalesforceSyncRecord(null); }}
+          onConfirm={handleSalesforceSync}
+        />
 
         {/* Delete Confirmation Modal */}
         {showDeleteModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-30">
             <div className="bg-gray-50 border border-gray-400 rounded-md p-8 min-w-[350px] max-w-[95vw] flex flex-col items-center">
               <div className="text-center mb-6">
-                <div className="text-lg mb-2">
-                  スタッフID：{recordToDelete?.staffId || '(未設定)'} のレコードを削除しますか？
+                {isDeleting ? (
+                  <div className="flex flex-col items-center gap-3 py-4">
+                    <svg className="animate-spin h-8 w-8 text-red-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    <div className="text-lg">削除中...</div>
+                    <div className="text-sm text-gray-500">しばらくお待ちください</div>
+                  </div>
+                ) : (
+                  <div className="text-lg mb-2">
+                    スタッフID：{recordToDelete?.staffId || '(未設定)'} のレコードを削除しますか？
+                  </div>
+                )}
+              </div>
+              {!isDeleting && (
+                <div className="flex gap-8 mt-2">
+                  <button
+                    className="border border-gray-400 rounded px-8 py-2 text-lg hover:bg-gray-200"
+                    onClick={() => { setShowDeleteModal(false); setRecordToDelete(null); }}
+                  >
+                    キャンセル
+                  </button>
+                  <button
+                    className="border border-red-400 text-red-600 rounded px-8 py-2 text-lg hover:bg-red-50"
+                    onClick={handleDeleteConfirm}
+                  >
+                    削除
+                  </button>
                 </div>
-              </div>
-              <div className="flex gap-8 mt-2">
-                <button
-                  className="border border-gray-400 rounded px-8 py-2 text-lg hover:bg-gray-200"
-                  onClick={() => { setShowDeleteModal(false); setRecordToDelete(null); }}
-                >
-                  キャンセル
-                </button>
-                <button
-                  className="border border-red-400 text-red-600 rounded px-8 py-2 text-lg hover:bg-red-50"
-                  onClick={handleDeleteConfirm}
-                >
-                  削除
-                </button>
-              </div>
+              )}
             </div>
           </div>
         )}
+
+        {/* Prompt Edit Modal */}
+        <PromptEditModal
+          isVisible={showPromptModal}
+          isLoading={promptLoading}
+          promptText={promptText}
+          onPromptChange={setPromptText}
+          onSave={handleSavePrompt}
+          onClose={() => setShowPromptModal(false)}
+          isSaving={promptSaving}
+        />
 
         {/* Header */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8 rounded-[5px]">
           <h1 className="text-xl sm:text-2xl font-semibold text-gray-900 rounded-[5px]">
             Hello {user?.name || 'User'} <span role="img" aria-label="wave">👋</span>,
           </h1>
-          <div className="flex items-center gap-4 rounded-[5px] w-full sm:w-auto">
-            <div className="relative rounded-[5px] flex flex-col items-end gap-2 w-full sm:w-auto">
+          <div className="flex items-center gap-2 rounded-[5px] w-full sm:w-auto justify-end">
+            {canEditPrompt && (
+              <button
+                onClick={handleOpenPrompt}
+                className="bg-white rounded-full shadow border border-gray-200 mt-2 hover:bg-gray-50 transition-all"
+                title="要約プロンプトを編集"
+              >
+                <div className="w-8 h-8 flex items-center justify-center">
+                  <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+                  </svg>
+                </div>
+              </button>
+            )}
+            <div className="relative flex flex-col items-end">
               <input
                 type="file"
                 ref={fileInputRef}
@@ -517,10 +791,12 @@ export default function FollowPage() {
               />
               <button
                 onClick={handleUploadClick}
-                disabled={uploadStatus.isUploading}
-                className={`bg-white rounded-full shadow border border-gray-200 mt-2 ${
-                  uploadStatus.isUploading ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-50'
+                className={`bg-white rounded-full shadow border border-gray-200 mt-2 transition-all ${
+                  uploadStatus.isUploading
+                    ? 'hover:bg-indigo-50 border-indigo-300 cursor-pointer'
+                    : 'hover:bg-gray-50'
                 }`}
+                title={uploadStatus.isUploading ? '処理中 - クリックで詳細を表示' : '音声ファイルをアップロード'}
               >
                 {uploadStatus.isUploading ? (
                   <div className="w-8 h-8 flex items-center justify-center">
@@ -579,7 +855,9 @@ export default function FollowPage() {
                   </thead>
                   <tbody>
                     {loading ? (
-                      <tr><td colSpan={6} className="text-center py-8">Loading...</td></tr>
+                      Array.from({ length: rowsPerPage || 10 }).map((_, index) => (
+                        <FollowSkeletonRow key={`skeleton-${index}`} />
+                      ))
                     ) : sortedRecords.length === 0 ? (
                       <tr><td colSpan={6} className="text-center py-8">No records found</td></tr>
                     ) : (
@@ -634,28 +912,33 @@ export default function FollowPage() {
                             </div>
                           </td>
                           {/* Summary */}
-                          <td className="py-5 px-4 align-middle rounded-[5px]">
-                            {editingSummary === rec.id ? (
-                              <textarea
-                                ref={summaryInputRef}
-                                value={summaryInput}
-                                onChange={e => setSummaryInput(e.target.value)}
-                                onBlur={() => handleSummaryBlur(rec.id)}
-                                className="border border-gray-300 rounded-[5px] px-2 py-1 w-full min-h-[60px]"
-                              />
-                            ) : (
-                              <div className="flex items-center gap-x-2">
-                                <button className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center flex-shrink-0" title="Edit Summary" onClick={() => handleEditSummary(rec.id, rec.summary)}>
-                                  <Image src="/edit1.svg" alt="Edit Summary" width={20} height={20} className="rounded-[5px]" />
-                                </button>
-                                <button className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center flex-shrink-0" title="Copy Summary" onClick={() => handleCopySummary(rec.summary)}>
-                                  <Image src="/copy1.svg" alt="Copy Summary" width={20} height={20} className="rounded-[5px]" />
-                                </button>
-                                <span className="truncate" title={rec.summary || ''}>
-                                  {truncateText(rec.summary)}
-                                </span>
-                              </div>
-                            )}
+                          <td className="py-5 px-4 align-middle min-w-[120px] max-w-[300px] rounded-[5px]">
+                            <div className="flex items-center justify-center gap-x-3 rounded-[5px]">
+                              <button
+                                className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center flex-shrink-0"
+                                title="Edit"
+                                onClick={() => handleSummaryEdit(rec)}
+                              >
+                                <Image src="/edit1.svg" alt="Edit" width={20} height={20} className="rounded-[5px]" />
+                              </button>
+                              <button
+                                className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center flex-shrink-0"
+                                title="Copy"
+                                onClick={() => handleCopySummary(rec.summary)}
+                              >
+                                <Image src="/copy1.svg" alt="Copy" width={20} height={20} className="rounded-[5px]" />
+                              </button>
+                              <button
+                                className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center justify-center flex-shrink-0 relative"
+                                title={rec.salesforceEventId ? "Salesforce連携済み（クリックで更新）" : "Salesforce連携"}
+                                onClick={() => handleSalesforceClick(rec)}
+                              >
+                                <Image src="/salesforce1.svg" alt="Salesforce" width={20} height={20} className="rounded-[5px]" />
+                                {rec.salesforceEventId && (
+                                  <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-green-500 rounded-full border border-white" />
+                                )}
+                              </button>
+                            </div>
                           </td>
                           {/* STT */}
                           <td className="py-5 px-2 align-middle min-w-[60px] max-w-[80px] rounded-[5px]">

@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import { Worker } from 'bullmq';
 import { createRedisConnection } from '../config/redis.js';
-import { processAudioJob, updateJobStatus } from '../services/asyncProcessingService.js';
+import { processAudioJob, processFollowJob, updateJobStatus } from '../services/asyncProcessingService.js';
 import { startReaper, stopReaper, REAPER_CONFIG } from '../services/jobReaper.js';
 import { stopAllHeartbeats, HEARTBEAT_CONFIG } from '../services/jobHeartbeat.js';
 import logger from '../utils/logger.js';
@@ -37,23 +37,29 @@ let isShuttingDown = false;
  * Process an audio job from the queue
  */
 const processJob = async (job) => {
-  const { jobId, audioFilePath, fileId, userId, companyId, staffId } = job.data;
+  const { jobId, audioFilePath, fileId, userId, companyId, staffId, jobType } = job.data;
   
   logger.info('Worker: Starting audio processing job', {
     bullmqJobId: job.id,
     dbJobId: jobId,
     fileId,
     userId,
+    jobType: jobType || 'record',
     attempt: job.attemptsMade + 1,
   });
 
   try {
-    // Call the existing processAudioJob function
-    await processAudioJob(jobId, audioFilePath, fileId, userId, companyId, staffId);
+    // Route to the appropriate processing function based on jobType
+    if (jobType === 'follow') {
+      await processFollowJob(jobId, audioFilePath, fileId, userId, companyId, staffId);
+    } else {
+      await processAudioJob(jobId, audioFilePath, fileId, userId, companyId, staffId);
+    }
     
     logger.info('Worker: Audio processing job completed successfully', {
       bullmqJobId: job.id,
       dbJobId: jobId,
+      jobType: jobType || 'record',
     });
     
     return { success: true, jobId };
@@ -61,6 +67,7 @@ const processJob = async (job) => {
     logger.error('Worker: Audio processing job failed', {
       bullmqJobId: job.id,
       dbJobId: jobId,
+      jobType: jobType || 'record',
       error: error.message,
       attempt: job.attemptsMade + 1,
       maxAttempts: job.opts.attempts,
