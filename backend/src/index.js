@@ -30,7 +30,8 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
       'http://localhost:3000',
       'http://localhost:3001',
       'http://127.0.0.1:3000',
-      'http://127.0.0.1:3001'
+      'http://127.0.0.1:3001',
+      'https://smartstaff.jp'
     ];
 
 // CORS middleware with proper origin validation
