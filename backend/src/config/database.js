@@ -113,7 +113,7 @@ export const initializeDatabase = async () => {
         company_id INT,
         staff_id VARCHAR(255),
         staff_name VARCHAR(255) DEFAULT '',
-        memo TEXT DEFAULT '',
+        memo TEXT,
         audio_file_path VARCHAR(500),
         stt TEXT,
         skill_sheet LONGTEXT,
@@ -319,7 +319,7 @@ export const runMigrations = async () => {
       await pool.query('SELECT memo FROM records LIMIT 1');
     } catch (error) {
       // memo column doesn't exist, add it
-      await pool.query('ALTER TABLE records ADD COLUMN memo TEXT DEFAULT "" AFTER staff_name');
+      await pool.query('ALTER TABLE records ADD COLUMN memo TEXT AFTER staff_name');
     }
 
     // Check if staff_memo column exists, if not add it (migration for existing installations)
