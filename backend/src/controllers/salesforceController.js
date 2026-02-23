@@ -631,8 +631,8 @@ function mergeFieldData(existingData, newData, newType) {
     logWithTimestamp('[mergeFieldData] ✓ Updating salesMemo data with differential import (append mode)');
     
     if (existingData.salesMemo && existingData.salesMemo.trim()) {
-      // If existing salesMemo exists, append new data with separator
-      const separator = '\n\n---\n\n';
+      // Use a distinct separator that won't collide with the section separator (---)
+      const separator = '\n\n──────\n\n';
       const timestamp = new Date().toLocaleString('ja-JP');
       result.salesMemo = existingData.salesMemo + separator + `[追加日時: ${timestamp}]\n\n` + newData;
       logWithTimestamp('[mergeFieldData] ✓ Appended new salesMemo to existing data', {
