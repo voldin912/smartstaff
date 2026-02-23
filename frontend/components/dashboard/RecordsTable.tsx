@@ -227,7 +227,7 @@ export default function RecordsTable({
           </div>
         </div>
 
-        <div className="overflow-x-auto rounded-[5px] -mx-4 sm:-mx-6 lg:-mx-8">
+        <div className="overflow-x-auto overflow-y-hidden rounded-[5px] -mx-4 sm:-mx-6 lg:-mx-8">
           <div className="inline-block min-w-full align-middle max-w-[300px]">
             <table className="min-w-full text-left text-gray-700 rounded-[5px]">
               <thead>
@@ -326,7 +326,7 @@ export default function RecordsTable({
                               {truncateMemo(rec.memo)}
                             </span>
                             {rec.memo && rec.memo.length > 5 && (
-                              <div className="pointer-events-none fixed z-50 mt-7 max-w-xs rounded-lg bg-gray-800 px-3 py-2 text-sm text-white shadow-lg whitespace-pre-wrap break-words opacity-0 transition-opacity duration-100 group-hover/memo:opacity-100">
+                              <div className="pointer-events-none absolute top-full left-0 z-50 mt-1 max-w-xs rounded-lg bg-gray-800 px-3 py-2 text-sm text-white shadow-lg whitespace-pre-wrap break-words opacity-0 transition-opacity duration-100 group-hover/memo:opacity-100">
                                 {rec.memo}
                               </div>
                             )}
@@ -335,10 +335,10 @@ export default function RecordsTable({
                       </td>
                       {/* File ID */}
                       <td className="py-5 px-4 whitespace-nowrap align-middle min-w-[100px] max-w-[300px] rounded-[5px]">
-                        <div className="group/file relative truncate">
-                          {truncateFileId(rec.fileId)}
+                        <div className="group/file relative">
+                          <span className="truncate block">{truncateFileId(rec.fileId)}</span>
                           {rec.fileId && rec.fileId.length > 17 && (
-                            <div className="pointer-events-none fixed z-50 mt-1 max-w-xs rounded-lg bg-gray-800 px-3 py-2 text-sm text-white shadow-lg whitespace-pre-wrap break-words opacity-0 transition-opacity duration-100 group-hover/file:opacity-100">
+                            <div className="pointer-events-none absolute top-full left-0 z-50 mt-1 max-w-xs rounded-lg bg-gray-800 px-3 py-2 text-sm text-white shadow-lg whitespace-pre-wrap break-words opacity-0 transition-opacity duration-100 group-hover/file:opacity-100">
                               {rec.fileId}
                             </div>
                           )}
