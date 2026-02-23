@@ -864,7 +864,7 @@ export default function FollowPage() {
                       sortedRecords.map((rec) => (
                         <tr key={rec.id} className="border-b border-gray-100 hover:bg-gray-50 transition text-left align-middle rounded-[5px]">
                           {/* Date */}
-                          <td className="py-5 px-4 whitespace-nowrap align-middle rounded-[5px] truncate">
+                          <td className="py-5 px-4 whitespace-nowrap align-middle text-center rounded-[5px] truncate">
                             {formatDate(rec.date)}
                           </td>
                           {/* Staff ID */}
