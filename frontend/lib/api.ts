@@ -88,8 +88,8 @@ export const apiRequest = async <T = any>(
       return await response.json();
     }
 
-    // For blob responses (PDFs, etc.)
-    if (contentType && contentType.includes('application/pdf')) {
+    // For blob responses (PDFs, ZIPs, etc.)
+    if (contentType && (contentType.includes('application/pdf') || contentType.includes('application/zip') || contentType.includes('application/octet-stream'))) {
       return await response.blob() as any;
     }
 
