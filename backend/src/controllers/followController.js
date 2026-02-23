@@ -707,7 +707,7 @@ const syncSalesforce = async (req, res) => {
     const hours = String(now.getHours()).padStart(2, '0');
     const minutes = String(now.getMinutes()).padStart(2, '0');
     const seconds = String(now.getSeconds()).padStart(2, '0');
-    const dateTimeStr = `${followDate}T${hours}:${minutes}:${seconds}`;
+    const dateTimeStr = `${followDate}T${hours}:${minutes}:${seconds}+09:00`;
 
     // 6. Create or Update Event
     if (existingEventId) {
