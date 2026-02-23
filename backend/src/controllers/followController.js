@@ -12,6 +12,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const FONT_PATH = path.join(__dirname, '../../fonts/NotoSansJP-Regular.ttf');
 import { decrypt } from '../utils/encryption.js';
+import { withLock, shouldRunJob, recordJobRun } from '../utils/jobLock.js';
 import { createProcessingJob, getJobStatus, getUserJobs, retryFailedJob } from '../services/asyncProcessingService.js';
 import { addAudioProcessingJob } from '../queues/audioQueue.js';
 import { DEFAULT_FOLLOW_SUMMARY_PROMPT } from '../services/followProcessing/difyWorkflow.js';
@@ -706,7 +707,7 @@ const syncSalesforce = async (req, res) => {
     const hours = String(now.getHours()).padStart(2, '0');
     const minutes = String(now.getMinutes()).padStart(2, '0');
     const seconds = String(now.getSeconds()).padStart(2, '0');
-    const dateTimeStr = `${followDate}T${hours}:${minutes}:${seconds}`;
+    const dateTimeStr = `${followDate}T${hours}:${minutes}:${seconds}+09:00`;
 
     // 6. Create or Update Event
     if (existingEventId) {
@@ -769,6 +770,78 @@ const syncSalesforce = async (req, res) => {
   }
 };
 
+// Auto-delete follow records older than specified months (default: 2 months)
+// Audio files are already deleted immediately after processing, so only DB rows need cleanup
+// @param {object} connection - Database connection to use (must be same connection as lock)
+const _autoDeleteOldFollowsInternal = async (connection) => {
+  try {
+    const months = parseInt(process.env.AUTO_DELETE_RETENTION_MONTHS || '2');
+
+    const [result] = await connection.query(
+      `DELETE FROM follows 
+       WHERE date < DATE_SUB(NOW(), INTERVAL ? MONTH)`,
+      [months]
+    );
+
+    if (result.affectedRows > 0) {
+      logger.info(`Auto-deleted ${result.affectedRows} follow record(s) older than ${months} month(s)`);
+    } else {
+      logger.info(`No follow records found to delete (older than ${months} month(s))`);
+    }
+
+    return { success: true, deletedCount: result.affectedRows };
+  } catch (error) {
+    logger.error('Error in auto-delete old follows', error);
+    throw error;
+  }
+};
+
+// Safe wrapper with distributed locking and idempotency
+const autoDeleteOldFollows = async () => {
+  const LOCK_NAME = 'auto_delete_old_follows';
+  const JOB_NAME = 'auto_delete_old_follows';
+  const LOCK_TIMEOUT = 30;
+
+  const intervalHours = parseInt(process.env.AUTO_DELETE_INTERVAL_HOURS || '24');
+
+  try {
+    const idempotencyCheck = await shouldRunJob(JOB_NAME, intervalHours);
+
+    if (!idempotencyCheck.shouldRun) {
+      const lastRunStr = idempotencyCheck.lastRun ? new Date(idempotencyCheck.lastRun).toISOString() : 'unknown';
+      logger.info(`Skipping auto-delete follows job: last run was ${lastRunStr}`);
+      return { success: false, reason: 'recently_executed', lastRun: idempotencyCheck.lastRun };
+    }
+
+    const lockResult = await withLock(LOCK_NAME, LOCK_TIMEOUT, async (connection) => {
+      const idempotencyCheckAfterLock = await shouldRunJob(JOB_NAME, intervalHours, connection);
+      if (!idempotencyCheckAfterLock.shouldRun) {
+        logger.info('Auto-delete follows job skipped: another instance may have already executed it');
+        return { success: false, reason: 'recently_executed_after_lock' };
+      }
+
+      logger.info('Starting auto-delete old follows job...');
+      const deletionResult = await _autoDeleteOldFollowsInternal(connection);
+
+      await recordJobRun(JOB_NAME, connection);
+
+      logger.info('Auto-delete old follows job completed successfully', deletionResult);
+      return { success: true, deletedCount: deletionResult.deletedCount };
+    });
+
+    if (!lockResult.acquired) {
+      logger.warn('Auto-delete follows job skipped: could not acquire lock (another instance may be running)');
+      return { success: false, reason: 'lock_not_acquired' };
+    }
+
+    return lockResult.result;
+
+  } catch (error) {
+    logger.error('Error in auto-delete old follows job', error);
+    return { success: false, reason: 'error', error: error.message };
+  }
+};
+
 export {
   getRecords,
   uploadAudio,
@@ -783,4 +856,5 @@ export {
   getProcessingJobs,
   retryProcessingJob,
   syncSalesforce,
+  autoDeleteOldFollows,
 };

@@ -1373,28 +1373,55 @@ const updateMemo = async (req, res) => {
   }
 };
 
-// Auto-delete records older than specified months (default: 4 months)
-// Internal function - performs the actual deletion
+// Auto-delete records older than specified months (default: 2 months)
+// Deletes both audio files from disk and database rows
 // @param {object} connection - Database connection to use (must be same connection as lock)
 const _autoDeleteOldRecordsInternal = async (connection) => {
   try {
-    // Get retention period from environment variable or use default of 4 months
-    const months = parseInt(process.env.AUTO_DELETE_RETENTION_MONTHS || '4');
+    const months = parseInt(process.env.AUTO_DELETE_RETENTION_MONTHS || '2');
 
-    // Delete records older than specified months using the provided connection
+    // Collect audio file paths before deleting rows
+    const [targetRows] = await connection.query(
+      `SELECT id, audio_file_path FROM records 
+       WHERE date < DATE_SUB(NOW(), INTERVAL ? MONTH)`,
+      [months]
+    );
+
+    if (targetRows.length === 0) {
+      logger.info(`No records found to delete (older than ${months} month(s))`);
+      return { success: true, deletedCount: 0, filesDeleted: 0 };
+    }
+
+    // Delete audio files from disk
+    let filesDeleted = 0;
+    for (const row of targetRows) {
+      if (row.audio_file_path && fs.existsSync(row.audio_file_path)) {
+        try {
+          fs.unlinkSync(row.audio_file_path);
+          filesDeleted++;
+        } catch (fileError) {
+          logger.warn('Failed to delete audio file during auto-delete', {
+            recordId: row.id,
+            audioFilePath: row.audio_file_path,
+            error: fileError.message,
+          });
+        }
+      }
+    }
+
+    // Delete database rows
     const [result] = await connection.query(
       `DELETE FROM records 
        WHERE date < DATE_SUB(NOW(), INTERVAL ? MONTH)`,
       [months]
     );
 
-    if (result.affectedRows > 0) {
-      logger.info(`Auto-deleted ${result.affectedRows} record(s) older than ${months} month(s)`);
-    } else {
-      logger.info(`No records found to delete (older than ${months} month(s))`);
-    }
-    
-    return { success: true, deletedCount: result.affectedRows };
+    logger.info(`Auto-deleted ${result.affectedRows} record(s) older than ${months} month(s)`, {
+      dbRowsDeleted: result.affectedRows,
+      audioFilesDeleted: filesDeleted,
+    });
+
+    return { success: true, deletedCount: result.affectedRows, filesDeleted };
   } catch (error) {
     logger.error('Error in auto-delete old records', error);
     throw error;

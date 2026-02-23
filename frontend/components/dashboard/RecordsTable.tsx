@@ -318,22 +318,31 @@ export default function RecordsTable({
                             className="border border-gray-300 rounded-[5px] px-2 py-1 w-full"
                           />
                         ) : (
-                          <div className="flex items-center gap-x-2">
+                          <div className="group/memo relative flex items-center gap-x-2">
                             <button className="hover:scale-110 transition rounded-[5px] w-5 h-5 flex items-center flex-shrink-0" title="Edit Memo" onClick={() => handleEditMemo(rec.id, rec.memo || null)}>
                               <Image src="/edit1.svg" alt="Edit Memo" width={20} height={20} className="rounded-[5px]" />
                             </button>
-                            <span
-                              className="truncate"
-                              title={rec.memo || ''}
-                            >
+                            <span className="truncate">
                               {truncateMemo(rec.memo)}
                             </span>
+                            {rec.memo && rec.memo.length > 5 && (
+                              <div className="pointer-events-none fixed z-50 mt-7 max-w-xs rounded-lg bg-gray-800 px-3 py-2 text-sm text-white shadow-lg whitespace-pre-wrap break-words opacity-0 transition-opacity duration-100 group-hover/memo:opacity-100">
+                                {rec.memo}
+                              </div>
+                            )}
                           </div>
                         )}
                       </td>
                       {/* File ID */}
-                      <td className="py-5 px-4 whitespace-nowrap align-middle min-w-[100px] max-w-[300px] rounded-[5px] truncate" title={rec.fileId}>
-                        {truncateFileId(rec.fileId)}
+                      <td className="py-5 px-4 whitespace-nowrap align-middle min-w-[100px] max-w-[300px] rounded-[5px]">
+                        <div className="group/file relative truncate">
+                          {truncateFileId(rec.fileId)}
+                          {rec.fileId && rec.fileId.length > 17 && (
+                            <div className="pointer-events-none fixed z-50 mt-1 max-w-xs rounded-lg bg-gray-800 px-3 py-2 text-sm text-white shadow-lg whitespace-pre-wrap break-words opacity-0 transition-opacity duration-100 group-hover/file:opacity-100">
+                              {rec.fileId}
+                            </div>
+                          )}
+                        </div>
                       </td>
                       {/* Skill Sheet icons */}
                       <td className="py-5 px-4 align-middle min-w-[120px] max-w-[300px] rounded-[5px]">
