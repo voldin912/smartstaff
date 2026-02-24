@@ -38,7 +38,7 @@ export default function DashboardHeader({
             type="file"
             ref={fileInputRef}
             onChange={onFileChange}
-            accept="audio/*,.m4a"
+            accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.flac"
             className="hidden"
             disabled={isProcessing}
           />

@@ -31,6 +31,13 @@ const isOtherJobActive = (ownKey: string): boolean => {
   return !!localStorage.getItem(otherKey);
 };
 
+const ALLOWED_AUDIO_EXTENSIONS = ['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac'];
+
+const isAllowedAudioFile = (file: File): boolean => {
+  const extension = file.name.split('.').pop()?.toLowerCase() || '';
+  return file.type.startsWith('audio/') || ALLOWED_AUDIO_EXTENSIONS.includes(extension);
+};
+
 export default function DashboardPage() {
   const { user } = useAuth();
   const [currentPage, setCurrentPage] = useState(1);
@@ -232,7 +239,7 @@ export default function DashboardPage() {
       return;
     }
 
-    if (!file.type.startsWith('audio/')) {
+    if (!isAllowedAudioFile(file)) {
       notify('error', '音声ファイルのみアップロード可能です。');
       return;
     }
