@@ -1,7 +1,8 @@
 import { apiRequest, handleApiError } from '@/lib/api';
 import { Record, RecordSummary, PaginatedResponse, ProcessingJob, UploadResponse } from '@/lib/types';
+import { getApiBaseUrl } from '@/lib/apiBaseUrl';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || '';
+const API_URL = getApiBaseUrl();
 
 // Polling configuration
 const POLL_INTERVAL = 2000; // 2 seconds

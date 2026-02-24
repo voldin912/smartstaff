@@ -25,6 +25,13 @@ const isOtherJobActive = (ownKey: string): boolean => {
   return !!localStorage.getItem(otherKey);
 };
 
+const ALLOWED_AUDIO_EXTENSIONS = ['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac'];
+
+const isAllowedAudioFile = (file: File): boolean => {
+  const extension = file.name.split('.').pop()?.toLowerCase() || '';
+  return file.type.startsWith('audio/') || ALLOWED_AUDIO_EXTENSIONS.includes(extension);
+};
+
 interface FollowRecord {
   id: number;
   ownerId?: number;
@@ -482,7 +489,7 @@ export default function AdminFollowPage() {
       return;
     }
 
-    if (!file.type.startsWith('audio/')) {
+    if (!isAllowedAudioFile(file)) {
       toast.error('音声ファイルのみアップロード可能です。');
       return;
     }
@@ -786,7 +793,7 @@ export default function AdminFollowPage() {
                 type="file"
                 ref={fileInputRef}
                 onChange={handleFileChange}
-                accept="audio/*,.m4a"
+                accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.flac"
                 className="hidden"
               />
               <button
