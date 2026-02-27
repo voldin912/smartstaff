@@ -39,7 +39,7 @@ const getRecords = async (req, res) => {
       SELECT
         r.id,
         r.user_id as ownerId,
-        DATE_FORMAT(r.date, '%Y-%m-%d %H:%i:%s') as date,
+        DATE_FORMAT(CONVERT_TZ(r.date, '+00:00', '+09:00'), '%Y-%m-%d %H:%i:%s') as date,
         r.file_id as fileId,
         r.staff_id as staffId,
         r.staff_name as staffName,
@@ -702,11 +702,19 @@ const syncSalesforce = async (req, res) => {
     const accountId = accounts[0].Id;
     logger.info('[syncFollowSalesforce] Account found:', { accountId, name: accounts[0].Name });
 
-    // 5. Build StartDateTime and EndDateTime
-    const now = new Date();
-    const hours = String(now.getHours()).padStart(2, '0');
-    const minutes = String(now.getMinutes()).padStart(2, '0');
-    const seconds = String(now.getSeconds()).padStart(2, '0');
+    // 5. Build StartDateTime and EndDateTime with explicit JST time-of-day.
+    // Avoid using server-local getHours()/getMinutes() so UTC hosts remain correct.
+    const jstNowParts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Tokyo',
+      hour12: false,
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    }).formatToParts(new Date());
+    const getPart = (type) => jstNowParts.find(p => p.type === type)?.value || '00';
+    const hours = getPart('hour');
+    const minutes = getPart('minute');
+    const seconds = getPart('second');
     const dateTimeStr = `${followDate}T${hours}:${minutes}:${seconds}+09:00`;
 
     // 6. Create or Update Event
