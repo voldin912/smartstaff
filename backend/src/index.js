@@ -82,8 +82,16 @@ initializeDatabase().then(() => {
     // Enable with ENABLE_AUTO_DELETE_SCHEDULER=true environment variable
     // Recommended: Use external scheduler (Cron/Cloud Scheduler) instead
     const ENABLE_AUTO_DELETE_SCHEDULER = process.env.ENABLE_AUTO_DELETE_SCHEDULER === 'true';
+    const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+    const FORCE_ENABLE_IN_APP_SCHEDULER = process.env.FORCE_ENABLE_AUTO_DELETE_SCHEDULER === 'true';
+    const shouldRunInAppScheduler = ENABLE_AUTO_DELETE_SCHEDULER && (!IS_PRODUCTION || FORCE_ENABLE_IN_APP_SCHEDULER);
     
-    if (ENABLE_AUTO_DELETE_SCHEDULER) {
+    if (ENABLE_AUTO_DELETE_SCHEDULER && IS_PRODUCTION && !FORCE_ENABLE_IN_APP_SCHEDULER) {
+      logger.warn('⚠️  In-app auto-delete scheduler is blocked in production by default');
+      logger.warn('⚠️  Use external cron/Cloud Scheduler. Set FORCE_ENABLE_AUTO_DELETE_SCHEDULER=true only if intentionally required.');
+    }
+    
+    if (shouldRunInAppScheduler) {
       const retentionMonths = parseInt(process.env.AUTO_DELETE_RETENTION_MONTHS || '2');
       const AUTO_DELETE_INTERVAL_HOURS = parseInt(process.env.AUTO_DELETE_INTERVAL_HOURS || '24');
       

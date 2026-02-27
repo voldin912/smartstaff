@@ -103,7 +103,7 @@ const getRecords = async (req, res) => {
       SELECT 
         r.id, 
         r.user_id as ownerId,
-        DATE_FORMAT(r.date, '%Y-%m-%d %H:%i:%s') as date,
+        DATE_FORMAT(CONVERT_TZ(r.date, '+00:00', '+09:00'), '%Y-%m-%d %H:%i:%s') as date,
         r.file_id as fileId, 
         r.staff_id as staffId, 
         r.staff_name as staffName,
@@ -195,7 +195,7 @@ const getRecordDetail = async (req, res) => {
       SELECT 
         r.id, 
         r.user_id as ownerId,
-        DATE_FORMAT(r.date, '%Y-%m-%d %H:%i:%s') as date,
+        DATE_FORMAT(CONVERT_TZ(r.date, '+00:00', '+09:00'), '%Y-%m-%d %H:%i:%s') as date,
         r.file_id as fileId, 
         r.staff_id as staffId, 
         r.staff_name as staffName,
