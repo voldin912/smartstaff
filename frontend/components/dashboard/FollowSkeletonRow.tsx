@@ -21,6 +21,10 @@ export default function FollowSkeletonRow() {
           <div className="h-4 bg-gray-200 rounded w-24"></div>
         </div>
       </td>
+      {/* User */}
+      <td className="py-5 px-4 whitespace-nowrap align-middle rounded-[5px]">
+        <div className="h-4 bg-gray-200 rounded w-24"></div>
+      </td>
       {/* Summary icons */}
       <td className="py-5 px-4 align-middle min-w-[120px] max-w-[300px] rounded-[5px]">
         <div className="flex items-center justify-center gap-x-3 rounded-[5px]">
