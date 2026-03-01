@@ -855,6 +855,7 @@ export default function FollowPage() {
                         Staff ID <span className="ml-1">{sortIconStaffId}</span>
                       </th>
                       <th className="py-3 px-4 font-medium text-center min-w-[100px] rounded-[5px]">Staff Name</th>
+                      <th className="py-3 px-4 font-medium text-center min-w-[100px] max-w-[300px] rounded-[5px]">User</th>
                       <th className="py-3 px-4 font-medium text-center min-w-[200px] rounded-[5px]">Summary</th>
                       <th className="py-3 px-4 font-medium text-center min-w-[60px] max-w-[80px] rounded-[5px]">STT</th>
                       <th className="py-3 px-4 font-medium text-center min-w-[60px] max-w-[80px] rounded-[5px]"></th>
@@ -866,7 +867,7 @@ export default function FollowPage() {
                         <FollowSkeletonRow key={`skeleton-${index}`} />
                       ))
                     ) : sortedRecords.length === 0 ? (
-                      <tr><td colSpan={6} className="text-center py-8">No records found</td></tr>
+                      <tr><td colSpan={7} className="text-center py-8">No records found</td></tr>
                     ) : (
                       sortedRecords.map((rec) => (
                         <tr key={rec.id} className="border-b border-gray-100 hover:bg-gray-50 transition text-left align-middle rounded-[5px]">
@@ -917,6 +918,10 @@ export default function FollowPage() {
                                 </>
                               )}
                             </div>
+                          </td>
+                          {/* User */}
+                          <td className="py-5 px-4 whitespace-nowrap align-middle min-w-[100px] max-w-[300px] rounded-[5px] truncate">
+                            {rec.userName || ''}
                           </td>
                           {/* Summary */}
                           <td className="py-5 px-4 align-middle min-w-[120px] max-w-[300px] rounded-[5px]">

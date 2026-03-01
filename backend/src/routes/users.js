@@ -8,6 +8,7 @@ import { pool } from '../config/database.js';
 import { auth, authorize } from '../middleware/auth.js';
 import logger from '../utils/logger.js';
 import cacheMiddleware from '../middleware/cache.js';
+import cache from '../utils/cache.js';
 
 const router = express.Router();
 
@@ -40,6 +41,31 @@ const upload = multer({
     }
   }
 });
+
+const invalidateUserCaches = ({ userId, oldCompanyId = null, newCompanyId = null }) => {
+  try {
+    cache.delete('users:all');
+
+    if (oldCompanyId) {
+      cache.delete(`users:company:${oldCompanyId}`);
+    }
+
+    if (newCompanyId && newCompanyId !== oldCompanyId) {
+      cache.delete(`users:company:${newCompanyId}`);
+    }
+
+    if (userId) {
+      cache.delete(`auth:me:user:${userId}`);
+    }
+  } catch (error) {
+    logger.warn('Failed to invalidate user cache', {
+      userId,
+      oldCompanyId,
+      newCompanyId,
+      error: error.message
+    });
+  }
+};
 
 // Get users based on role (with caching)
 router.get('/', auth, cacheMiddleware({
@@ -135,6 +161,10 @@ router.post(
       );
 
       const [newUser] = await pool.query('SELECT * FROM users WHERE id = ?', [result.insertId]);
+      invalidateUserCaches({
+        userId: newUser[0].id,
+        newCompanyId: newUser[0].company_id
+      });
       delete newUser[0].password;
       res.status(201).json(newUser[0]);
     } catch (error) {
@@ -151,6 +181,7 @@ router.post(
 router.put(
   '/:id',
   auth,
+  authorize('admin', 'company-manager'),
   upload.single('avatar'),
   [
     body('name').optional().trim().notEmpty().withMessage('Name cannot be empty'),
@@ -169,11 +200,18 @@ router.put(
       const { id } = req.params;
       const updates = { ...req.body };
 
+      const hasRoleUpdate = Object.prototype.hasOwnProperty.call(updates, 'role');
+      const hasCompanyUpdate = Object.prototype.hasOwnProperty.call(updates, 'company_id');
+      if ((hasRoleUpdate || hasCompanyUpdate) && req.user.role !== 'admin') {
+        return res.status(403).json({ message: 'Only admin can modify role or company assignment' });
+      }
+
       // Check if user exists
       const [existingUser] = await pool.query('SELECT * FROM users WHERE id = ?', [id]);
       if (existingUser.length === 0) {
         return res.status(404).json({ message: 'User not found' });
       }
+      const previousCompanyId = existingUser[0].company_id;
 
       // Check permissions
       if (req.user.role === 'company-manager') {
@@ -214,6 +252,11 @@ router.put(
       }
 
       const [updatedUser] = await pool.query('SELECT * FROM users WHERE id = ?', [id]);
+      invalidateUserCaches({
+        userId: updatedUser[0].id,
+        oldCompanyId: previousCompanyId,
+        newCompanyId: updatedUser[0].company_id
+      });
       delete updatedUser[0].password;
       res.json(updatedUser[0]);
     } catch (error) {
@@ -248,6 +291,10 @@ router.delete('/:id', auth, async (req, res) => {
 
     // Delete user
     await pool.query('DELETE FROM users WHERE id = ?', [id]);
+    invalidateUserCaches({
+      userId: Number(id),
+      oldCompanyId: existingUser[0].company_id
+    });
     res.json({ message: 'User deleted successfully' });
   } catch (error) {
     logger.error('Error in route handler', error);
