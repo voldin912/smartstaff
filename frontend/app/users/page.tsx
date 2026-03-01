@@ -95,6 +95,9 @@ export default function UsersPage() {
       const token = localStorage.getItem('token');
       const formDataToSend = new FormData();
       Object.entries(formData).forEach(([key, value]) => {
+        if (user?.role !== 'admin' && (key === 'role' || key === 'company_id')) {
+          return;
+        }
         if (value !== null && value !== '') {
           if (key === 'company_id' && value === '') {
             formDataToSend.append(key, 'null');
@@ -444,18 +447,28 @@ export default function UsersPage() {
                       <label htmlFor="role" className="block text-sm font-medium text-gray-700">
                         Role
                       </label>
-                      <select
-                        id="role"
-                        name="role"
-                        required
-                        value={formData.role}
-                        onChange={(e) => setFormData((prev) => ({ ...prev, role: e.target.value }))}
-                        className="p-2 mt-1 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md"
-                      >
-                        <option value="member">Member</option>
-                        <option value="company-manager">Company Manager</option>
-                        {user?.role === 'admin' && <option value="admin">Admin</option>}
-                      </select>
+                      {user?.role === 'admin' ? (
+                        <select
+                          id="role"
+                          name="role"
+                          required
+                          value={formData.role}
+                          onChange={(e) => setFormData((prev) => ({ ...prev, role: e.target.value }))}
+                          className="p-2 mt-1 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md"
+                        >
+                          <option value="member">Member</option>
+                          <option value="company-manager">Company Manager</option>
+                          <option value="admin">Admin</option>
+                        </select>
+                      ) : (
+                        <div className="p-2 mt-1 block w-full shadow-sm sm:text-sm border border-gray-300 rounded-md bg-gray-50 text-gray-700">
+                          {formData.role === 'company-manager'
+                            ? 'Company Manager'
+                            : formData.role === 'admin'
+                            ? 'Admin'
+                            : 'Member'}
+                        </div>
+                      )}
                     </div>
 
                     {user?.role === 'admin' && (
